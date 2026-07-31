@@ -99,6 +99,7 @@ import touristPaymentRouter from './routes/touristPayment.js';
 import { dealCollectionRouter, collectionRouter } from './routes/collection.js';
 import payrollRouter from './routes/payroll.js';
 import whatsappRouter from './routes/whatsapp.js';
+import whatsappStaffSendRouter from './routes/whatsappStaffSend.js';
 import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
@@ -366,6 +367,9 @@ app.use('/api/collection', requireAdminAuth, collectionRouter);
 app.use('/api/payroll', requireAdminAuth, payrollRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
+// Staff sends (צוות → bulk personalized) mount FIRST so the more specific
+// prefix is matched before the general router.
+app.use('/api/whatsapp/staff-send', requireAdminAuth, whatsappStaffSendRouter);
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
 // Email module — Gmail integration (accounts/OAuth, read-only sync mirror,
 // inbox, send, CRM linking). The OAuth callback rides the admin session cookie

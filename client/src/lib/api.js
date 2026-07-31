@@ -881,6 +881,21 @@ export const api = {
       request(`/api/whatsapp/scheduled/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
     updateScheduled: (id, data) =>
       request(`/api/whatsapp/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Staff sends (צוות) — bulk-personalized batches on the canonical
+    // scheduled-message queue. One batch per user action, one row per recipient.
+    staffSend: {
+      meta: () => request('/api/whatsapp/staff-send/meta'),
+      review: (data) =>
+        request('/api/whatsapp/staff-send/review', { method: 'POST', body: JSON.stringify(data) }),
+      preview: (data) =>
+        request('/api/whatsapp/staff-send/preview', { method: 'POST', body: JSON.stringify(data) }),
+      uploadAttachment: (data) =>
+        request('/api/whatsapp/staff-send/attachments', { method: 'POST', body: JSON.stringify(data) }),
+      createBatch: (data) =>
+        request('/api/whatsapp/staff-send/batches', { method: 'POST', body: JSON.stringify(data) }),
+      batches: () => request('/api/whatsapp/staff-send/batches'),
+      batch: (id) => request(`/api/whatsapp/staff-send/batches/${id}`),
+    },
   },
   // ── Email module — Gmail integration ─────────────────────────────
   // Read-only mirror + send. Read/unread state is GOS-side only; Gmail is

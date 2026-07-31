@@ -30,6 +30,7 @@ import { prisma } from '../db.js';
 import { callBridge, bridgeUrlMap } from './bridgeClient.js';
 import { markTaskSentByScheduled } from '../tasks/taskService.js';
 import { reserveSendSlot } from './sendPace.js';
+import { getObjectStream } from '../r2.js';
 
 const TICK_MS = 60_000;
 // Pacing is no longer this worker's business — whatsapp/sendPace.js owns the
@@ -74,6 +75,66 @@ export function idempotencyKeyFor(row) {
   return `gos-sched-${row.id}-${row.scheduledAt.toISOString()}-a${row.attemptCount}`;
 }
 
+// R2 object → Buffer (outbound attachments are capped at 16MB, so buffering is
+// bounded). Failures are retryable — the object exists, R2 hiccupped.
+async function loadAttachmentBuffer(key) {
+  try {
+    const stream = await getObjectStream(key);
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  } catch (err) {
+    const e = new Error(`media_unavailable: ${err?.message || err}`);
+    e.code = 'media_unavailable';
+    throw e;
+  }
+}
+
+// One row → one logical WhatsApp delivery, possibly multi-part (text +
+// attachments). Same part-key contract as the Communication channel adapter:
+// the base idempotency key gets `-t` for the text part and `-d<i>` per
+// attachment, so a crash between parts replays ONLY the missing part.
+// Text-only rows keep the exact historical single-part key (no suffix).
+async function deliverRow(row, jid) {
+  const attachments = Array.isArray(row.attachments) ? row.attachments : [];
+  const baseKey = idempotencyKeyFor(row);
+  if (attachments.length === 0) {
+    const data = await callBridge(row.accountId, '/send', {
+      method: 'POST',
+      timeoutMs: 25_000,
+      body: { jid, text: row.content, idempotencyKey: baseKey },
+    });
+    return data?.externalMessageId ?? null;
+  }
+
+  let externalMessageId = null;
+  if (row.content && row.content.trim()) {
+    const data = await callBridge(row.accountId, '/send', {
+      method: 'POST',
+      timeoutMs: 25_000,
+      body: { jid, text: row.content, idempotencyKey: `${baseKey}-t` },
+    });
+    externalMessageId = data?.externalMessageId ?? null;
+  }
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i] || {};
+    const buffer = await loadAttachmentBuffer(att.key);
+    const data = await callBridge(row.accountId, '/send-media', {
+      method: 'POST',
+      timeoutMs: 90_000,
+      body: {
+        jid,
+        mediaBase64: buffer.toString('base64'),
+        mimeType: att.mimeType || 'application/octet-stream',
+        fileName: att.fileName || 'file',
+        kind: ['image', 'video', 'document'].includes(att.kind) ? att.kind : 'document',
+        idempotencyKey: `${baseKey}-d${i}`,
+      },
+    });
+    externalMessageId = externalMessageId || data?.externalMessageId || null;
+  }
+  return externalMessageId;
+}
 
 async function tick(log) {
   const now = new Date();
@@ -141,28 +202,30 @@ async function tick(log) {
     if (!row || row.claimedBy !== WORKER_ID || row.status !== 'sending') continue;
 
     try {
+      // Destination: the chat's JID when a chat exists (thread continuity),
+      // else the frozen direct JID (staff sends to people with no mirrored
+      // chat yet). Neither ⇒ terminal — nothing to send to.
+      const jid = row.chat?.externalChatId || row.destinationJid || null;
+      if (!jid) {
+        const e = new Error('destination_missing');
+        e.code = 'invalid_payload';
+        throw e;
+      }
       // Central anti-burst pacing — shared with every other automated sender.
       // Claimed AFTER the row is claimed so a slot is never burned on a
-      // message another worker already took.
+      // message another worker already took. ONE slot per row even when the
+      // row is multi-part (text + attachments are one logical message).
       await reserveSendSlot(prisma, row.accountId);
       // The account chosen AT SCHEDULING TIME, not re-derived from the chat:
       // a message must send from the number the operator picked, even if their
       // default changed in the meantime.
-      const data = await callBridge(row.accountId, '/send', {
-        method: 'POST',
-        timeoutMs: 25_000,
-        body: {
-          jid: row.chat.externalChatId,
-          text: row.content,
-          idempotencyKey: idempotencyKeyFor(row),
-        },
-      });
+      const externalMessageId = await deliverRow(row, jid);
       await prisma.whatsAppScheduledMessage.update({
         where: { id },
         data: {
           status: 'sent',
           sentAt: new Date(),
-          externalMessageId: data?.externalMessageId ?? null,
+          externalMessageId,
           failureReason: null,
           claimedAt: null,
           claimedBy: null,
@@ -211,23 +274,35 @@ async function tick(log) {
   return sent;
 }
 
+// Module-level guard so the interval tick and on-demand kicks share ONE
+// "a tick is running" fact — a kick can never overlap a scheduled tick.
+let inFlight = false;
+
+async function runTick(log) {
+  if (inFlight) return;
+  inFlight = true;
+  try {
+    await tick(log);
+  } catch (err) {
+    log.error(`[whatsapp-scheduled] tick crashed: ${err?.message || err}`);
+  } finally {
+    inFlight = false;
+  }
+}
+
+// Fire-and-forget early tick — "שלח עכשיו" batches shouldn't wait up to 60s
+// for the next interval. Same guard, same tick, zero new send paths.
+export function kickScheduledWorker(log = console) {
+  if (Object.keys(bridgeUrlMap()).length === 0) return;
+  setImmediate(() => { void runTick(log); });
+}
+
 export function startScheduledWorker(log = console) {
   if (Object.keys(bridgeUrlMap()).length === 0) {
     log.info('[whatsapp-scheduled] no bridges configured — worker not started');
     return null;
   }
-  let inFlight = false;
-  const timer = setInterval(async () => {
-    if (inFlight) return;
-    inFlight = true;
-    try {
-      await tick(log);
-    } catch (err) {
-      log.error(`[whatsapp-scheduled] tick crashed: ${err?.message || err}`);
-    } finally {
-      inFlight = false;
-    }
-  }, TICK_MS);
+  const timer = setInterval(() => { void runTick(log); }, TICK_MS);
   timer.unref?.();
   log.info('[whatsapp-scheduled] worker started (60s tick)');
   return timer;

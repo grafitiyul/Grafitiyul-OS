@@ -1685,8 +1685,24 @@ model WhatsAppScheduledMessage {
   id                      String          @id @default(cuid())
   account                 WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   accountId               String
-  chat                    WhatsAppChat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  chatId                  String
+  // chatId is optional since the staff-send extension: a staff recipient may
+  // have no mirrored chat yet. Exactly one of (chatId, destinationJid) must be
+  // usable at send time — when both exist the chat wins (thread continuity).
+  chat                    WhatsAppChat?   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId                  String?
+  // Chatless destination (staff sends): the normalized JID + the intl digits it
+  // was derived from, frozen at creation. The person's stored phone is NEVER
+  // rewritten — these are delivery copies.
+  destinationJid          String?
+  destinationPhone        String?
+  // Staff-send provenance, both LOOSE keys (createdById convention): the
+  // recipient PersonRef and the WhatsAppSendBatch this row belongs to.
+  personRefId             String?
+  batchId                 String?
+  // Attachment refs for outbound media: [{key,fileName,mimeType,kind,sizeBytes}]
+  // — R2 objects under whatsapp-outbound/, uploaded ONCE per batch and shared
+  // by reference across every recipient row. Null = text-only (the V1 shape).
+  attachments             Json?
   content                 String
   scheduledAt             DateTime
   status                  String          @default("pending") // pending | sending | sent | failed | cancelled | skipped
@@ -1712,6 +1728,32 @@ model WhatsAppScheduledMessage {
   @@index([accountId, status])
   @@index([chatId, status])
   @@index([taskId])
+  @@index([batchId])
+  @@index([personRefId])
+}
+
+// One bulk-send action (staff WhatsApp sends): the frozen template + the
+// operator's choices, with one WhatsAppScheduledMessage row PER recipient
+// carrying that recipient's own rendered text. The batch is audit metadata —
+// the queue semantics live entirely in the scheduled rows + the shared worker.
+// idempotencyKey is minted by the client per user action, so a double-submit
+// replays the existing batch instead of creating a second wave.
+model WhatsAppSendBatch {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  accountId      String // sender account frozen at creation (purge contract: direct accountId)
+  kind           String   @default("staff")
+  templateHtml   String // the editor HTML as authored (chips intact)
+  templateText   String // htmlToWhatsApp() form with {{tokens}} — what each row was rendered from
+  attachments    Json? // shared attachment refs (same shape as the per-row copies)
+  scheduledAt    DateTime
+  sendNow        Boolean  @default(false)
+  recipientCount Int // rows actually created
+  skipped        Json? // [{personRefId,name,reason,detail}] — recipients that never became rows
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // Emoji reactions, keyed by the target message's external id. emoji='' is a

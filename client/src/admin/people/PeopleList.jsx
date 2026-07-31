@@ -15,6 +15,7 @@ import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import NewStaffDialog from './NewStaffDialog.jsx';
+import StaffWhatsAppModal from './StaffWhatsAppModal.jsx';
 
 // Column definitions — the shared tableColumns infra owns visibility, order
 // and persistence (localStorage per table per browser profile — the app's
@@ -80,6 +81,9 @@ export default function PeopleList() {
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
   const [createOpen, setCreateOpen] = useState(false);
+  // WhatsApp send modal — null = closed, [] = open with no preselection,
+  // [ids] = open preselected (from the table's selection bar).
+  const [whatsappIds, setWhatsappIds] = useState(null);
   const cols = useTableColumns('people.columns', STAFF_COLUMNS);
   // Teams feed the inline team editor (same list the profile uses).
   const [teams, setTeams] = useState([]);
@@ -161,6 +165,15 @@ export default function PeopleList() {
           </div>
         </div>
         <div className="flex-1" />
+        <button
+          onClick={() => setWhatsappIds([])}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-[12.5px] font-semibold text-white shadow-sm hover:bg-emerald-700"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.5.1-1 .2-3.3-.7-2.8-1.1-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.9s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.2 1 2.1 1.4 2.4 1.5.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1l1.9.9c.2.1.4.2.5.3 0 .2 0 .8-.2 1.4Z" />
+          </svg>
+          וואטסאפ לצוות
+        </button>
         <button
           onClick={() => setCreateOpen(true)}
           className="rounded-xl bg-blue-600 px-3.5 py-2 text-[12.5px] font-semibold text-white shadow-sm hover:bg-blue-700"
@@ -249,13 +262,25 @@ export default function PeopleList() {
       )}
 
       {!loading && !error && filtered.length > 0 && (
-        <PeopleTable people={filtered} cols={cols} teams={teams} onChanged={refresh} />
+        <PeopleTable
+          people={filtered}
+          cols={cols}
+          teams={teams}
+          onChanged={refresh}
+          onSendWhatsApp={(ids) => setWhatsappIds(ids)}
+        />
       )}
 
       <NewStaffDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={refresh}
+      />
+      <StaffWhatsAppModal
+        open={whatsappIds !== null}
+        onClose={() => setWhatsappIds(null)}
+        people={people}
+        preselectedIds={whatsappIds || []}
       />
     </div>
   );
@@ -433,7 +458,7 @@ function BulkEditDialog({ people, teams, onClose, onDone }) {
 
 const PAGE_SIZES = [10, 25, 50];
 
-function PeopleTable({ people, cols, teams, onChanged }) {
+function PeopleTable({ people, cols, teams, onChanged, onSendWhatsApp }) {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(() => new Set());
@@ -475,6 +500,13 @@ function PeopleTable({ people, cols, teams, onChanged }) {
             className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
           >
             עריכה קבוצתית
+          </button>
+          <button
+            type="button"
+            onClick={() => onSendWhatsApp?.(selectedPeople.map((p) => p.id))}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-emerald-700"
+          >
+            שליחת וואטסאפ
           </button>
           <span className="flex-1" />
           <button

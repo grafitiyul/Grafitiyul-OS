@@ -25,7 +25,19 @@ export const VARIABLE_CATEGORIES = {
   tour: 'סיור',
   payment: 'תשלום',
   docs: 'מסמכים וקישורים',
+  staff: 'איש צוות',
 };
+
+// Staff lifecycle → business label (never the enum). Mirrors the צוות module's
+// display language; null lifecycle is a legacy working guide, honestly missing.
+const STAFF_TYPE_LABELS = {
+  trainee: 'מתלמד/ת',
+  staff: 'צוות',
+  evaluator: 'ממשב/ת',
+  former: 'עזב/ה',
+};
+
+const staffNameParts = (person) => String(person?.displayName || '').trim().split(/\s+/).filter(Boolean);
 
 // contexts: which trigger contexts provide the value (triggers.js `contexts`).
 export const VARIABLES = [
@@ -147,6 +159,29 @@ export const VARIABLES = [
     resolve: (ctx) => (ctx.quoteDoc?.publicToken && ctx.links?.origin ? `${ctx.links.origin}/quote/${ctx.quoteDoc.publicToken}` : null) },
   { key: 'reservation_number', labelHe: 'מספר הזמנת סוכן', labelEn: 'Reservation number', category: 'docs', contexts: ['reservation'],
     resolve: (ctx) => (ctx.reservation?.sessionNo != null ? String(ctx.reservation.sessionNo) : null) },
+
+  // ── staff (context 'staff' — staff-directed sends only; no communication
+  //    trigger provides this context, so these never appear in the customer-
+  //    facing editor menus). ctx.staff = { person: PersonRef(+team), portalUrl }.
+  { key: 'staff_first_name', labelHe: 'שם פרטי של איש הצוות', labelEn: 'Staff first name', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => staffNameParts(ctx.staff?.person)[0] || null },
+  { key: 'staff_last_name', labelHe: 'שם משפחה של איש הצוות', labelEn: 'Staff last name', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => staffNameParts(ctx.staff?.person).slice(1).join(' ') || null },
+  { key: 'staff_full_name', labelHe: 'שם מלא של איש הצוות', labelEn: 'Staff full name', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => String(ctx.staff?.person?.displayName || '').trim() || null },
+  { key: 'staff_phone', labelHe: 'טלפון איש הצוות', labelEn: 'Staff phone', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => String(ctx.staff?.person?.phone || '').trim() || null },
+  { key: 'staff_email', labelHe: 'אימייל איש הצוות', labelEn: 'Staff email', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => String(ctx.staff?.person?.email || '').trim() || null },
+  { key: 'staff_team', labelHe: 'צוות שיוך', labelEn: 'Staff team', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => ctx.staff?.person?.team?.displayName || null },
+  { key: 'staff_type', labelHe: 'סוג איש הצוות', labelEn: 'Staff type', category: 'staff', contexts: ['staff'],
+    resolve: (ctx) => STAFF_TYPE_LABELS[ctx.staff?.person?.lifecycleHint] || null },
+  { key: 'staff_portal_link', labelHe: 'קישור לפורטל האישי', labelEn: 'Personal portal link', category: 'staff', contexts: ['staff'],
+    // Pre-built by the caller via tours/guidePortal/links.js guidePortalUrl —
+    // the ONE canonical builder (portalEnabled respected: revoked ⇒ missing,
+    // never a link that 403s when tapped).
+    resolve: (ctx) => ctx.staff?.portalUrl || null },
 ];
 
 const BY_KEY = new Map(VARIABLES.map((v) => [v.key, v]));
