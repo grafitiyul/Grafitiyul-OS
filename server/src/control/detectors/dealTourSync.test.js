@@ -1,9 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import './dealTourSync.js'; // side-effect: registers the issue type + detector
+import { buildLabelMaps } from './dealTourSync.js'; // also registers the issue type + detector
 import { issueTypeDef } from '../registry.js';
 
 const DEF = issueTypeDef('deal_tour_out_of_sync');
+
+// A ProductVariant has no name column — it IS a product at a location. Selecting
+// a literal `name` was schema drift that made the detector THROW on every sweep
+// which found a variant difference, taking the whole issue family down with it.
+// This pins the shape of the query, not just its output, because the failure was
+// in the query.
+test('a product-variant difference is labelled, and the query only asks for columns that exist', async () => {
+  const asked = {};
+  const client = {
+    product: { findMany: async () => [{ id: 'p1', nameHe: 'סיור גרפיטי' }] },
+    location: { findMany: async () => [] },
+    productVariant: {
+      findMany: async (args) => {
+        Object.assign(asked, args.select);
+        return [{ id: 'v1', product: { nameHe: 'סיור גרפיטי' }, location: { nameHe: 'תל אביב' } }];
+      },
+    },
+  };
+  const maps = await buildLabelMaps(client, [{
+    diffs: [{ field: 'productVariantId', dealValue: 'v1', tourValue: null }],
+  }]);
+  assert.equal(maps.variants.get('v1'), 'סיור גרפיטי · תל אביב');
+  assert.equal(asked.name, undefined, 'ProductVariant.name does not exist and must never be selected');
+  assert.ok(asked.product && asked.location, 'the identity of a variant is its product + location');
+});
+
+test('a variant missing its product or location still yields something readable', async () => {
+  const client = {
+    product: { findMany: async () => [] },
+    location: { findMany: async () => [] },
+    productVariant: { findMany: async () => [{ id: 'v2', product: null, location: { nameHe: 'חיפה' } }] },
+  };
+  const maps = await buildLabelMaps(client, [{ diffs: [{ field: 'productVariantId', dealValue: 'v2', tourValue: null }] }]);
+  assert.equal(maps.variants.get('v2'), 'חיפה');
+});
 
 test('the deal↔tour issue type is registered', () => {
   assert.ok(DEF);

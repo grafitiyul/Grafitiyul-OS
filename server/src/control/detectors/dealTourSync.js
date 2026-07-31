@@ -51,7 +51,7 @@ function displayDiff(diff, maps) {
 
 // Batch-resolve the FK display names referenced by all diffs — one query per
 // entity type, no N+1.
-async function buildLabelMaps(client, items) {
+export async function buildLabelMaps(client, items) {
   const productIds = new Set();
   const variantIds = new Set();
   const locationIds = new Set();
@@ -69,8 +69,16 @@ async function buildLabelMaps(client, items) {
     productIds.size
       ? client.product.findMany({ where: { id: { in: [...productIds] } }, select: { id: true, nameHe: true } })
       : [],
+    // A ProductVariant has NO name of its own — it IS a product at a location,
+    // so that pair is its identity. Selecting a literal `name` column was schema
+    // drift: the model never had one, so this detector threw on every sweep that
+    // found a product-variant difference and the whole issue family went dark.
+    // Labelled the same way payroll already labels a variant, not a new format.
     variantIds.size
-      ? client.productVariant.findMany({ where: { id: { in: [...variantIds] } }, select: { id: true, name: true } })
+      ? client.productVariant.findMany({
+        where: { id: { in: [...variantIds] } },
+        select: { id: true, product: { select: { nameHe: true } }, location: { select: { nameHe: true } } },
+      })
       : [],
     locationIds.size
       ? client.location.findMany({ where: { id: { in: [...locationIds] } }, select: { id: true, nameHe: true } })
@@ -78,7 +86,10 @@ async function buildLabelMaps(client, items) {
   ]);
   return {
     products: new Map(products.map((p) => [p.id, p.nameHe])),
-    variants: new Map(variants.map((v) => [v.id, v.name])),
+    variants: new Map(variants.map((v) => [
+      v.id,
+      [v.product?.nameHe, v.location?.nameHe].filter(Boolean).join(' · ') || null,
+    ])),
     locations: new Map(locations.map((l) => [l.id, l.nameHe])),
   };
 }

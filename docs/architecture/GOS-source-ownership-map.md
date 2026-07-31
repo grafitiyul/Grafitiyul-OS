@@ -1,14 +1,31 @@
 # GOS — Source Ownership Map (the mirror contract)
 
+> ## ⚠ SUPERSEDED IN SCOPE BY THE CUTOVER (2026-07-31)
+>
+> This map describes the **Intermediate Stabilization Phase**, which has ended.
+> Read [GOS-cutover-final-2026-07-31.md](GOS-cutover-final-2026-07-31.md) first —
+> where the two disagree, the cutover document wins.
+>
+> What changed: field-level ownership is no longer *reachable* for almost
+> everything below. Airtable is retired entirely, and Pipedrive may only
+> **create** new leads (deal + its person + its company) — no updates, no status
+> sync, no contacts sync, no organizations sync, no activities, no notes, no
+> files, and never a deletion. `server/src/mirror/legacyPolicy.js` decides that
+> before any field in this document is consulted.
+>
+> This map is still the correct and binding contract for the fields the mirror
+> may write **when it creates a record**, and for the `full_mirror` break-glass.
+> It is kept, not deleted, because that is exactly when it would be needed.
+
 **Status:** CONTRACT. This document is a precondition of the mirror, not a
 description of it. No mirror code may synchronize an entity or a field that does
 not appear here with all five columns filled in.
 
 **Scope:** the Intermediate Stabilization Phase — GOS is a one-way operational
 mirror of Pipedrive and Airtable, and each legacy ingress source is retired
-individually and later.
+individually and later. **That phase ended on 2026-07-31 — see the banner above.**
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-07-31 (cutover banner; body unchanged from 2026-07-29)
 
 ---
 
