@@ -75,10 +75,20 @@ router.post(
     }
 
     const leads = metaAdapter.extractLeads(req.body);
+    // Receipt is logged unconditionally. Previously only failures logged, which
+    // made a WORKING integration indistinguishable from a dead one — the single
+    // most expensive gap in bringing this source up. Ids only: never the
+    // signature header, the token or any answer content.
+    console.log(`[ingress:meta] delivery accepted — ${leads.length} lead(s)`);
     const results = [];
     for (const lead of leads) {
       const gate = metaAdapter.isAllowed(lead);
       if (!gate.ok) {
+        // A skipped lead is never silent: it leaves no IngressEvent, so the log
+        // line is the ONLY trace it ever existed.
+        console.warn(
+          `[ingress:meta] lead ${lead.leadgenId} SKIPPED — ${gate.code} (form=${lead.formId} page=${lead.pageId})`,
+        );
         results.push({ leadgenId: lead.leadgenId, skipped: gate.code });
         continue;
       }
@@ -96,6 +106,10 @@ router.post(
           rawHeaders: { 'x-hub-signature-256': req.headers['x-hub-signature-256'] || null },
           canonicalEvent,
         });
+        console.log(
+          `[ingress:meta] lead ${lead.leadgenId} → event ${r.eventId} status=${r.status}` +
+            ` outcome=${r.outcome ?? '-'} deal=${r.dealId ?? '-'}`,
+        );
         results.push({ leadgenId: lead.leadgenId, ...r });
       } catch (err) {
         // The lead is real but we could not fetch/translate it. Persist the

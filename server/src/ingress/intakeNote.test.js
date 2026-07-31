@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFormAnswers, toCanonicalEvent } from './adapters/meta.js';
+import { buildFormAnswers, toCanonicalEvent, prettifyKey } from './adapters/meta.js';
 import { normalizeEvent } from './normalize.js';
 import { buildIntakeNoteBody } from './records.js';
 
@@ -123,6 +123,49 @@ test('note: customer-supplied HTML is escaped', () => {
 
 test('note: the ambiguous-phone warning surfaces when requested', () => {
   assert.ok(buildIntakeNoteBody(build(), { ambiguous: true }).includes('משויך ליותר מאיש קשר אחד'));
+});
+
+test('prettifyKey: raw Meta keys become readable, values untouched', () => {
+  assert.equal(prettifyKey('?כמה_אנשים_תהיו'), 'כמה אנשים תהיו');
+  assert.equal(prettifyKey('?איזה_סוג_סיור_מעניין_אותך'), 'איזה סוג סיור מעניין אותך');
+  assert.equal(prettifyKey('full_name'), 'full name');
+  assert.equal(prettifyKey('a__b   c'), 'a b c');
+  assert.equal(prettifyKey(''), '');
+});
+
+test('note: a label-less Meta form renders prettified questions, raw key preserved', () => {
+  // The live Grafitiyul form sends `name` only — no `label`.
+  const noLabels = [
+    { name: '?כמה_אנשים_תהיו', values: ['30'] },
+    { name: 'email', values: ['a@b.co.il'] },
+  ];
+  const answers = buildFormAnswers(noLabels);
+  assert.equal(answers[0].label, 'כמה אנשים תהיו');
+  assert.equal(answers[0].key, '?כמה_אנשים_תהיו', 'raw key must survive for data');
+  assert.equal(answers[0].value, '30', 'value must be verbatim');
+
+  const n = normalizeEvent(toCanonicalEvent({ ...DETAILS, field_data: noLabels }, LEAD));
+  const b = buildIntakeNoteBody(n);
+  assert.ok(b.includes('כמה אנשים תהיו: 30'));
+  assert.ok(!b.includes('?כמה_אנשים_תהיו'), 'the raw key must not be shown to an operator');
+});
+
+test('note: the submission time is the provider’s timestamp, in Israel time', () => {
+  const b = buildIntakeNoteBody(build());
+  assert.ok(b.includes('נשלח בתאריך'), 'submission time must be present');
+  // 2026-07-29T09:00:00Z → 12:00 Israel (IDT, UTC+3)
+  assert.ok(b.includes('12:00'), `expected Israel-local 12:00 in: ${b}`);
+});
+
+test('note: an unknown/renamed question never blocks — it just renders', () => {
+  const renamed = [
+    { name: 'a_brand_new_question_nobody_mapped', values: ['תשובה חופשית'] },
+    { name: 'email', values: ['x@y.co.il'] },
+  ];
+  const n = normalizeEvent(toCanonicalEvent({ ...DETAILS, field_data: renamed }, LEAD));
+  assert.ok(n.person.email, 'identity still resolves');
+  const b = buildIntakeNoteBody(n);
+  assert.ok(b.includes('a brand new question nobody mapped: תשובה חופשית'));
 });
 
 test('note: sources without per-question data keep the compact rendering', () => {

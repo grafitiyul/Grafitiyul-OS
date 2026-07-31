@@ -12,6 +12,7 @@
 // Stage and source are resolved from configuration/catalogue, never hardcoded
 // to an id, so a CRM rename cannot silently break ingestion.
 
+import { ISRAEL_TZ } from '../lib/israelDate.js';
 import { normalizeClassification } from '../deals/classification.js';
 import { writeDealMarketing } from '../deals/marketing.js';
 import { emitTimelineEvent, touchDealActivity } from '../timeline/events.js';
@@ -193,6 +194,19 @@ export function marketingFromIngress(normalized, label) {
 // indistinguishable from "never asked".
 const UNANSWERED = '— ללא מענה';
 
+// Submission time as the customer experienced it. The provider's own timestamp,
+// not processing time — a delayed delivery or a replay must still read as "when
+// they filled the form". Israel time via the shared constant, never a second
+// notion of the project's timezone.
+function submittedAtText(occurredAt) {
+  if (!(occurredAt instanceof Date) || Number.isNaN(occurredAt.getTime())) return null;
+  return new Intl.DateTimeFormat('he-IL', {
+    timeZone: ISRAEL_TZ,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(occurredAt);
+}
+
 /**
  * THE intake note body. A pure function of the normalized event — no database,
  * no side effects — so the dry-run preview and the real write render byte-identical
@@ -240,6 +254,7 @@ export function buildIntakeNoteBody(normalized, { ambiguous = false } = {}) {
   const src = [
     ['טופס', normalized.context?.formName],
     ['מזהה טופס', extra.formId],
+    ['נשלח בתאריך', submittedAtText(normalized.occurredAt)],
     ['מזהה ליד', normalized.externalId],
     ['קמפיין', a.utmCampaign || a.campaignId],
     ['ערכת מודעות', a.adsetId],

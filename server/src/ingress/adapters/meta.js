@@ -48,6 +48,26 @@ export function pickField(fieldData, key) {
 }
 
 /**
+ * Meta auto-derives a question's field key from its label — Hebrew wording with
+ * spaces turned into underscores and the question mark kept, e.g.
+ * `?כמה_אנשים_תהיו`. Printing that verbatim in an operator's note is unreadable,
+ * so keys are prettified FOR DISPLAY ONLY. The raw key is always kept on the
+ * answer object, and the answer VALUE is never touched.
+ *
+ * Display-only by design: nothing downstream matches on the prettified form, so
+ * a question rename can change presentation but can never break processing.
+ */
+export function prettifyKey(key) {
+  return String(key ?? '')
+    .replace(/_/g, ' ')
+    // Leading/trailing punctuation Meta carries over from the label.
+    .replace(/^[\s?:*\-–—.,]+/, '')
+    .replace(/[\s?:*\-–—.,]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * The COMPLETE submission, in Meta's original field order.
  *
  * Aliased extraction (`pickField`) feeds the structured GOS columns and is
@@ -70,9 +90,10 @@ export function buildFormAnswers(fieldData) {
     const key = String(f.name ?? '').trim();
     return {
       key: key || null,
-      // Meta sends a human `label` on newer forms and only `name` on older
-      // ones. Prefer the label an operator would recognise.
-      label: String(f.label ?? '').trim() || key || null,
+      // Meta sends a human `label` on some forms and only `name` on others (the
+      // live Grafitiyul form sends no labels at all). Prefer the real label;
+      // otherwise make the raw key readable.
+      label: String(f.label ?? '').trim() || prettifyKey(key) || key || null,
       value: joined === '' ? null : joined,
       answered: joined !== '',
     };
@@ -213,6 +234,7 @@ export const metaAdapter = Object.freeze({
   verify,
   verifySubscription,
   buildFormAnswers,
+  prettifyKey,
   extractLeads,
   isAllowed,
   fetchLeadDetails,
