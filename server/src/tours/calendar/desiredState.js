@@ -126,8 +126,24 @@ function eventTitle(tour, warnings) {
   const he = isHebrewTour(tour.tourLanguage);
   let name = variantDisplayName(tour, he);
   if (!name) {
-    warnings.push('לסיור אין מוצר משויך — הזימון נוצר עם כותרת כללית');
-    name = he ? 'פעילות גרפיטיול' : 'Grafitiyul Activity';
+    // No product — true for every legacy-imported tour (product is class D and
+    // deliberately not imported). Falling straight to the generic label sent 78
+    // guides invitations titled "פעילות גרפיטיול" on 2026-07-30. The imported
+    // tour NAME (stored on notes — the same name guides knew from the legacy
+    // calendar) is the descriptive identity; the kind label is the honest
+    // fallback below it. Generic remains only for a tour with literally nothing.
+    const legacyName = String(tour.notes || '').trim().split('\n')[0].slice(0, 80);
+    if (legacyName) {
+      name = legacyName;
+    } else {
+      const kindLabel = { private: he ? 'סיור פרטי' : 'Private tour', business: he ? 'סיור עסקי' : 'Business tour', group_slot: he ? 'סיור פתוח' : 'Open tour' }[tour.kind];
+      if (kindLabel) {
+        name = kindLabel;
+      } else {
+        warnings.push('לסיור אין מוצר משויך — הזימון נוצר עם כותרת כללית');
+        name = he ? 'פעילות גרפיטיול' : 'Grafitiyul Activity';
+      }
+    }
   }
   return `${name} | ${fmtDateDots(tour.date)} | ${tour.startTime}`;
 }

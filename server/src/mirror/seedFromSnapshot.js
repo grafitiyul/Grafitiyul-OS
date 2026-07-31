@@ -66,7 +66,7 @@ export async function seedMirrorBaselinesFromSnapshot(prisma, { finalDeals = [],
           DATE: m.date,
           'שעת התחלה': m.startTime,
           'סטטוס': m.status,
-          'משתתפים בסיור': m.capacity ?? null,
+
           'הערות': m.notes ?? null,
         },
       });

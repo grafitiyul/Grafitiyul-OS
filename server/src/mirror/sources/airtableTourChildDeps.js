@@ -64,6 +64,19 @@ export function createChildFetcher({ client, budget = null, maxPerTable = 200 })
     reset() { cache.clear(); },
     get cached() { return cache.size; },
     fetchTable,
+    /** The master tours row itself, by record id — used only to heal a
+     *  crosswalk that was written without a payload. */
+    async fetchMasterById(recId) {
+      const key = `master:${recId}`;
+      if (cache.has(key)) return cache.get(key);
+      if (budget) budget.spend();
+      const records = await client.listWhere('tblTI7iaGm6qsQA4a', {
+        formula: `RECORD_ID()='${escapeFormulaValue(recId)}'`,
+        maxRecords: 1,
+      });
+      cache.set(key, records);
+      return records;
+    },
   };
 }
 
@@ -85,7 +98,37 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
         where: { sourceSystem_sourceType_sourceId: { sourceSystem: 'airtable', sourceType: 'tour', sourceId: parentRecId } },
         select: { payload: true },
       });
-      const raw = link?.payload || null;
+      let raw = link?.payload || null;
+      if (!raw) {
+        // A crosswalked tour WITHOUT a stored master payload. Returning an empty
+        // masterTour here made derive() produce an EMPTY desired set, and the
+        // diff then "corrected" GOS by removing the whole roster — 27 bookings
+        // and assignments were destroyed across 12 tours on 2026-07-30 by
+        // exactly this. A missing payload is a data gap to HEAL, never a
+        // statement that the tour has no children: fetch the master row live
+        // (one request), persist it as the payload so the next recompute is
+        // free, and only if even Airtable does not have the row let the
+        // caller's no-master path defer.
+        const rows = await fetcher.fetchMasterById(parentRecId);
+        const rec = rows?.[0] || null;
+        if (rec) {
+          const f = rec.fields || {};
+          raw = {
+            recId: parentRecId,
+            tourId: num(f.Tour_ID),
+            name: t(f['שם']) || t(f.Name) || '',
+            date: t(f['ת.סיור']) ? String(t(f['ת.סיור'])).slice(0, 10) : (t(f.DATE) ? String(t(f.DATE)).slice(0, 10) : null),
+            startTime: t(f['שעת התחלה']),
+            endTime: t(f['שעת סיום']),
+            status: t(f['סטטוס']) || '',
+            fields: f,
+          };
+          await (db || prisma).legacyRecord.update({
+            where: { sourceSystem_sourceType_sourceId: { sourceSystem: 'airtable', sourceType: 'tour', sourceId: parentRecId } },
+            data: { payload: raw },
+          });
+        }
+      }
       if (!raw) return { masterTour: null, coordRows: [], payrollRows: [] };
 
       // Shape the crosswalked master record the way planTourImport expects. The
@@ -154,8 +197,15 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
      * Guide identity by EMAIL — the resolution order the ownership map mandates
      * (externalPersonId first, email second, NEVER name). Resolved in one query.
      */
-    async personRefByEmail(db, payrollRows) {
-      const emails = [...new Set(payrollRows.map((p) => p.guideEmail).filter(Boolean).map((e) => e.toLowerCase()))];
+    async personRefByEmail(db, payrollRows, coordRows = []) {
+      // BOTH sources of guide emails. This map was built from payroll rows alone,
+      // but planTourImport resolves ASSIGNMENT guides from the coordination rows'
+      // guideEmail — so every coordination guide came back personRefId-less and
+      // could never match the existing assignment it was supposed to represent.
+      const emails = [...new Set([
+        ...payrollRows.map((p) => p.guideEmail),
+        ...coordRows.map((c) => c.guideEmail),
+      ].filter(Boolean).map((e) => String(e).toLowerCase()))];
       if (!emails.length) return new Map();
       const refs = await (db || prisma).personRef.findMany({
         where: { email: { in: emails, mode: 'insensitive' } },

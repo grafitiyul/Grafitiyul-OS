@@ -34,6 +34,7 @@ export const OUTCOME = Object.freeze({
   BOOTSTRAPPED: 'bootstrapped',
   SOURCE_DELETED: 'source_deleted',
   NOT_CROSSWALKED: 'not_crosswalked',
+  INTENTIONALLY_EXCLUDED: 'intentionally_excluded', // owner-ruled exclusion (spam/shell) — terminal, named
   IGNORED_SOURCE_CUT_OVER: 'ignored_source_cut_over',
   // parent_recompute outcomes
   RECOMPUTED: 'recomputed',
@@ -237,6 +238,18 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
       // second copy of a customer.
       const created = await adapter.createGos(db, normalized, row);
       if (!created?.entityId) {
+        // An INTENTIONAL exclusion is a decision about the data, not a config
+        // gap — endless generic retries would misrepresent it as "waiting".
+        // Terminal, with the exclusion named, per the owner's 2026-07-31 ruling.
+        if (created?.terminal) {
+          await finish({
+            status: 'skipped',
+            outcome: OUTCOME.INTENTIONALLY_EXCLUDED,
+            failureCode: created.reason || 'intentionally_excluded',
+            failureMessage: created.detail || `${entity} ${row.externalId} belongs to an intentionally excluded population`,
+          });
+          return { status: 'skipped', outcome: OUTCOME.INTENTIONALLY_EXCLUDED, reason: created.reason };
+        }
         // Declined for a nameable reason (unresolvable parent, unmappable
         // payload). Deferred and measurable, never discarded.
         await defer(

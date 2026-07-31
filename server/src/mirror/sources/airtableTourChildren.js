@@ -138,7 +138,14 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
      */
     async derive(db, parent) {
       const { masterTour, coordRows, payrollRows } = await deps.loadTourChildren(db, parent.sourceId);
-      if (!masterTour) return [];
+      if (!masterTour) {
+        // NEVER an empty set. An empty desired set is an instruction to remove
+        // the parent's whole roster, and "I could not load the master" is not
+        // that instruction. Throwing keeps the event pending and retryable.
+        const e = new Error(`master payload unavailable for tour ${parent.sourceId} — deferring rather than deriving an empty roster`);
+        e.code = 'MASTER_PAYLOAD_UNAVAILABLE';
+        throw e;
+      }
 
       const plan = planTourImport({
         masterTours: [masterTour],
@@ -146,7 +153,7 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
         payrollRows,
         dealXwalk: await deps.dealXwalk(db, coordRows),
         dealMetaByLegacyId: await deps.dealMeta(db, coordRows),
-        personRefByEmail: await deps.personRefByEmail(db, payrollRows),
+        personRefByEmail: await deps.personRefByEmail(db, payrollRows, coordRows),
         // Deliberately EMPTY: the "already imported" short-circuit exists to stop
         // Wave 1 re-importing. Here we WANT the derivation for a tour that is
         // already imported, so it must not be filtered out.
@@ -164,7 +171,18 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
         set.push({ kind: 'booking', dealId: b.gosDealId, seats: b.seats, registrations: b.registrations || [] });
       }
       for (const g of payload.guides || []) {
-        set.push({ kind: 'assignment', personRefId: g.personRefId || null, externalPersonId: g.externalPersonId || null, role: g.role || null });
+        // planTourImport guides carry `email`, and the DB rows written by the
+        // importers carry externalPersonId = identityKey-or-email. Reading a
+        // g.externalPersonId that the planner never emits made every desired
+        // assignment identity null — it could never match the row it described,
+        // so recomputes churned real assignments forever.
+        set.push({
+          kind: 'assignment',
+          personRefId: g.personRefId || null,
+          externalPersonId: g.identityKey || g.email || null,
+          displayName: g.displayName || null,
+          role: g.role || null,
+        });
       }
       for (const p of payload.payroll || []) {
         set.push({ kind: 'payroll', externalPersonId: p.externalPersonId || null, displayName: p.displayName || null, amountMinor: p.totalPreVatMinor ?? null });

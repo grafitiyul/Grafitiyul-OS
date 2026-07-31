@@ -58,7 +58,11 @@ export function tourAdapter({ fieldMap = {} } = {}) {
     date: 'DATE',
     startTime: 'שעת התחלה',
     status: 'סטטוס',
-    capacity: 'משתתפים בסיור',
+    // NO capacity mapping. 'משתתפים בסיור' is the CURRENT PARTICIPANT COUNT,
+    // not a capacity — mirroring it into TourEvent.capacity tried to shrink two
+    // native group slots from 15 seats to their booked counts (caught as
+    // conflicts by the 3-way merge on 2026-07-30). Legacy private tours have no
+    // capacity concept; group-slot capacity is GOS-owned.
     notes: 'הערות',
     ...fieldMap,
   };
@@ -83,8 +87,7 @@ export function tourAdapter({ fieldMap = {} } = {}) {
       const status = mapStatus(f[F.status]);
       if (status) fields.status = status;
 
-      const cap = Number(first(f[F.capacity]));
-      if (Number.isFinite(cap) && cap > 0) fields.capacity = cap;
+
 
       const notes = t(f[F.notes]);
       if (notes) fields.notes = notes;

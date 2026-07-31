@@ -284,11 +284,15 @@ export async function createNote(db, normalized, row) {
     existingNoteXwalk: new Map(),
     userName: ref.userName,
   });
-  const p = payloads[0];
-  if (!p) {
+  const np = payloads[0];
+  if (!np) {
+    if (stats.noSubject && await subjectIsExcludedPerson(db, c)) {
+      return { terminal: true, reason: 'excluded_person_subject', detail: `note ${row.externalId}: person subject is intentionally excluded (spam/shell)` };
+    }
     const why = stats.noSubject ? 'note_subject_not_in_gos' : 'note_empty';
     return { reason: why, detail: `note ${row.externalId}: ${JSON.stringify(stats)}` };
   }
+  const p = np;
   return atomicCreate(db, {
     sourceType: 'note',
     sourceId: row.externalId,
@@ -376,9 +380,41 @@ export async function createActivity(db, normalized, row) {
   }
   // The planner's own exclusions (bare person-level rows, no subject) — same
   // rules as Wave 1, reported with the planner's own accounting.
-  const why = stats.noSubject ? 'activity_subject_not_in_gos'
-    : stats.personNoNote ? 'activity_bare_person_row_excluded' : 'activity_not_plannable';
+  if (stats.noSubject) {
+    const excluded = await subjectIsExcludedPerson(db, c);
+    if (excluded) {
+      return {
+        terminal: true,
+        reason: 'excluded_person_subject',
+        detail: `activity ${row.externalId}: its person subject ${pid(c.person_id)} is in the intentionally-excluded spam/shell population — not imported by owner ruling (2026-07-31)`,
+      };
+    }
+    return { reason: 'activity_subject_not_in_gos', detail: `activity ${row.externalId}: ${JSON.stringify(stats)}` };
+  }
+  const why = stats.personNoNote ? 'activity_bare_person_row_excluded' : 'activity_not_plannable';
   return { reason: why, detail: `activity ${row.externalId}: ${JSON.stringify(stats)}` };
+}
+
+/**
+ * Is this record's person subject part of the deliberately-excluded population?
+ *
+ * The signal is structural, not a ledger lookup: a person with NO crosswalk who
+ * ALSO has no mirror event was never imported AND predates capture — i.e. the
+ * identity import saw them and skipped them (spam / empty shell). A genuinely
+ * new person always produces a person.added event before (or with) their first
+ * activity, so they never match this test.
+ */
+async function subjectIsExcludedPerson(db, c) {
+  const personId = pid(c.person_id);
+  if (personId == null) return false;
+  if (pid(c.deal_id) != null || pid(c.org_id) != null) return false; // other subjects may still resolve
+  const crosswalked = await xwalkOne(db, 'person', personId);
+  if (crosswalked) return false;
+  const anyEvent = await db.mirrorEvent.findFirst({
+    where: { system: 'pipedrive', entity: 'contact', externalId: String(personId) },
+    select: { id: true },
+  });
+  return !anyEvent;
 }
 
 async function subjectMaps(db, c) {

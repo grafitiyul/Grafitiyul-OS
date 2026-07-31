@@ -347,7 +347,15 @@ export async function executeFutureTours(prisma, payloads, { batchId, snapshotId
         for (const qty of x.registrations) regRows.push({ tourEventId: tourId, bookingId: null, dealId: x.gosDealId, quantity: qty, source: 'migration', status: 'confirmed' });
       }
       for (const g of p.guides) assignRows.push({ tourEventId: tourId, personRefId: g.personRefId, externalPersonId: g.identityKey, displayName: g.displayName, role: g.role });
-      legacyRows.push({ sourceSystem: 'airtable', sourceType: 'tour', sourceId: p.sourceRecId, entityType: 'TourEvent', entityId: tourId, importBatchId: batchId, snapshotId, cardData: p.cardData });
+      legacyRows.push({
+        sourceSystem: 'airtable', sourceType: 'tour', sourceId: p.sourceRecId,
+        entityType: 'TourEvent', entityId: tourId, importBatchId: batchId, snapshotId,
+        cardData: p.cardData,
+        // The captured master truth the mirror's recompute reads. Omitting it made
+        // loadTourChildren see "no master", derive an EMPTY desired set, and strip
+        // 27 roster members off 12 tours the first time their children changed.
+        payload: { recId: p.sourceRecId, tourId: p.tourId ?? null, name: p.name ?? null, date: p.date, startTime: p.startTime ?? null, status: 'עתידי' },
+      });
     }
     await prisma.$transaction([
       prisma.tourEvent.createMany({ data: tourRows }),
