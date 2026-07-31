@@ -30,10 +30,13 @@
 /**
  * A capability triple. `create` is proposing; `update` and `dispose` are the two
  * ways a legacy system can reach into state GOS already owns.
+ *
+ * There is deliberately NO triple with `dispose: true`. Disposal is not a
+ * permission this file is able to grant — see `legacyCapabilities`.
  */
 const NONE = Object.freeze({ create: false, update: false, dispose: false });
 const PROPOSE_ONLY = Object.freeze({ create: true, update: false, dispose: false });
-const FULL = Object.freeze({ create: true, update: true, dispose: true });
+const PROPOSE_AND_UPDATE = Object.freeze({ create: true, update: true, dispose: false });
 
 export const LEGACY_MODE = Object.freeze({
   CUTOVER: 'cutover',
@@ -65,12 +68,28 @@ const CUTOVER_POLICY = Object.freeze({
   }),
 });
 
-/** The pre-cutover behaviour, kept ONLY as a break-glass. */
+/**
+ * The break-glass. Restores CAPTURE and UPDATE — and nothing else.
+ *
+ * It used to restore disposal too, on the theory that a break-glass should be a
+ * faithful time machine. That was wrong, and the way it was wrong is worth
+ * recording: once Airtable is emptied out (which is the whole point of retiring
+ * it), a reconciler running in this mode would see every child row missing and
+ * read that as "delete them all". Payroll rows and bookings-with-seats have
+ * their own adapter guards, but tour ASSIGNMENTS do not — so pulling the
+ * break-glass after the Airtable cleanup would have silently unassigned guides
+ * from every tour.
+ *
+ * Owner ruling, 2026-07-31: "legacy may propose, never dispose" is a permanent
+ * architectural rule, not a cutover rule. Break-glass may restore capture or
+ * update. It may never restore the authority to destroy canonical GOS state.
+ */
 const FULL_MIRROR_POLICY = Object.freeze({
   pipedrive: Object.freeze({
-    deal: FULL, contact: FULL, organization: FULL, task: FULL, note: FULL, file: FULL,
+    deal: PROPOSE_AND_UPDATE, contact: PROPOSE_AND_UPDATE, organization: PROPOSE_AND_UPDATE,
+    task: PROPOSE_AND_UPDATE, note: PROPOSE_AND_UPDATE, file: PROPOSE_AND_UPDATE,
   }),
-  airtable: Object.freeze({ tourEvent: FULL }),
+  airtable: Object.freeze({ tourEvent: PROPOSE_AND_UPDATE }),
 });
 
 /**
@@ -83,12 +102,11 @@ const FULL_MIRROR_POLICY = Object.freeze({
  * dependency nobody wrote down. It is NOT a supported operating mode: if it is
  * ever set, the cutover is not finished.
  *
- * Break-glass restores the pre-cutover behaviour in full, disposal included — it
- * is a time machine, not a safer variant. What it does NOT restore is the
- * incident fix underneath it: the adapter's own `protectRemoval` guards still
- * refuse to cancel a booking that holds live seats, and the Booking CHECK
- * constraint still forbids a cancellation with no timestamp. Reverting the
- * cutover cannot revert those.
+ * Break-glass restores CAPTURE and UPDATE. It does NOT restore disposal, in any
+ * mode, ever — see `legacyCapabilities`. Nor does it revert the incident fix
+ * underneath it: the adapter's own `protectRemoval` guards still refuse to
+ * cancel a booking that holds live seats, and the Booking CHECK constraint
+ * still forbids a cancellation with no timestamp.
  */
 export function legacyMode(env = process.env) {
   const raw = String(env.LEGACY_MIRROR_MODE || '').trim().toLowerCase();
@@ -104,7 +122,22 @@ export function legacyMode(env = process.env) {
  */
 export function legacyCapabilities(system, entity, env = process.env) {
   const policy = legacyMode(env) === LEGACY_MODE.FULL_MIRROR ? FULL_MIRROR_POLICY : CUTOVER_POLICY;
-  return policy[system]?.[entity] || NONE;
+  const declared = policy[system]?.[entity] || NONE;
+
+  // THE PERMANENT INVARIANT (owner ruling, 2026-07-31).
+  //
+  // No legacy system may destroy canonical GOS state, in ANY operating mode,
+  // ever. Clamping it here rather than trusting the tables above is the whole
+  // point: the tables are data, and data gets edited by someone in a hurry two
+  // years from now who only means to re-enable one thing. This makes disposal
+  // un-grantable rather than merely un-granted — there is no value anyone can
+  // write in this file, or any env var they can set, that produces
+  // `dispose: true` at a call site.
+  //
+  // The `dispose` key is kept rather than deleted so every consumer still reads
+  // an explicit false, and so the day a legitimate disposal case appears it has
+  // to be argued for here, in the open, instead of appearing by omission.
+  return declared.dispose ? Object.freeze({ ...declared, dispose: false }) : declared;
 }
 
 /** Is this (system, entity) fully retired — no create, no update, no dispose? */

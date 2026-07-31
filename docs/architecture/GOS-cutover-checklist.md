@@ -39,18 +39,36 @@ it in 1.3 is correct.
 - Verification: exit code 0.
 - Rollback: none needed (read-only). **If NOT READY — postpone; nothing announced yet.**
 
-**0.2 Woo bulk sweep off** (Owner or Operator, Railway dashboard)
-- Purpose (CORRECTED 2026-07-29 — measured, not assumed): the bulk **sweep** itself
-  cannot reach imported tours. It filters on `openTourTemplateId IN (mapped templates)`
-  and imported tours are created without a template — 0 of 2,473 Wave-1 tours carry one.
-  The real reason to turn it off is narrower: while bulk is ON the worker's
-  first-publication gate is open, so any later *mutation* of an imported tour
-  (edit / cancel / registration marks it pending) could publish it to Woo. With bulk
-  OFF such a tour is parked back to `null` and never published.
-- Action: set `WOO_SYNC_BULK_ENABLED=false` on the Grafitiyul-OS service (leave `WOO_SYNC_ENABLED` as is — native tours keep syncing). **Restore it right after the cutover window**: while it is off, newly generated open-tour occurrences are not auto-published for sale.
-- Timing: do this immediately before Phase 3, not days ahead — it costs a service restart and suppresses auto-publication while off.
-- Verification: preflight rerun shows the Woo line as ✓.
-- Rollback: restore the previous value any time.
+**0.2 Woo bulk sweep off** — ~~step~~ **WITHDRAWN 2026-07-31. Do not perform.**
+
+> This step's rationale did not survive being checked against the code, and the
+> step is retired rather than corrected — there is nothing left for it to do.
+>
+> It claimed: *"while bulk is ON the worker's first-publication gate is open, so
+> any later mutation of an imported tour could publish it to Woo."* That is not
+> what happens. `reconcileTourWoo` resolves sellable cards
+> ([syncWorker.js:305](../../server/src/tours/woo/syncWorker.js#L305)) **before**
+> it evaluates the first-publication gate at line 326, and
+> `resolveSellableCards` begins `if (!templateId) return []`
+> ([mapping.js:40](../../server/src/tours/woo/mapping.js#L40)). A legacy-imported
+> tour has no template → no cards → it parks as `skipped` at line 308 and
+> returns, 21 lines before the gate the flag controls is ever reached. An
+> imported tour cannot publish to Woo under **any** value of `WOO_SYNC_BULK_ENABLED`.
+>
+> Measured in production 2026-07-31, after the cutover: turning bulk on would
+> mark **0** tours pending; the 3 future group slots at `wooSyncStatus = null`
+> are all template-less legacy imports; and `first_publication_blocked` had
+> fired **0 times ever** — the gate never blocked anything.
+>
+> One factual correction to the 2026-07-29 note above it: **3** imported tours do
+> carry a template, not "0 of 2,473". They are Tel Aviv slots deliberately
+> adopted into the mapped template, already `synced`, already on the website.
+>
+> **`WOO_SYNC_BULK_ENABLED=true` is now the normal permanent operating mode**
+> (owner ruling 2026-07-31): the website must always be an exact reflection of
+> the Open Tours in GOS. New occurrences publish automatically, and card/template
+> changes propagate automatically to future sellable slots via
+> `markCardSlotsPending`. Leave `WOO_SYNC_ENABLED` as is.
 
 ## Phase 1 — freeze (business stop; evening)
 

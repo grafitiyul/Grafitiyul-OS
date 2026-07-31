@@ -713,30 +713,31 @@ test('emails compare case-insensitively', async () => {
   assert.equal(db._t.contactEmail.length, 1);
 });
 
-// ── note deletion (owner ruling 2026-07-31) ──────────────────────────────────
+// ── note deletion ────────────────────────────────────────────────────────────
+//
+// The 2026-07-31 morning ruling was that a note deleted in Pipedrive should
+// disappear from GOS. It was superseded the same day by the permanent rule:
+// legacy may propose, NEVER dispose. The deletion is still recorded; nothing is
+// destroyed. This test is the old one, inverted — kept in that shape on purpose,
+// so the change of policy is visible in the history rather than silently gone.
 
-test('a deleted note removes ONLY its crosswalked imported timeline entry', async () => {
+test('a deleted note is RECORDED and destroys nothing — in break-glass too', async () => {
   const db = mirrorDb({ crosswalk: [{ sourceSystem: 'pipedrive', sourceType: 'note', sourceId: '75223', entityType: 'TimelineEntry', entityId: 'te1', syncBaseline: null }] });
   db._t.timelineEntry = [
     { id: 'te1', kind: 'note', actorType: 'import', body: 'imported' },
-    { id: 'te2', kind: 'note', actorType: 'admin', body: 'native note — untouchable' },
+    { id: 'te2', kind: 'note', actorType: 'admin', body: 'native note' },
   ];
-  db.timelineEntry = {
-    deleteMany: async ({ where }) => {
-      const before = db._t.timelineEntry.length;
-      db._t.timelineEntry = db._t.timelineEntry.filter((e) => !(e.id === where.id && e.kind === where.kind && e.actorType === where.actorType));
-      return { count: before - db._t.timelineEntry.length };
-    },
-  };
+  let deleteCalls = 0;
+  db.timelineEntry = { deleteMany: async () => { deleteCalls += 1; return { count: 0 }; } };
   const { noteAdapter } = await import('./sources/pipedriveMirror.js');
   const res = await ingestMirror(db, {
     system: 'pipedrive', entity: 'note', externalId: '75223', changeKind: 'deleted',
     transport: 'webhook', version: 'v1', rawPayload: { meta: { object: 'note', action: 'deleted', id: 75223 }, current: null },
   }, noteAdapter());
   assert.equal(res.outcome, OUTCOME.SOURCE_DELETED);
-  assert.deepEqual(res.applied, { deletedTimelineEntries: 1 });
-  assert.equal(db._t.timelineEntry.length, 1);
-  assert.equal(db._t.timelineEntry[0].id, 'te2', 'the native note survives');
+  assert.equal(deleteCalls, 0, 'no disposal path may run in any mode');
+  assert.equal(db._t.timelineEntry.length, 2, 'both entries survive');
+  assert.ok(db._t.legacyRecord[0].sourceDeletedAt, 'but the fact IS recorded');
 });
 
 test('a REPEATED delete event changes nothing (idempotent)', async () => {

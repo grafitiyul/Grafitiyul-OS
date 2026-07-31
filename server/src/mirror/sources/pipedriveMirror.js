@@ -401,21 +401,23 @@ export function noteAdapter() {
     async loadGos() { return { id: 'immutable' }; },
     async applyGos() { /* EDITS never write: imported history is immutable */ },
 
-    /**
-     * DELETION is different from an edit (owner ruling 2026-07-31): a note the
-     * team deleted in Pipedrive must stop being shown in GOS. Hard delete of the
-     * ONE crosswalked TimelineEntry, and only if it still looks like an imported
-     * note — kind/actorType are re-checked so that even a corrupted crosswalk
-     * could never take out a native GOS timeline record. Idempotent by both the
-     * pipeline's sourceDeletedAt guard and deleteMany's natural zero-match.
-     */
-    async applySourceDeleted(db, entityId) {
-      if (!entityId) return null;
-      const res = await db.timelineEntry.deleteMany({
-        where: { id: entityId, kind: 'note', actorType: 'import' },
-      });
-      return { deletedTimelineEntries: res.count };
-    },
+    // NO applySourceDeleted, deliberately.
+    //
+    // This adapter used to implement it: a note deleted in Pipedrive hard-deleted
+    // its crosswalked TimelineEntry (owner ruling, 2026-07-31, morning). That
+    // ruling was made while Pipedrive was still a live CRM, and it was superseded
+    // the same day by the permanent architectural rule — legacy may propose,
+    // never dispose. `legacyCapabilities` now clamps `dispose` to false in every
+    // mode, so the implementation had become unreachable code whose only effect,
+    // if ever reached, would be deleting production rows.
+    //
+    // Removed rather than left dead: unreachable destructive code is a trap
+    // waiting for someone to relax the clamp "because nothing uses it". The
+    // pipeline hook itself remains — it is the mechanism, and the day a
+    // legitimate disposal case is argued for, it is there to implement.
+    //
+    // A deletion in Pipedrive is still RECORDED on the crosswalk
+    // (`sourceDeletedAt`), so the fact is never lost — only the destruction is.
 
     describe: () => ({ label: 'note' }),
   };

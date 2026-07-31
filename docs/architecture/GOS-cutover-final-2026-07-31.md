@@ -27,9 +27,29 @@ A legacy system may create or update data while it still participates in
 migration. It must never have authority to delete or invalidate canonical GOS
 state.
 
-This is not a slogan in a document — it is a `dispose: false` flag that the
-merge engine reads before every removal, and a `protectRemoval` the recompute
-engine substitutes over whatever the adapter asked for.
+This is a **permanent architectural rule, not a cutover setting** (owner ruling,
+2026-07-31). It holds in every operating mode, including the break-glass, and it
+is enforced structurally rather than by convention: `legacyCapabilities` clamps
+`dispose` to `false` on the way out, so there is no value anyone can write in the
+policy tables — and no environment variable anyone can set — that reaches a call
+site as `dispose: true`. Disposal is *un-grantable*, not merely un-granted.
+
+The concrete trap this closed: the break-glass originally restored disposal too,
+on the theory that it should be a faithful time machine. But once Airtable is
+emptied — which is the point of retiring it — a reconciler in that mode would
+see every child row missing and read it as "delete them all". Payroll rows and
+bookings-with-seats have adapter guards; tour **assignments do not**. Pulling the
+break-glass after the Airtable cleanup would have silently unassigned guides from
+every tour.
+
+One consequence, recorded because it reverses an earlier decision: the Pipedrive
+note adapter's `applySourceDeleted` — which hard-deleted a crosswalked
+`TimelineEntry` when a note was deleted in Pipedrive (ruling of 2026-07-31,
+morning) — has been **removed**, not just gated. Unreachable destructive code is
+a trap waiting for someone to relax the clamp "because nothing uses it". The
+pipeline hook remains, so a legitimate disposal case can still be argued for and
+implemented in the open. A Pipedrive deletion is still recorded on the crosswalk;
+only the destruction is gone.
 
 ## 3. Where the answer lives
 
@@ -98,10 +118,14 @@ finished. It exists because switching a live integration off is exactly the kind
 of decision that must be reversible if the business discovers a dependency
 nobody wrote down.
 
-It is a time machine, not a safer variant: it restores disposal too. What it
-cannot revive is the incident fix underneath it — the booking `protectRemoval`
-guards and the `Booking_cancelled_requires_timestamp` CHECK constraint hold in
-either mode.
+It restores **capture and update, and only those**. It does not restore disposal
+— see §2; that is permanent and un-grantable. Nor does it revive the incident
+fix underneath it: the booking `protectRemoval` guards and the
+`Booking_cancelled_requires_timestamp` CHECK constraint hold in either mode.
+
+This means the break-glass is safe to pull **even after Airtable has been
+emptied**, which is the whole reason the invariant was made permanent rather
+than left as a cutover setting.
 
 ## 6. The incident this pass was built around
 
@@ -176,10 +200,11 @@ been any write-back to either system — the mirror holds no code that could.
 
 ## 10. Open items that are NOT part of this cutover
 
-- **`WOO_SYNC_BULK_ENABLED=false`.** Turned off for the cutover window per
-  §0.2 of the checklist and still off. While it is off, newly generated
-  open-tour occurrences are not auto-published for sale. Restoring it is an
-  owner decision with revenue impact, not an engineering step.
+- **`WOO_SYNC_BULK_ENABLED`** — RESOLVED 2026-07-31: `true` is now the normal
+  permanent operating mode. The website must always be an exact reflection of the
+  Open Tours in GOS. Checklist §0.2 has been withdrawn; its rationale did not
+  match the code (the no-sellable-cards check precedes the first-publication
+  gate, so a template-less imported tour can never publish under any flag value).
 - **WhatsApp number migration** — tracked in
   `GOS-whatsapp-number-migration-audit.md` §1, triggered by a QR scan.
 - **The Pipedrive files backfill** (`import-files.mjs`) is a migration job, not

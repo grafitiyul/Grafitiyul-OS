@@ -202,9 +202,11 @@ test('the engine overrules a permissive adapter — architecture is not the adap
   const permissive = () => undefined;
   assert.equal(removalGuardFor('airtable', 'tourEvent', permissive)({}), 'conflict');
   assert.equal(removalGuardFor('pipedrive', 'deal', permissive)({}), 'conflict');
-  // …and hands the adapter its own guard back when disposal IS authorised.
+  // …and the break-glass does NOT hand it back. Disposal is permanently
+  // un-grantable (owner ruling 2026-07-31), so there is no mode in which an
+  // adapter's own removal policy is consulted again.
   assert.equal(
-    removalGuardFor('airtable', 'tourEvent', permissive, { LEGACY_MIRROR_MODE: 'full_mirror' }),
-    permissive,
+    removalGuardFor('airtable', 'tourEvent', permissive, { LEGACY_MIRROR_MODE: 'full_mirror' })({}),
+    'conflict',
   );
 });
