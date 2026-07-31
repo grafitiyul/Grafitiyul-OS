@@ -6,6 +6,15 @@ import assert from 'node:assert/strict';
 // override, which is the same switch the runtime flag feeds.
 process.env.MIRROR_APPLY_ENABLED = 'true';
 
+// It also exercises the MERGE ENGINE — 3-way merge, conflict raising, baseline
+// advance, append-only channels, source-deletion handling. The 2026-07-31
+// cutover retired most of the *permissions* to use that engine, but deleted none
+// of it: creation still runs through it, and the `full_mirror` break-glass
+// restores the rest. So the engine is tested in the mode that engages it, and
+// the cutover's own semantics — which paths are now refused, and with what
+// reason — are pinned separately in legacyPolicy.test.js and cutover.test.js.
+process.env.LEGACY_MIRROR_MODE = 'full_mirror';
+
 import { OUTCOME, buildIdempotencyKey, ingestMirror, mirroredEntities, processEvent, receive } from './pipeline.js';
 import { CLAIM_TTL_MS, claimOneEvent, mirrorHealth, runPollTick, runRetryTick } from './worker.js';
 import { resolveConflict } from './resolve.js';
@@ -429,10 +438,22 @@ test('a failing poll records the error and increments the streak', async () => {
 
 test('health surfaces a SILENTLY dead poller — the worst failure mode', async () => {
   const db = mirrorDb();
-  db._t.mirrorCursor.push({ id: 'airtable:tourEvent', failureStreak: 0, lastRunAt: new Date(), lastSuccessAt: new Date(Date.now() - 60 * 60 * 1000) });
+  db._t.mirrorCursor.push({ id: 'airtable:tourEvent', system: 'airtable', entity: 'tourEvent', failureStreak: 0, lastRunAt: new Date(), lastSuccessAt: new Date(Date.now() - 60 * 60 * 1000) });
   const h = await mirrorHealth(db);
   assert.equal(h.ok, false);
   assert.equal(h.problems[0].problem, 'stale');
+});
+
+test('a RETIRED poller is finished, not stale — it must not shout forever', async () => {
+  // Post-cutover the Airtable cursors sit frozen at the moment they stopped.
+  // Reporting them as broken for the rest of time is how a health screen trains
+  // everyone to ignore it. They are kept (as evidence of where the mirror got
+  // to) and marked, not judged.
+  const db = mirrorDb();
+  db._t.mirrorCursor.push({ id: 'airtable:tourEvent', system: 'airtable', entity: 'tourEvent', failureStreak: 12, lastRunAt: new Date(), lastSuccessAt: new Date(Date.now() - 60 * 60 * 1000) });
+  const h = await mirrorHealth(db, { env: { LEGACY_MIRROR_MODE: 'cutover' } });
+  assert.equal(h.problems.length, 0);
+  assert.equal(h.cursors[0].retired, true);
 });
 
 test('health surfaces dead events needing a human', async () => {

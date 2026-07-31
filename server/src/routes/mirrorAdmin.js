@@ -9,6 +9,8 @@ import { prisma } from '../db.js';
 import { mirrorHealth } from '../mirror/worker.js';
 import { processEvent } from '../mirror/pipeline.js';
 import { registryStatus, validateRegistry } from '../mirror/sourceRegistry.js';
+import { policyStatus } from '../mirror/legacyPolicy.js';
+import { mirrorMode } from '../mirror/config.js';
 import { resolveConflict, CHOICES } from '../mirror/resolve.js';
 import { mirrorAdapterFactory } from '../mirror/adapters.js';
 import { OWNERSHIP, writableFields } from '../mirror/ownership.js';
@@ -32,8 +34,18 @@ router.get('/status', handle(async (_req, res) => {
   const registry = registryStatus();
   const validation = validateRegistry();
   const byOutcome = await prisma.mirrorEvent.groupBy({ by: ['outcome'], _count: { _all: true } }).catch(() => []);
+  const mode = mirrorMode();
   res.json({
-    enabled: String(process.env.MIRROR_ENABLED || '').toLowerCase() === 'true',
+    // Reported from the CANONICAL phase flags. This used to read MIRROR_ENABLED,
+    // the legacy single switch nobody sets any more, so a fully live mirror
+    // reported itself as disabled.
+    enabled: mode.capture,
+    capture: mode.capture,
+    apply: mode.apply,
+    // WHAT each legacy system is still permitted to do, straight from the module
+    // the pipeline obeys — a status screen must not be able to describe a
+    // permission the engine does not hold.
+    policy: policyStatus(),
     health,
     registry,
     registryOk: validation.ok,

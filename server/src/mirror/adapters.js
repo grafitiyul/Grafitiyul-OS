@@ -16,6 +16,7 @@ import { airtableClientFromEnv } from './sources/airtableClient.js';
 import { createContact, createDeal, createNote, createOrganization, createActivity, makeTourCreator } from './creators.js';
 import { fileAdapter, pipedriveFilesConfigured, pipedriveFilesSource } from './sources/pipedriveFiles.js';
 import { PARENT_LINK_FIELDS } from './sources/airtableTourChildren.js';
+import { isRetired } from './legacyPolicy.js';
 
 // Stage lookups are cached briefly: the mirror can process a burst of events,
 // and re-reading the stage table per event would be wasteful — but a rename in
@@ -71,6 +72,16 @@ export function mirrorAdapterFactory(system, entity, row = null) {
   // already discarded two real coordination-row changes.
   if (system === 'airtable') {
     if (entity !== 'tourEvent') return null;
+    // RETIRED (cutover 2026-07-31): return a TRANSLATION-ONLY adapter and never
+    // build a live Airtable client, a child fetcher or a tour creator. The
+    // pipeline refuses the event before the adapter is ever used; this branch
+    // exists only so callers that resolve an adapter first — the admin replay
+    // route — get the policy's named refusal rather than a bare `no_adapter`,
+    // which reads like a configuration bug instead of a decision.
+    if (isRetired('airtable', 'tourEvent')) {
+      const kind = airtableChildKindOf(row?.rawPayload);
+      return kind ? tourChildrenAdapter({ childKind: kind, deps: {} }) : tourAdapter();
+    }
     const childKind = airtableChildKindOf(row?.rawPayload);
     if (!childKind) {
       const a = tourAdapter();
@@ -130,14 +141,15 @@ export async function warmMirrorAdapters() {
  * failure streak, and bury the one signal that matters — so an unconfigured
  * source produces NO target rather than a permanently red one.
  */
-export function buildPollTargets({ ingest, airtableClient = null, prisma: db = prisma, budget = null } = {}) {
+export function buildPollTargets({ ingest, airtableClient = null, prisma: db = prisma, budget = null, env = process.env } = {}) {
   const targets = [];
   // Pipedrive FILES are polled (there is no file webhook object) — one
   // /recents request per tick, cursor = max observed update_time. Independent
   // of the Airtable client.
-  // Owner-gated (2026-07-31): while the Pipedrive quota is exhausted the poll
-  // is pure 429 noise. OFF until explicitly re-approved after reset.
-  if (pipedriveFilesConfigured() && String(process.env.MIRROR_FILES_POLL_ENABLED || '').toLowerCase() !== 'false') {
+  // RETIRED at the cutover (2026-07-31). The env gate below predates it and is
+  // kept only so the two switches cannot disagree; the policy is what decides.
+  if (!isRetired('pipedrive', 'file', env)
+      && pipedriveFilesConfigured() && String(env.MIRROR_FILES_POLL_ENABLED || '').toLowerCase() !== 'false') {
     targets.push({
       system: 'pipedrive',
       entity: 'file',
@@ -147,6 +159,17 @@ export function buildPollTargets({ ingest, airtableClient = null, prisma: db = p
       ingest,
     });
   }
+
+  // AIRTABLE IS RETIRED (cutover 2026-07-31). No scheduling, no guides, no
+  // participants, no operational updates — so there is nothing left to poll for.
+  //
+  // Returning no targets is the honest expression of that: the pollers do not
+  // run, so they cannot fail, cannot spend Airtable quota, and cannot produce a
+  // recompute. The pipeline refuses Airtable events independently (a retired
+  // source is refused even if an event reaches it by another route), but a
+  // poller that still ran and buffered work nobody would ever apply would be a
+  // lie told by a healthy-looking dashboard.
+  if (isRetired('airtable', 'tourEvent', env)) return targets;
 
   if (!airtableClient) return targets;
 
@@ -243,12 +266,19 @@ const CHILD_FIELDS = Object.freeze({
  *
  * A stub client is enough — buildPollTargets only needs it to decide that Airtable
  * is configured, and nothing here polls.
+ *
+ * Derived with the retirement DELIBERATELY overridden. This function describes an
+ * identity contract (which cursor id belongs to which table), not a live target
+ * list, and that contract must stay pinned and testable even though the pollers
+ * no longer run — otherwise pulling the `full_mirror` break-glass would restore
+ * the pollers and silently lose the seeding that keeps their first read bounded.
  */
 export function airtableCursorTargets() {
   const targets = buildPollTargets({
     ingest: () => { throw new Error('airtableCursorTargets must not ingest'); },
     airtableClient: { __stub: true },
     prisma: null,
+    env: { ...process.env, LEGACY_MIRROR_MODE: 'full_mirror' },
   });
   return targets
     .filter((t) => t.system === 'airtable')

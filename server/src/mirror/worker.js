@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { processEvent } from './pipeline.js';
 import { captureEnabled, mirrorMode, pollIntervalMs } from './config.js';
+import { isRetired } from './legacyPolicy.js';
 import { MODE, modeOf } from './modes.js';
 import { processCoalesced } from './coalesce.js';
 
@@ -85,6 +86,20 @@ export async function runRetryTick(db, adapterFactory, { max = BATCH } = {}) {
   const perEvent = [];
   const recompute = [];
   for (const row of rows) {
+    // A RETIRED source is settled before any adapter is built. Two reasons, and
+    // the second is the important one:
+    //   * building an Airtable adapter constructs a live API client and a child
+    //     fetcher for a source we have decided never to read again;
+    //   * retired parent_recompute events would otherwise flow into
+    //     processCoalesced, which groups them by parent and recomputes — the
+    //     exact operation the cutover exists to stop.
+    // processEvent settles it terminally with a named reason; it consults the
+    // policy from the row itself and needs no adapter to do so.
+    if (isRetired(row.system, row.entity)) {
+      await processEvent(db, row.id, null);
+      stats.processed++;
+      continue;
+    }
     // The row is passed so the factory can disambiguate targets that share an
     // entity (all four Airtable pollers declare 'tourEvent').
     const adapter = adapterFactory(row.system, row.entity, row);
@@ -209,11 +224,28 @@ export async function runPollTick(db, { system, entity, cursorKey = null, source
  * A poller that has silently stopped is worse than one that never ran, because
  * the mirror keeps *looking* live. This makes that state visible.
  */
-export async function mirrorHealth(db, { staleAfterMs = 30 * 60 * 1000 } = {}) {
-  const cursors = await db.mirrorCursor.findMany({ orderBy: { id: 'asc' } });
+export async function mirrorHealth(db, { staleAfterMs = 30 * 60 * 1000, env = process.env } = {}) {
+  const rawCursors = await db.mirrorCursor.findMany({ orderBy: { id: 'asc' } });
   const now = Date.now();
   const problems = [];
+  // A RETIRED poller's cursor is left in place as evidence of where it stopped —
+  // deleting it would erase the record of how far the mirror got. But it must not
+  // be judged against liveness rules any more: a cursor that has not polled since
+  // the cutover is not "stale", it is finished. Reporting it as a problem forever
+  // would train everyone to ignore this screen, which is the one failure mode a
+  // health report cannot survive.
+  //
+  // A row must NAME the source it belongs to before it can claim retirement.
+  // Without that check a malformed cursor — no system, no entity — would look
+  // up an undeclared pair, get "no permissions", and be waved through as
+  // retired: the one row most likely to be genuinely broken would become the one
+  // row nobody is told about.
+  const cursors = rawCursors.map((c) => ({
+    ...c,
+    retired: Boolean(c.system && c.entity) && isRetired(c.system, c.entity, env),
+  }));
   for (const c of cursors) {
+    if (c.retired) continue;
     if (c.failureStreak >= 3) {
       problems.push({ cursor: c.id, problem: 'failing', detail: `${c.failureStreak} consecutive failures: ${c.lastError || 'unknown'}` });
     } else if (c.lastSuccessAt && now - new Date(c.lastSuccessAt).getTime() > staleAfterMs) {

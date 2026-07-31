@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 
 process.env.MIRROR_APPLY_ENABLED = 'true';
 
+// Coalescing is an efficiency property of the parent_recompute ENGINE. Its only
+// production consumer (Airtable) was retired by the 2026-07-31 cutover — and the
+// retry worker now settles retired events before they can ever reach the
+// coalescer — so the engine is measured in the mode that still engages it.
+process.env.LEGACY_MIRROR_MODE = 'full_mirror';
+
 import { createBudget, groupByParent, processCoalesced } from './coalesce.js';
 import { MODE } from './modes.js';
 

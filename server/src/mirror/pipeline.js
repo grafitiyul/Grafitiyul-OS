@@ -22,6 +22,7 @@ import { OWNERSHIP, owningSystem } from './ownership.js';
 import { advanceBaseline, markSourceDeleted, readBaseline } from './baseline.js';
 import { raiseSyncConflict } from './conflicts.js';
 import { mirrorShouldIgnore, sourceForLegacyLabel } from './sourceRegistry.js';
+import { legacyCapabilities, refusalReason, removalGuardFor } from './legacyPolicy.js';
 import { applyEnabled } from './config.js';
 import { emitMirrorApplied } from './events.js';
 import { MODE, assertAdapterContract, diffSets, modeOf } from './modes.js';
@@ -37,6 +38,10 @@ export const OUTCOME = Object.freeze({
   NOT_CROSSWALKED: 'not_crosswalked',
   INTENTIONALLY_EXCLUDED: 'intentionally_excluded', // owner-ruled exclusion (spam/shell) — terminal, named
   IGNORED_SOURCE_CUT_OVER: 'ignored_source_cut_over',
+  // The legacy system still sent it, but it no longer has authority to act.
+  // Terminal and NAMED — an operator reading the audit spine sees which
+  // architectural decision refused it, not a mysterious silence.
+  LEGACY_RETIRED: 'legacy_retired',
   // parent_recompute outcomes
   RECOMPUTED: 'recomputed',
   NO_PARENT: 'no_parent',
@@ -116,6 +121,34 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
   if (!row) return { status: 'missing' };
   if (row.status === 'processed' || row.status === 'skipped') {
     return { status: row.status, outcome: row.outcome, alreadyDone: true };
+  }
+
+  // THE cutover gate, and it comes BEFORE the apply gate on purpose.
+  //
+  // The apply gate BUFFERS: it leaves the event pending so a paused mirror loses
+  // nothing when it resumes. That is exactly the wrong answer for a retired
+  // source. Buffering a change we have decided never to apply would grow a queue
+  // of work that will never be done while reporting the mirror as healthy — the
+  // same class of dishonesty the `defer`/`finish` split exists to prevent. A
+  // retired source is retired whether or not apply happens to be on.
+  const caps = legacyCapabilities(row.system, row.entity);
+  if (!caps.create && !caps.update && !caps.dispose) {
+    const why = refusalReason(row.system, row.entity, 'any');
+    await db.mirrorEvent.update({
+      where: { id: eventId },
+      data: {
+        status: 'skipped',
+        outcome: OUTCOME.LEGACY_RETIRED,
+        failureCode: why.code,
+        failureMessage: why.message,
+        attemptCount: (row.attemptCount || 0) + 1,
+        processedAt: new Date(),
+        nextRetryAt: null,
+        claimedAt: null,
+        claimedBy: null,
+      },
+    });
+    return { status: 'skipped', outcome: OUTCOME.LEGACY_RETIRED, reason: why.code };
   }
 
   // THE apply gate. One condition, consulted by every path — webhook, poll,
@@ -225,6 +258,14 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
         return { status: 'processed', outcome: OUTCOME.SOURCE_DELETED };
       }
 
+      // PROPOSE. This is the one thing a legacy system may still do, and for
+      // Pipedrive it is the entire remaining reason the integration exists.
+      if (!caps.create) {
+        const why = refusalReason(system, entity, 'create');
+        await finish({ status: 'skipped', outcome: OUTCOME.LEGACY_RETIRED, failureCode: why.code, failureMessage: why.message });
+        return { status: 'skipped', outcome: OUTCOME.LEGACY_RETIRED, reason: why.code };
+      }
+
       if (typeof adapter.createGos !== 'function') {
         await defer(
           'awaiting_creation_support',
@@ -285,7 +326,14 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     // nothing again.
     if (normalized.sourceDeleted) {
       let applied = null;
-      if (typeof adapter.applySourceDeleted === 'function' && !link.sourceDeletedAt) {
+      // PROPOSE, NEVER DISPOSE. `applySourceDeleted` is the only path by which a
+      // legacy deletion could remove a GOS row, and after the cutover no system
+      // holds that authority — so the crosswalk is still stamped (the fact is
+      // recorded) but nothing is destroyed. This deliberately supersedes the
+      // 2026-07-31 ruling that a note deleted in Pipedrive should disappear from
+      // GOS: that ruling was made while Pipedrive was still a live CRM, and
+      // Pipedrive note synchronization is now retired outright.
+      if (caps.dispose && typeof adapter.applySourceDeleted === 'function' && !link.sourceDeletedAt) {
         applied = await adapter.applySourceDeleted(db, link.entityId);
       }
       await markSourceDeleted(db, key);
@@ -298,6 +346,25 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
         emitMirrorApplied(db, { entity, entityId: link.entityId, dealId: null, reason: 'source_deleted' });
       }
       return { status: 'processed', outcome: OUTCOME.SOURCE_DELETED, entityId: link.entityId, applied };
+    }
+
+    // UPDATE — everything below this line changes a record GOS already holds.
+    // After the cutover GOS owns every such record outright, so the merge does
+    // not run at all: no field sync, no status sync, and (because channels are
+    // reconciled further down the same path) no phone/email append either.
+    // Terminal rather than deferred — this is a decision about authority, not a
+    // capability that might arrive later.
+    if (!caps.update) {
+      const why = refusalReason(system, entity, 'update');
+      await finish({
+        status: 'skipped',
+        outcome: OUTCOME.LEGACY_RETIRED,
+        gosEntityType: link.entityType,
+        gosEntityId: link.entityId,
+        failureCode: why.code,
+        failureMessage: why.message,
+      });
+      return { status: 'skipped', outcome: OUTCOME.LEGACY_RETIRED, entityId: link.entityId, reason: why.code };
     }
 
     const gos = await adapter.loadGos(db, link.entityId);
@@ -455,13 +522,21 @@ async function runParentRecompute(db, row, adapter, finish) {
 
   const desired = await adapter.derive(db, parent);
   const current = await adapter.loadCurrent(db, parent);
+
+  // PROPOSE, NEVER DISPOSE — enforced by the ENGINE, above whatever the adapter
+  // decides for itself. When the system has no disposal authority a
+  // disappearance can only become an operator DECISION: never applied, and never
+  // silently dropped either. The law itself lives in legacyPolicy so it is one
+  // testable thing rather than a condition buried in a call site.
+  const protectRemoval = removalGuardFor(row.system, row.entity, adapter.protectRemoval || null);
+
   const diff = diffSets({
     current,
     desired,
     keyOf: adapter.keyOf,
     sameOf: adapter.sameOf,
     protect: adapter.protect || null,
-    protectRemoval: adapter.protectRemoval || null,
+    protectRemoval,
   });
 
   if (diff.conflicts.length) {
