@@ -9,7 +9,9 @@ import AlertDialog from '../common/AlertDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
 import { loadToursView, saveToursView } from './viewPrefs.js';
-import { useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
+import { emitTourChanged, useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
+import { ComponentChip } from './ComponentChips.jsx';
+import TourComponents from './TourComponents.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import MultiSelectFilter from '../common/filters/MultiSelectFilter.jsx';
@@ -176,6 +178,57 @@ function TeamNames({ team }) {
   );
 }
 
+// "מרכיבי הפעילות" cell — the canonical READ chips (ComponentChip), and a
+// click opens THE canonical editor (TourComponents — same component, same
+// api.tours endpoints, same permissions/timeline behavior as the Tour modal)
+// in an anchored popover. No second editor, no duplicated business logic.
+// After every change the editor emits the canonical tour-changed signal, so
+// this table, the calendar, and any open Tour modal all re-fetch through the
+// ONE existing mechanism (no optimistic patching of a single row).
+function ComponentsCell({ tour }) {
+  const anchorRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const rows = tour.activityComponents || [];
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        title="עריכת מרכיבי הפעילות"
+        onClick={(e) => {
+          e.stopPropagation(); // the row navigates; the cell edits
+          setOpen((o) => !o);
+        }}
+        className="block w-full rounded-md px-0.5 py-0.5 text-right hover:bg-blue-50/60"
+      >
+        {rows.length ? (
+          <span className="flex flex-wrap items-center gap-1">
+            {rows.map((row) => (
+              <ComponentChip
+                key={row.id}
+                component={row.activityComponent}
+                workshopLocation={row.workshopLocation}
+              />
+            ))}
+          </span>
+        ) : (
+          <span className="text-[12.5px] text-gray-400">+ מרכיבים</span>
+        )}
+      </button>
+      <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={480}>
+        <div className="px-3 pb-3 pt-2" onClick={(e) => e.stopPropagation()}>
+          <div className="mb-2 text-[13px] font-bold text-gray-800">מרכיבי הפעילות</div>
+          <TourComponents
+            tourId={tour.id}
+            rows={rows}
+            onChanged={() => emitTourChanged({ tourEventId: tour.id, reason: 'components' })}
+          />
+        </div>
+      </AnchoredMenu>
+    </>
+  );
+}
+
 // Derived schedule helpers for the optional columns — presentation only, the
 // SSOT stays TourEvent.date/startTime + ProductVariant.durationHours.
 const WEEKDAYS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
@@ -224,6 +277,10 @@ const COLUMNS = [
   { key: 'language', label: 'שפה', def: true, sortVal: (t) => t.tourLanguage || '',
     cls: 'text-gray-600',
     render: (t) => TOUR_LANG_LABELS[t.tourLanguage] || dash },
+  { key: 'components', label: 'מרכיבי הפעילות', def: false,
+    sortVal: (t) => t.activityComponents?.length || 0,
+    cls: 'max-w-[340px]',
+    render: (t) => <ComponentsCell tour={t} /> },
   { key: 'occupancy', label: 'משתתפים', def: true, sortVal: (t) => t.activeSeats,
     render: (t) => <Occupancy t={t} /> },
   { key: 'capacity', label: 'קיבולת', def: false, sortVal: (t) => t.capacity ?? -1,

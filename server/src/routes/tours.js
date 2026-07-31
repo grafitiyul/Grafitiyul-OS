@@ -77,6 +77,14 @@ const TOUR_INCLUDE = {
     },
   },
   location: { select: { id: true, nameHe: true } },
+  // Delivered components ride the list rows for the table's מרכיבי הפעילות
+  // column — SAME row shape the Tour modal editor consumes (id +
+  // activityComponent + workshopLocation), so the inline table editor and the
+  // modal are interchangeable. The catalog is tiny; no N+1 (one include).
+  activityComponents: {
+    orderBy: { sortOrder: 'asc' },
+    include: { activityComponent: true, workshopLocation: true },
+  },
 };
 
 function toClientTour(t, occ) {
