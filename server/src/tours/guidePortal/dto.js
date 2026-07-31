@@ -67,6 +67,19 @@ export function variantDisplayName(tour) {
   return location ? `${name} · ${location}` : name;
 }
 
+// Operational notes for the detail card. On a product-less legacy tour the
+// notes FIRST LINE is the tour's display identity (variantDisplayName above)
+// — when that's ALL the notes contain, there is no actual note to show and
+// rendering it would duplicate the title. Multi-line notes keep everything
+// (the name line included, so nothing is ever hidden), and native tours with
+// a product always show their notes untouched.
+export function operationalNotes(tour) {
+  const raw = String(tour.notes || '').trim();
+  if (!raw) return null;
+  if (tour.product?.nameHe) return raw;
+  return raw.includes('\n') ? raw : null;
+}
+
 // ---------- list card ----------
 
 export function guideTourCardDto({ tour, assignment, occupancy, guideColor = null }) {
@@ -223,7 +236,7 @@ export function guideTourDetailDto({
     variantName: variantDisplayName(tour),
     productName: tour.product?.nameHe || null,
     locationName: tour.location?.nameHe || tour.productVariant?.location?.nameHe || null,
-    notes: tour.notes || null, // operational tour note, not CRM
+    notes: operationalNotes(tour), // operational tour note, not CRM
     viewerRole: assignment?.role || null,
     participantsTotal: occ.activeSeats || 0,
     team: permissions.viewTeam

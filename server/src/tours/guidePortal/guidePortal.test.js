@@ -530,3 +530,17 @@ test('variantDisplayName: product name wins; legacy tours use the notes first-li
     'סיור · חיפה',
   );
 });
+
+test('operationalNotes: a single-line legacy name is the TITLE, not a note', async () => {
+  const { operationalNotes } = await import('./dto.js');
+  // Product-less legacy tour, notes = the name line only → no note box.
+  assert.equal(operationalNotes({ product: null, notes: 'סיור וסדנת גרפיטי 30/07/26' }), null);
+  // Multi-line legacy notes keep EVERYTHING (nothing hidden).
+  assert.equal(
+    operationalNotes({ product: null, notes: 'סיור וסדנת גרפיטי\nלהביא רמקול' }),
+    'סיור וסדנת גרפיטי\nלהביא רמקול',
+  );
+  // Native tour with a product — notes always show untouched.
+  assert.equal(operationalNotes({ product: { nameHe: 'סיור' }, notes: 'להביא רמקול' }), 'להביא רמקול');
+  assert.equal(operationalNotes({ product: null, notes: '' }), null);
+});
