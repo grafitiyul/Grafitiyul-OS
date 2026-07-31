@@ -184,7 +184,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
   //   - phoneNumber: the COUNTERPARTY's phone (from externalChatId or inbound
   //     senderPn) — never the owner's, never @lid digits.
   //   - savedContactName/groupSubject: written only by their event handlers.
-  async function upsertChat(externalChatId, isGroup, senderPushName, counterpartyPhone, senderPnJid, lastMessageAt, altJid = null) {
+  async function upsertChat(externalChatId, isGroup, senderPushName, counterpartyPhone, senderPnJid, lastMessageAt, altJid = null, source = 'live') {
     const existing = isGroup
       ? await prisma.whatsAppChat.findUnique({
           where: { accountId_externalChatId: { accountId, externalChatId } },
@@ -237,7 +237,14 @@ export function createIngest({ prisma, socket, log, accountId }) {
         log.warn({ chatId: externalChatId, err: errSummary(err) }, 'groupMetadata fetch failed; groupSubject left null');
       }
     }
-    const profilePictureUrl = await fetchProfilePictureSafe(socket, externalChatId, log);
+    // Provider-safety: the inline avatar probe is for LIVE chat creation only.
+    // A full-history pairing creates hundreds of chats in one wave — probing
+    // each one inline is exactly the burst fan-out that got ~3.6% success on
+    // the 2026-07-30 811-chat pairing. History-created chats are left to the
+    // avatar worker's paced 1/min loop with its per-chat backoff state.
+    const profilePictureUrl = source === 'history'
+      ? null
+      : await fetchProfilePictureSafe(socket, externalChatId, log);
     const altLid = altJid?.endsWith('@lid') ? altJid : null;
     const altPn = altJid?.endsWith('@s.whatsapp.net') ? altJid : null;
     const lidJid = !isGroup && externalChatId.endsWith('@lid') ? externalChatId : altLid;
@@ -548,7 +555,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
     const timestampFromSource = new Date(timestampSec * 1000);
 
     const chat = await upsertChat(
-      externalChatId, isGroup, senderPushNameForChat, chatPhoneFromCounterparty, senderPnJid, timestampFromSource, chatAltJid,
+      externalChatId, isGroup, senderPushNameForChat, chatPhoneFromCounterparty, senderPnJid, timestampFromSource, chatAltJid, source,
     );
 
     const initialMediaStatus = content.mediaInfo ? (isMediaConfigured() ? 'pending' : 'disabled') : null;
