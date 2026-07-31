@@ -399,7 +399,24 @@ export function noteAdapter() {
       };
     },
     async loadGos() { return { id: 'immutable' }; },
-    async applyGos() { /* never writes: imported history is immutable */ },
+    async applyGos() { /* EDITS never write: imported history is immutable */ },
+
+    /**
+     * DELETION is different from an edit (owner ruling 2026-07-31): a note the
+     * team deleted in Pipedrive must stop being shown in GOS. Hard delete of the
+     * ONE crosswalked TimelineEntry, and only if it still looks like an imported
+     * note — kind/actorType are re-checked so that even a corrupted crosswalk
+     * could never take out a native GOS timeline record. Idempotent by both the
+     * pipeline's sourceDeletedAt guard and deleteMany's natural zero-match.
+     */
+    async applySourceDeleted(db, entityId) {
+      if (!entityId) return null;
+      const res = await db.timelineEntry.deleteMany({
+        where: { id: entityId, kind: 'note', actorType: 'import' },
+      });
+      return { deletedTimelineEntries: res.count };
+    },
+
     describe: () => ({ label: 'note' }),
   };
 }

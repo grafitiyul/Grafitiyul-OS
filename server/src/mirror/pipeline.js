@@ -275,14 +275,29 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
       return { status: 'processed', outcome: OUTCOME.CREATED, entityId: created.entityId };
     }
 
-    // Disappearance is recorded, never actioned. GOS owns operational history.
+    // Disappearance is recorded on the crosswalk, and an adapter may OPT IN to
+    // acting on it (owner ruling 2026-07-31: a note deleted in Pipedrive must
+    // stop being shown in GOS). The default remains record-only — most entities'
+    // history is GOS-owned and a source deletion must not erase it. The
+    // invariant either way: only the entity the crosswalk points at can be
+    // touched, so a native GOS record (which has no crosswalk) is unreachable,
+    // and a repeated delete event finds sourceDeletedAt already set and does
+    // nothing again.
     if (normalized.sourceDeleted) {
+      let applied = null;
+      if (typeof adapter.applySourceDeleted === 'function' && !link.sourceDeletedAt) {
+        applied = await adapter.applySourceDeleted(db, link.entityId);
+      }
       await markSourceDeleted(db, key);
       await finish({
         status: 'processed', outcome: OUTCOME.SOURCE_DELETED,
         gosEntityType: link.entityType, gosEntityId: link.entityId,
+        fieldsWritten: applied || undefined,
       });
-      return { status: 'processed', outcome: OUTCOME.SOURCE_DELETED, entityId: link.entityId };
+      if (applied) {
+        emitMirrorApplied(db, { entity, entityId: link.entityId, dealId: null, reason: 'source_deleted' });
+      }
+      return { status: 'processed', outcome: OUTCOME.SOURCE_DELETED, entityId: link.entityId, applied };
     }
 
     const gos = await adapter.loadGos(db, link.entityId);

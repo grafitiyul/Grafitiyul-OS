@@ -691,3 +691,44 @@ test('emails compare case-insensitively', async () => {
   }, contactAdapter());
   assert.equal(db._t.contactEmail.length, 1);
 });
+
+// ── note deletion (owner ruling 2026-07-31) ──────────────────────────────────
+
+test('a deleted note removes ONLY its crosswalked imported timeline entry', async () => {
+  const db = mirrorDb({ crosswalk: [{ sourceSystem: 'pipedrive', sourceType: 'note', sourceId: '75223', entityType: 'TimelineEntry', entityId: 'te1', syncBaseline: null }] });
+  db._t.timelineEntry = [
+    { id: 'te1', kind: 'note', actorType: 'import', body: 'imported' },
+    { id: 'te2', kind: 'note', actorType: 'admin', body: 'native note — untouchable' },
+  ];
+  db.timelineEntry = {
+    deleteMany: async ({ where }) => {
+      const before = db._t.timelineEntry.length;
+      db._t.timelineEntry = db._t.timelineEntry.filter((e) => !(e.id === where.id && e.kind === where.kind && e.actorType === where.actorType));
+      return { count: before - db._t.timelineEntry.length };
+    },
+  };
+  const { noteAdapter } = await import('./sources/pipedriveMirror.js');
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'note', externalId: '75223', changeKind: 'deleted',
+    transport: 'webhook', version: 'v1', rawPayload: { meta: { object: 'note', action: 'deleted', id: 75223 }, current: null },
+  }, noteAdapter());
+  assert.equal(res.outcome, OUTCOME.SOURCE_DELETED);
+  assert.deepEqual(res.applied, { deletedTimelineEntries: 1 });
+  assert.equal(db._t.timelineEntry.length, 1);
+  assert.equal(db._t.timelineEntry[0].id, 'te2', 'the native note survives');
+});
+
+test('a REPEATED delete event changes nothing (idempotent)', async () => {
+  const db = mirrorDb({ crosswalk: [{ sourceSystem: 'pipedrive', sourceType: 'note', sourceId: '75223', entityType: 'TimelineEntry', entityId: 'te1', syncBaseline: null, sourceDeletedAt: new Date() }] });
+  db._t.timelineEntry = [];
+  let deleteCalls = 0;
+  db.timelineEntry = { deleteMany: async () => { deleteCalls += 1; return { count: 0 }; } };
+  const { noteAdapter } = await import('./sources/pipedriveMirror.js');
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'note', externalId: '75223', changeKind: 'deleted',
+    transport: 'webhook', version: 'v2', rawPayload: { meta: { object: 'note', action: 'deleted', id: 75223 }, current: null },
+  }, noteAdapter());
+  assert.equal(res.outcome, OUTCOME.SOURCE_DELETED);
+  assert.equal(res.applied, null, 'sourceDeletedAt already set — the hook is not called again');
+  assert.equal(deleteCalls, 0);
+});
