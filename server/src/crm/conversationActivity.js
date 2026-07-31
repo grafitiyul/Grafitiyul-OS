@@ -1,6 +1,6 @@
 // THE bridge between conversations (WhatsApp / Gmail) and Deal business
-// activity. One module so both channels attribute messages to deals by the
-// SAME rule, and so `lastMeaningfulActivityAt` has exactly one meaning.
+// activity. One module so both channels attribute messages by the SAME rule,
+// and so `lastMeaningfulActivityAt` has exactly one meaning.
 //
 // WHY THIS EXISTS
 // Deal timeline entries funnel through emitTimelineEvent, which stamps the
@@ -8,51 +8,170 @@
 // bridge and merged into the timeline at READ time, and Gmail threads are
 // mirrored per-thread. Neither creates a per-deal row, so neither could move
 // the deal's activity stamp — a customer could message all week and their deal
-// would sink down the list. This module closes that gap.
+// would sink down the list.
 //
-// ATTRIBUTION RULE (deliberate, and deliberately not "the one deal"):
-//   * an EXPLICIT link wins — EmailThread.linkedDealId is a stored decision
-//     (auto-matched on an unambiguous hit, or set by a human).
-//   * otherwise every CANDIDATE deal of the linked contact is stamped, using
-//     the same candidate definition the inbox's deal resolution uses (open
-//     deals + WON deals toured within 7 days — crm/dealResolution.js).
-// When a contact has two open deals we genuinely do not know which one the
-// message concerns. Stamping both is honest ("this customer was in touch");
-// stamping neither would silently lose the signal, and guessing one would be
-// wrong half the time. Lost/old-won deals are excluded so an unrelated message
-// can never resurrect a closed deal to the top of the list.
+// ATTRIBUTION — EXACTLY ONE DEAL (product decision 2026-07-31)
+// An explicit link wins outright: EmailThread.linkedDealId is a stored
+// decision (auto-matched on an unambiguous hit, or set by a human).
+//
+// Otherwise a PRIORITY LADDER picks a single deal — one message must never
+// move every deal a contact owns. The first non-empty bucket wins:
+//
+//   P1  open deals, and WON deals whose tour is still ahead
+//   P2  WON deals toured within the last 14 days   (still being wrapped up)
+//   P3  WON deals with an outstanding balance      (money still owed)
+//   P4  LOST deals closed within the last 3 months (plausibly being revived)
+//
+// No bucket matches → NOTHING is stamped. A message about a deal that closed
+// two years ago is not activity on it, and inventing a stamp would be worse
+// than having none.
+//
+// Within the winning bucket, a deterministic tie-break: most recent activity →
+// newest deal → lowest id. Deterministic matters because this runs from a
+// sweep that may re-see the same messages: the same input must always pick the
+// same deal, or a repeated message would alternate between deals.
+//
+// Tour timing reads Deal.tourDate (the deal's own operational date, in Israel
+// calendar terms). Deliberately NOT the TourEvent status: Deal↔TourEvent runs
+// through Booking, and that join is not worth paying on a per-message path —
+// the existing inbox resolver (crm/dealResolution.js) already treats tourDate
+// as the operational signal, so both stay consistent.
 
 import { prisma } from '../db.js';
-import { dealsForContact } from './dealResolution.js';
 import { touchDealActivity } from '../timeline/events.js';
+import { israelToday, addDays, compareDates } from '../lib/israelDate.js';
+import { computeCollection, RECEIPT_DOCTYPES, REFUND_DOCTYPE } from '../collection.js';
 
-// Candidate deals for activity attribution — same rule as the inbox resolver,
-// minus the "exactly one" requirement (see the header for why).
-export async function activityDealIdsForContact(contactId, db = prisma) {
-  if (!contactId) return [];
-  const deals = await dealsForContact(contactId, db);
-  if (!deals.length) return [];
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-  return deals
-    .filter((d) => d.status === 'open' || (d.status === 'won' && d.tourDate && d.tourDate >= sevenDaysAgo))
-    .map((d) => d.id);
+const RECENT_TOUR_DAYS = 14;
+const LOST_REVIVAL_DAYS = 90; // "last 3 months"
+
+// Only the columns the ladder needs — a lean, dedicated read rather than
+// dealResolution.dealsForContact, which also fetches stage/organization names
+// for the inbox UI (two extra queries this path has no use for).
+const LADDER_SELECT = {
+  id: true,
+  status: true,
+  tourDate: true,
+  lostAt: true,
+  valueMinor: true,
+  createdAt: true,
+  lastMeaningfulActivityAt: true,
+};
+
+// most recent activity → newest deal → lowest id (stable, total order).
+function compareCandidates(a, b) {
+  const at = a.lastMeaningfulActivityAt ? new Date(a.lastMeaningfulActivityAt).getTime() : -Infinity;
+  const bt = b.lastMeaningfulActivityAt ? new Date(b.lastMeaningfulActivityAt).getTime() : -Infinity;
+  if (at !== bt) return bt - at;
+  const ac = a.createdAt ? new Date(a.createdAt).getTime() : -Infinity;
+  const bc = b.createdAt ? new Date(b.createdAt).getTime() : -Infinity;
+  if (ac !== bc) return bc - ac;
+  return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
 }
 
 /**
- * Stamp the deals a WhatsApp chat belongs to. `at` is the MESSAGE's own
- * timestamp, so a backfilled/late-delivered message stamps when it happened —
- * and touchDealActivity's GREATEST keeps that monotonic.
+ * The priority buckets, in order. Pure — `unpaidWonIds` is supplied by the
+ * caller so the (relatively expensive) payment lookup happens ONLY when the
+ * ladder actually reaches P3.
+ */
+export function attributionBuckets(deals, { today, now = Date.now(), unpaidWonIds = null } = {}) {
+  const isWon = (d) => d.status === 'won';
+  const recentTourFloor = addDays(today, -RECENT_TOUR_DAYS);
+  const lostFloorMs = now - LOST_REVIVAL_DAYS * 86_400_000;
+
+  return [
+    // P1 — live work: anything open, plus WON deals whose tour is still ahead.
+    deals.filter(
+      (d) => d.status === 'open' || (isWon(d) && d.tourDate && compareDates(d.tourDate, today) > 0),
+    ),
+    // P2 — just toured: the wrap-up window.
+    deals.filter(
+      (d) =>
+        isWon(d) &&
+        d.tourDate &&
+        compareDates(d.tourDate, today) <= 0 &&
+        compareDates(d.tourDate, recentTourFloor) >= 0,
+    ),
+    // P3 — money still owed (payment state resolved by the caller).
+    unpaidWonIds ? deals.filter((d) => isWon(d) && unpaidWonIds.has(d.id)) : [],
+    // P4 — recently lost: plausibly being revived by this very conversation.
+    deals.filter((d) => d.status === 'lost' && d.lostAt && new Date(d.lostAt).getTime() >= lostFloorMs),
+  ];
+}
+
+/** WON deal ids whose money has not fully arrived. One batched docs query. */
+async function unpaidWonDealIds(deals, db) {
+  const wonIds = deals.filter((d) => d.status === 'won').map((d) => d.id);
+  if (!wonIds.length) return new Set();
+  const docs = await db.icountDocument.findMany({
+    where: {
+      dealId: { in: wonIds },
+      status: 'issued',
+      doctype: { in: [...RECEIPT_DOCTYPES, REFUND_DOCTYPE] },
+    },
+    select: { dealId: true, doctype: true, amountMinor: true, createdAt: true },
+  });
+  const byDeal = new Map();
+  for (const d of docs) {
+    if (!byDeal.has(d.dealId)) byDeal.set(d.dealId, []);
+    byDeal.get(d.dealId).push(d);
+  }
+  const unpaid = new Set();
+  for (const deal of deals) {
+    if (deal.status !== 'won') continue;
+    // 'paid' is the only fully-settled state; 'no_amount' (WON but never
+    // priced) deliberately counts as outstanding — same rule the Collection
+    // screen uses, because those are exactly the deals that fall through.
+    const summary = computeCollection(deal.valueMinor, byDeal.get(deal.id) || []);
+    if (summary.status !== 'paid') unpaid.add(deal.id);
+  }
+  return unpaid;
+}
+
+/**
+ * Pick THE one deal a conversation with this contact should stamp, or null.
+ * Exported for tests and for anything that needs the decision without writing.
+ */
+export async function selectActivityDealForContact(contactId, db = prisma, { now = Date.now() } = {}) {
+  if (!contactId) return null;
+  const deals = await db.deal.findMany({
+    where: { contacts: { some: { contactId } } },
+    select: LADDER_SELECT,
+  });
+  if (!deals.length) return null;
+
+  const today = israelToday(now);
+  // P1/P2/P4 need no extra reads; only reach for payment state if the cheap
+  // buckets are all empty AND there are WON deals that could populate P3.
+  let buckets = attributionBuckets(deals, { today, now });
+  if (!buckets[0].length && !buckets[1].length && deals.some((d) => d.status === 'won')) {
+    const unpaidWonIds = await unpaidWonDealIds(deals, db);
+    buckets = attributionBuckets(deals, { today, now, unpaidWonIds });
+  }
+
+  for (const bucket of buckets) {
+    if (bucket.length) return [...bucket].sort(compareCandidates)[0].id;
+  }
+  return null; // nothing plausible — stamp nothing rather than guess
+}
+
+/**
+ * Stamp the ONE deal a WhatsApp chat belongs to. `at` is the MESSAGE's own
+ * timestamp, so a late-delivered message stamps when it happened —
+ * touchDealActivity's GREATEST keeps that monotonic.
+ * Returns the number of deals stamped (0 or 1).
  */
 export async function touchDealsForWhatsAppChat(chat, at, db = prisma) {
   if (!chat?.contactId) return 0; // unmatched conversation — no deal to touch
-  const ids = await activityDealIdsForContact(chat.contactId, db);
-  for (const id of ids) await touchDealActivity(db, id, at);
-  return ids.length;
+  const dealId = await selectActivityDealForContact(chat.contactId, db);
+  if (!dealId) return 0;
+  await touchDealActivity(db, dealId, at);
+  return 1;
 }
 
 /**
- * Stamp the deals an email thread belongs to. The explicit thread→deal link
- * wins; a contact-only thread falls back to the candidate rule.
+ * Stamp the ONE deal an email thread belongs to. The explicit thread→deal link
+ * wins; a contact-only thread runs the same ladder as WhatsApp.
  */
 export async function touchDealsForEmailThread(thread, at, db = prisma) {
   if (!thread) return 0;
@@ -61,7 +180,8 @@ export async function touchDealsForEmailThread(thread, at, db = prisma) {
     return 1;
   }
   if (!thread.contactId) return 0;
-  const ids = await activityDealIdsForContact(thread.contactId, db);
-  for (const id of ids) await touchDealActivity(db, id, at);
-  return ids.length;
+  const dealId = await selectActivityDealForContact(thread.contactId, db);
+  if (!dealId) return 0;
+  await touchDealActivity(db, dealId, at);
+  return 1;
 }
