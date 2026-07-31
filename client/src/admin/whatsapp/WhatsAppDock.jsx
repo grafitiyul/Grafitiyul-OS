@@ -1,9 +1,10 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
+import AccountBubbles from './AccountBubbles.jsx';
+import { useSubjectChats } from './useSubjectChats.js';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
-import { formatPhoneDisplay } from '../../lib/phone.js';
 import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
@@ -17,9 +18,18 @@ import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 // read model shared with the inbox — no per-device markers). Opening the popup
 // marks the visible conversation read (server SSOT + WhatsApp read receipt).
 //
-// Contact model (user spec): default to the Deal's PRIMARY contact; a compact
-// selector switches between the deal's linked contacts inside the same popup.
-// Conversations are per-contact and never merged.
+// TWO switchers, two questions, in the order an operator asks them:
+//   contacts — WHO (the deal's people; a contact with no thread still gets a
+//              bubble). Conversations are per-contact and never merged.
+//   numbers  — FROM WHICH OF OUR NUMBERS (AccountBubbles). Every connected
+//              number is present, including ones this contact has never been
+//              written to from; picking such a bubble opens that conversation
+//              on the spot.
+// Both live in useSubjectChats, which is also what the Deal's template modal
+// uses — one selection model, one panel, no duplicated send path. Everything
+// below the switchers (thread, composer, scheduling, media, templates) is
+// keyed on the resolved chat, so switching number switches every action with
+// it automatically.
 
 const WIDTH_KEY = 'gos-whatsapp-dock'; // { width } — global, not per-deal
 const MIN_W = 380;
@@ -41,20 +51,54 @@ function writeJson(key, value) {
   }
 }
 
+// The closed bubble's badge: every conversation's unread EXCEPT the ones this
+// dock has already marked read and not yet re-read from the server.
+function unreadForClosedBubble(chats, readIds) {
+  return chats.reduce((sum, c) => sum + (readIds.has(c.id) ? 0 : c.unreadCount || 0), 0);
+}
+
+const START_ERRORS = {
+  contact_has_no_phone: 'לאיש הקשר הזה אין מספר טלפון שמור, ולכן אי אפשר לפתוח ממנו שיחה. הוסיפו מספר בכרטיס איש הקשר.',
+  unknown_account: 'המספר הזה כבר לא פעיל במערכת.',
+};
+
 export default function WhatsAppDock({ subjectType, subjectId }) {
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState(null); // { chats, primaryContactId }
-  const [contactSel, setContactSel] = useState(null);
-  const [chatSel, setChatSel] = useState(null);
-  const [unread, setUnread] = useState(0);
+  // Chats this dock has already marked read but whose server count may not have
+  // been re-read yet. Scoped PER CHAT, never a blanket "unread = 0": with
+  // several conversations open on a deal, clearing the whole badge because ONE
+  // of them was read hides real unread messages on the others.
+  const [readIds, setReadIds] = useState(() => new Set());
   const [width, setWidth] = useState(() => {
     const w = Number(readJson(WIDTH_KEY, {}).width);
     return Number.isFinite(w) && w >= MIN_W && w <= MAX_W ? w : 440;
   });
   const draggingRef = useRef(false);
+  // The chat the popup was last showing — what closing reconciles against.
+  const lastViewedRef = useRef(null);
   // A generic "open composer on this chat" request (e.g. from "שלח ללקוח →
   // WhatsApp"); applied once the chat list is loaded.
   const [pendingOpenChatId, setPendingOpenChatId] = useState(null);
+
+  const {
+    chats,
+    contacts,
+    primaryContactId,
+    activeContact,
+    accounts,
+    activeAccountId,
+    activeAccount,
+    activeChat,
+    chatByAccount,
+    unreadByAccount,
+    starting,
+    startError,
+    selectContact,
+    selectAccount,
+    startConversation,
+    openChat,
+    reload,
+  } = useSubjectChats(subjectType, subjectId);
 
   // Report the open panel's width to the hosting WorkspaceLayout so the
   // center workspace moves aside instead of being covered when the left panel
@@ -82,92 +126,13 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     return () => window.removeEventListener(OPEN_WHATSAPP_COMPOSER_EVENT, onOpen);
   }, [subjectId]);
 
-  const load = useCallback(async () => {
-    try {
-      const d = await api.whatsapp.contextChats(subjectType, subjectId);
-      setData(d);
-      return d;
-    } catch {
-      return null;
-    }
-  }, [subjectType, subjectId]);
-
-  // Unread badge = sum of the server's canonical per-chat unread counts (SSOT).
-  // Manual "mark unread" flags are display-only and don't inflate the badge.
-  const computeUnread = useCallback((d) => {
-    const chats = d?.chats || [];
-    setUnread(chats.reduce((sum, c) => sum + (c.unreadCount || 0), 0));
-  }, []);
-
-  // Load + poll the chat list. While CLOSED the poll only feeds the badge;
-  // while OPEN it also keeps the selector fresh (the thread polls itself).
-  useEffect(() => {
-    let cancelled = false;
-    async function refresh() {
-      const d = await load();
-      if (!cancelled && d) computeUnread(d);
-    }
-    refresh();
-    const t = setInterval(() => {
-      if (!document.hidden) refresh();
-    }, 45_000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [load, computeUnread]);
-
   // Apply a pending "open on this chat" request once the chat list is loaded:
-  // select the chat's contact + number so ChatThread mounts on it (and its
-  // composer reads the seeded draft).
+  // selects both the contact and the number, so the thread mounts on it (and
+  // its composer reads the seeded draft).
   useEffect(() => {
-    if (!pendingOpenChatId || !data?.chats?.length) return;
-    const chat = data.chats.find((c) => c.id === pendingOpenChatId);
-    if (!chat) return;
-    setContactSel(chat.contact?.id || chat.contactId || null);
-    setChatSel(chat.id);
-    setPendingOpenChatId(null);
-  }, [pendingOpenChatId, data]);
-
-  // Contact tabs come from the DEAL'S contact list (server), so a contact
-  // with no WhatsApp thread yet still gets a tab (with an empty state) — and
-  // adding/removing deal contacts updates the tabs on the next refresh.
-  // Fallback to chat-derived grouping when the server sends no contacts.
-  const contacts = useMemo(() => {
-    const chats = data?.chats || [];
-    if (data?.contacts?.length) {
-      return data.contacts.map((c) => ({
-        ...c,
-        chats: chats.filter((chat) => (chat.contact?.id || chat.contactId) === c.id),
-      }));
-    }
-    const map = new Map();
-    for (const c of chats) {
-      const key = c.contact?.id || c.contactId || c.id;
-      if (!map.has(key)) {
-        map.set(key, {
-          id: key,
-          name:
-            c.contact?.name ||
-            (c.displayName && c.displayName !== c.phoneNumber
-              ? c.displayName
-              : formatPhoneDisplay(c.phoneNumber)) ||
-            'לא מזוהה',
-          chats: [],
-        });
-      }
-      map.get(key).chats.push(c);
-    }
-    return [...map.values()];
-  }, [data]);
-
-  const activeContact =
-    contacts.find((c) => c.id === contactSel) ||
-    contacts.find((c) => c.id === data?.primaryContactId) ||
-    contacts[0] ||
-    null;
-  const activeChat =
-    activeContact?.chats.find((c) => c.id === chatSel) || activeContact?.chats[0] || null;
+    if (!pendingOpenChatId) return;
+    if (openChat(pendingOpenChatId)) setPendingOpenChatId(null);
+  }, [pendingOpenChatId, openChat]);
 
   // Reading the conversation marks it read on the server (SSOT) and pushes a
   // WhatsApp read receipt. Mark on open/switch and periodically while the popup
@@ -175,9 +140,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   // the CLOSED bubble, so clear it optimistically too.
   useEffect(() => {
     if (!open || !activeChat) return undefined;
-    const markRead = () => api.whatsapp.markChatRead(activeChat.id).catch(() => {});
+    const chatId = activeChat.id;
+    const markRead = () => api.whatsapp.markChatRead(chatId).catch(() => {});
     markRead();
-    setUnread(0);
+    lastViewedRef.current = chatId;
+    setReadIds((cur) => new Set(cur).add(chatId));
     const t = setInterval(() => {
       if (!document.hidden) markRead();
     }, 10_000);
@@ -186,6 +153,32 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
       markRead();
     };
   }, [open, activeChat?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Closing hands the badge back to the server. The order matters: mark the
+  // last-viewed chat read, THEN re-read the list, THEN drop the optimistic set.
+  // Reloading in parallel could read the count back before the mark landed and
+  // then clear the optimism on top of a stale number — a phantom badge until
+  // the next poll.
+  const everOpenedRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      everOpenedRef.current = true;
+      return undefined;
+    }
+    if (!everOpenedRef.current) return undefined; // never opened — nothing to reconcile
+    let cancelled = false;
+    const id = lastViewedRef.current;
+    (id ? api.whatsapp.markChatRead(id).catch(() => {}) : Promise.resolve())
+      .then(() => reload())
+      .then(() => {
+        if (!cancelled) setReadIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, reload]);
+
+  const unread = unreadForClosedBubble(chats, readIds);
 
   // Drag-to-resize: the panel is anchored at the viewport's LEFT edge, so
   // width follows the pointer's clientX. Persisted globally on release.
@@ -214,6 +207,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   }, []);
 
   const badge = unread > 99 ? '99+' : String(unread);
+  const accountLabel = activeAccount?.label || activeAccountId || '';
 
   const bubble = (positionClass) => (
     <button
@@ -237,6 +231,67 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
       )}
     </button>
   );
+
+  // What fills the body when the selected number has no conversation with this
+  // contact. Never a dead end: either it is being opened, or there is one
+  // button that opens it, or we say plainly why it cannot be opened.
+  function emptyBody() {
+    if (starting) {
+      return <p className="text-[13px] text-gray-500">פותח שיחה מ{accountLabel}…</p>;
+    }
+    if (!activeContact) {
+      return (
+        <>
+          <p className="text-sm font-medium text-gray-700">אין אנשי קשר בדיל הזה</p>
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            הוסיפו איש קשר לדיל כדי לנהל איתו שיחת WhatsApp.
+          </p>
+        </>
+      );
+    }
+    if (startError) {
+      return (
+        <>
+          <p className="text-[13px] leading-relaxed text-red-700">
+            {START_ERRORS[startError] || 'פתיחת השיחה נכשלה — נסו שוב.'}
+          </p>
+          {!START_ERRORS[startError] && (
+            <button
+              type="button"
+              onClick={() => startConversation(activeAccountId)}
+              className="rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700"
+            >
+              נסו שוב
+            </button>
+          )}
+        </>
+      );
+    }
+    if (activeAccount?.retired) {
+      return (
+        <p className="text-[12.5px] leading-relaxed text-gray-500">
+          {accountLabel} כבר לא מחובר למערכת — אפשר לקרוא היסטוריה קיימת, אך לא לפתוח ממנו שיחה חדשה.
+        </p>
+      );
+    }
+    return (
+      <>
+        <p className="text-sm font-medium text-gray-700">
+          עדיין אין שיחה עם {activeContact.name} מ{accountLabel}
+        </p>
+        <p className="text-[12px] leading-relaxed text-gray-500">
+          אפשר לפתוח שיחה חדשה מהמספר הזה — ההודעה הראשונה תישלח ממנו.
+        </p>
+        <button
+          type="button"
+          onClick={() => startConversation(activeAccountId)}
+          className="mt-1 rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-emerald-700"
+        >
+          התחלת שיחה מ{accountLabel}
+        </button>
+      </>
+    );
+  }
 
   return (
     <>
@@ -265,21 +320,26 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
             className="absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize hover:bg-emerald-400/60"
           />
 
-          {/* Header */}
+          {/* Header — the active NUMBER is a chip, not a footnote: with several
+              numbers connected, "which one am I in" must be readable at a
+              glance even when the bubble row is scrolled. */}
           <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
             <WhatsAppLogo size={18} />
-            <span className="text-[13px] font-semibold text-gray-900">WhatsApp</span>
             {activeContact && (
-              <span className="min-w-0 truncate text-[12px] text-gray-500">
-                · {activeContact.name}
-                {activeChat?.account?.label ? ` · ${activeChat.account.label}` : ''}
+              <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900">
+                {activeContact.name}
+              </span>
+            )}
+            {accountLabel && (
+              <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11.5px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                {accountLabel}
               </span>
             )}
             <button
               type="button"
               onClick={() => setOpen(false)}
               aria-label="סגירה"
-              className="mr-auto flex h-7 w-7 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              className="mr-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700"
             >
               ×
             </button>
@@ -294,10 +354,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() => {
-                      setContactSel(c.id);
-                      setChatSel(null);
-                    }}
+                    onClick={() => selectContact(c.id)}
                     className={`whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-medium transition ${
                       active
                         ? 'border-emerald-600 bg-emerald-600 text-white'
@@ -305,7 +362,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
                     }`}
                   >
                     {c.name}
-                    {c.id === data?.primaryContactId && (
+                    {c.id === primaryContactId && (
                       <span className={active ? 'text-emerald-100' : 'text-gray-400'}> ★</span>
                     )}
                   </button>
@@ -314,43 +371,30 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
             </div>
           )}
 
-          {/* Same contact on more than one of our numbers → number switcher. */}
-          {activeContact && activeContact.chats.length > 1 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto border-b border-gray-100 px-3 py-1.5">
-              {activeContact.chats.map((c) => {
-                const active = activeChat && c.id === activeChat.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setChatSel(c.id)}
-                    className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition ${
-                      active
-                        ? 'border-gray-700 bg-gray-700 text-white'
-                        : 'border-gray-300 bg-white text-gray-500 hover:bg-gray-50'
-                    }`}
-                  >
-                    {c.account?.label || c.accountId}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Number selector — one bubble per connected number, always. */}
+          <AccountBubbles
+            accounts={accounts}
+            activeId={activeAccountId}
+            chatByAccount={chatByAccount}
+            unreadByAccount={unreadByAccount}
+            busyId={starting}
+            onSelect={selectAccount}
+            className="border-b border-gray-100 px-3 py-1.5"
+          />
 
           {/* Body */}
           <div className="min-h-0 flex-1">
             {activeChat ? (
-              <ChatThread key={activeChat.id} chat={activeChat} fill dealId={subjectType === 'deal' ? subjectId : null} />
+              <ChatThread
+                key={activeChat.id}
+                chat={activeChat}
+                fill
+                dealId={subjectType === 'deal' ? subjectId : null}
+              />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                 <WhatsAppLogo size={28} />
-                <p className="text-sm font-medium text-gray-700">
-                  {activeContact ? `עדיין אין שיחת WhatsApp עם ${activeContact.name}` : 'אין שיחת WhatsApp מקושרת'}
-                </p>
-                <p className="text-[12px] leading-relaxed text-gray-500">
-                  שיחות מתקשרות אוטומטית לפי מספר הטלפון של אנשי הקשר בדיל.
-                  ברגע שתתקיים שיחה — היא תופיע כאן.
-                </p>
+                {emptyBody()}
               </div>
             )}
           </div>

@@ -5,6 +5,8 @@ import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import WhatsAppLogo from '../../common/WhatsAppLogo.jsx';
 import SearchSelect from '../../communication/SearchSelect.jsx';
 import ChatComposer from '../../whatsapp/ChatComposer.jsx';
+import AccountBubbles from '../../whatsapp/AccountBubbles.jsx';
+import { useSubjectChats } from '../../whatsapp/useSubjectChats.js';
 
 // Deal → "תבנית ווטסאפ". Pick an internal template + language, get the resolved
 // wording as an ORDINARY editable draft, edit it, send.
@@ -25,14 +27,11 @@ import ChatComposer from '../../whatsapp/ChatComposer.jsx';
 // a two-line box. The language toggle is deliberately AMBER, not green: green is
 // reserved here for the WhatsApp send action and delivery/success states.
 
-// Chats come from the same endpoint the Deal's WhatsAppDock uses, so "which
-// conversation" is answered identically on both surfaces: the deal's PRIMARY
-// contact, then its first chat.
-function pickDefaultChat(data) {
-  const chats = data?.chats || [];
-  if (!chats.length) return null;
-  return chats.find((c) => (c.contact?.id || c.contactId) === data?.primaryContactId) || chats[0];
-}
+// "Which conversation" is answered by useSubjectChats — the SAME selection
+// model the Deal's WhatsAppDock uses (contact × our number), so the two
+// surfaces can never disagree about who this goes to or which of our numbers
+// it leaves from. Picking a number here is also the global sending mode, so
+// the dock follows, and vice versa.
 
 const LANGS = [
   { key: 'he', label: 'עברית' },
@@ -41,12 +40,28 @@ const LANGS = [
 
 export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent }) {
   const [templates, setTemplates] = useState(null);
-  const [chatData, setChatData] = useState(null);
   const [loadError, setLoadError] = useState(null);
 
   const [templateId, setTemplateId] = useState('');
   const [lang, setLang] = useState('he');
-  const [chatId, setChatId] = useState('');
+
+  const {
+    loading: chatsLoading,
+    contacts,
+    primaryContactId,
+    activeContact,
+    accounts,
+    activeAccountId,
+    activeAccount,
+    activeChat: chat,
+    chatByAccount,
+    unreadByAccount,
+    starting,
+    startError,
+    selectContact,
+    selectAccount,
+    startConversation,
+  } = useSubjectChats('deal', dealId, { enabled: open });
 
   // The resolved copy currently seeded into the composer + the composer's live
   // text, so an edited draft can be told from an untouched one.
@@ -59,18 +74,14 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
   const nonceRef = useRef(0);
 
   // Load the catalog (active only — inactive templates must not be selectable
-  // from a Deal) and the deal's chats.
+  // from a Deal). The conversation itself comes from the shared hook above.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoadError(null);
-    Promise.all([api.whatsappTemplates.list(true), api.whatsapp.contextChats('deal', dealId)])
-      .then(([list, chats]) => {
-        if (cancelled) return;
-        setTemplates(list);
-        setChatData(chats);
-        setChatId((cur) => cur || pickDefaultChat(chats)?.id || '');
-      })
+    api.whatsappTemplates
+      .list(true)
+      .then((list) => !cancelled && setTemplates(list))
       .catch((e) => !cancelled && setLoadError(e?.payload?.error || e.message));
     return () => {
       cancelled = true;
@@ -89,9 +100,8 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
     setPendingSwitch(null);
   }, [open]);
 
-  const chats = chatData?.chats || [];
-  const chat = chats.find((c) => c.id === chatId) || null;
   const selected = (templates || []).find((t) => t.id === templateId) || null;
+  const accountLabel = activeAccount?.label || activeAccountId || '';
 
   // Combobox options — the search runs locally over the already-loaded active
   // catalog (inactive templates are never fetched, so they can't appear).
@@ -193,40 +203,43 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
             </p>
-          ) : !templates || !chatData ? (
+          ) : !templates || chatsLoading ? (
             <p className="py-12 text-center text-sm text-gray-400">טוען…</p>
           ) : (
             <>
-              {/* Row 1 — who this goes to. Its own quiet line under the title,
-                  as in the design; the switcher replaces it when the deal has
-                  more than one conversation. */}
-              {chat && (
-                <div className="flex min-h-[22px] items-center justify-between gap-2">
-                  {chats.length > 1 ? (
-                    <select
-                      value={chatId}
-                      onChange={(e) => setChatId(e.target.value)}
-                      aria-label="בחירת השיחה"
-                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] focus:border-emerald-500 focus:outline-none"
-                    >
-                      {chats.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.contact?.name || c.displayName || 'לא מזוהה'}
-                          {c.account?.label ? ` · ${c.account.label}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="truncate text-[12.5px] text-gray-500">
-                      <span className="font-medium text-gray-700">
-                        {chat.contact?.name || chat.displayName || 'לא מזוהה'}
-                      </span>
-                      {chat.account?.label && <span> · {chat.account.label}</span>}
-                    </span>
-                  )}
-                  {resolving && <span className="shrink-0 text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
-                </div>
-              )}
+              {/* Row 1 — WHO this goes to and FROM WHICH of our numbers. The
+                  same two axes as the Deal's WhatsApp panel, in the same order,
+                  through the same shared control. */}
+              <div className="flex min-h-[26px] flex-wrap items-center gap-x-3 gap-y-1.5">
+                {contacts.length > 1 ? (
+                  <select
+                    value={activeContact?.id || ''}
+                    onChange={(e) => selectContact(e.target.value)}
+                    aria-label="בחירת איש הקשר"
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] focus:border-emerald-500 focus:outline-none"
+                  >
+                    {contacts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.id === primaryContactId ? ' ★' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  activeContact && (
+                    <span className="truncate text-[12.5px] font-medium text-gray-700">{activeContact.name}</span>
+                  )
+                )}
+                <AccountBubbles
+                  accounts={accounts}
+                  activeId={activeAccountId}
+                  chatByAccount={chatByAccount}
+                  unreadByAccount={unreadByAccount}
+                  busyId={starting}
+                  onSelect={selectAccount}
+                />
+                {resolving && <span className="shrink-0 text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
+              </div>
 
               {/* Row 2 — search + language. The search takes ALL the space the
                   language control doesn't: no dead gap beside it. */}
@@ -306,11 +319,42 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
               {!chat ? (
                 <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
                   <WhatsAppLogo size={26} />
-                  <p className="text-sm font-medium text-gray-700">אין עדיין שיחת WhatsApp בדיל הזה</p>
-                  <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
-                    שיחות מתקשרות אוטומטית לפי מספר הטלפון של אנשי הקשר בדיל. אפשר לשלוח נוסח
-                    ברגע שקיימת שיחה.
-                  </p>
+                  {starting ? (
+                    <p className="text-[13px] text-gray-500">פותח שיחה מ{accountLabel}…</p>
+                  ) : !activeContact ? (
+                    <>
+                      <p className="text-sm font-medium text-gray-700">אין אנשי קשר בדיל הזה</p>
+                      <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
+                        הוסיפו איש קשר לדיל כדי לשלוח לו נוסח.
+                      </p>
+                    </>
+                  ) : startError ? (
+                    <p className="max-w-md text-[12.5px] leading-relaxed text-red-700">
+                      {startError === 'contact_has_no_phone'
+                        ? 'לאיש הקשר הזה אין מספר טלפון שמור, ולכן אי אפשר לפתוח ממנו שיחה.'
+                        : 'פתיחת השיחה נכשלה — נסו שוב.'}
+                    </p>
+                  ) : activeAccount?.retired ? (
+                    <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
+                      {accountLabel} כבר לא מחובר למערכת — אי אפשר לשלוח ממנו.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-gray-700">
+                        עדיין אין שיחה עם {activeContact.name} מ{accountLabel}
+                      </p>
+                      <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
+                        אפשר לפתוח שיחה חדשה מהמספר הזה ולשלוח בה את הנוסח.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => startConversation(activeAccountId)}
+                        className="mt-1 rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-emerald-700"
+                      >
+                        התחלת שיחה מ{accountLabel}
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="flex h-[500px] max-h-[58vh] shrink-0 flex-col overflow-hidden rounded-xl border border-gray-200">

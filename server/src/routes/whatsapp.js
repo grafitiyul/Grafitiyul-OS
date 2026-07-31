@@ -20,6 +20,7 @@ import {
   setSenderPreference,
 } from '../whatsapp/senderAccount.js';
 import { stampManualSend } from '../whatsapp/sendPace.js';
+import { phoneToJid } from '../whatsapp/send.js';
 
 // MANUAL sends (this router's composer endpoints) are never paced — an operator
 // in a live conversation waits for nobody. They do STAMP the account's pacing
@@ -524,6 +525,123 @@ router.get(
   }),
 );
 
+// Open the conversation between ONE of our numbers and a CRM contact, creating
+// the row when it does not exist yet. This is the door behind the Deal panel's
+// number bubbles: a number we have never written to from this contact is not a
+// missing option, it is an empty conversation waiting to be started.
+//
+// Everything downstream (thread, composer, scheduling, media, templates) is
+// keyed on a chat id, so materialising the row here is what lets ONE panel
+// serve every account instead of a second "compose to a stranger" code path.
+//
+// Safe by construction, because the row we create is the SAME row the bridge
+// would have created on the first send:
+//   - externalChatId = "<intl digits>@s.whatsapp.net" (the private JID the
+//     bridge sends to and keys chats by, @@unique with accountId), and
+//   - phoneNumber/phoneJid are filled, which is exactly what the bridge's
+//     resolvePrivateChat() matches on — so when real traffic starts, even
+//     under the @lid form, it lands in THIS row (or merges into it) instead of
+//     forking a duplicate conversation.
+// A row that never receives a message keeps lastMessageAt null and is filtered
+// out of the working inbox below, so browsing the bubbles cannot litter it.
+router.post(
+  '/chats/ensure',
+  handle(async (req, res) => {
+    const accountId = String(req.body?.accountId || '').trim();
+    const contactId = String(req.body?.contactId || '').trim();
+    res.set('Cache-Control', 'no-store');
+    if (!accountId || !contactId) return res.status(400).json({ error: 'account_and_contact_required' });
+
+    const account = await prisma.whatsAppAccount.findUnique({
+      where: { id: accountId },
+      select: { id: true, label: true, status: true, active: true },
+    });
+    if (!account || !account.active) return res.status(404).json({ error: 'unknown_account' });
+
+    // The contact's numbers in the order GOS treats as authoritative: primary
+    // first, then the admin's own ordering.
+    const phoneRows = await prisma.contactPhone.findMany({
+      where: { contactId },
+      orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { value: true },
+    });
+    const phones = [...new Set(phoneRows.map((p) => normalizePhoneIntl(p.value)).filter(Boolean))];
+    if (phones.length === 0) return res.status(422).json({ error: 'contact_has_no_phone' });
+    // phoneToJid is THE private-JID form used by every send path — the chat we
+    // create must be keyed exactly the way the bridge would key it.
+    const jids = phones.map((p) => phoneToJid(p)).filter(Boolean);
+
+    const include = {
+      contact: { select: CONTACT_LITE_SELECT },
+      account: { select: { id: true, label: true, status: true } },
+      messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
+    };
+    // An existing conversation on this number ALWAYS wins, matched across every
+    // JID form the bridge may have stored it under. Creating a second row for a
+    // conversation that already exists is the one failure mode that matters.
+    const findExisting = () =>
+      prisma.whatsAppChat.findFirst({
+        where: {
+          accountId,
+          type: 'private',
+          OR: [
+            { phoneNumber: { in: phones } },
+            { externalChatId: { in: jids } },
+            { phoneJid: { in: jids } },
+          ],
+        },
+        orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'asc' }],
+        include,
+      });
+
+    const reply = (row, created) =>
+      res.json({ ...toClientChat(row), account: row.account, contactId: row.contactId, created });
+
+    const existing = await findExisting();
+    if (existing) {
+      // Link it on the way past ONLY when it is unowned — a chat already
+      // linked to a different contact is a data question, never something to
+      // silently re-point at whoever opened a deal.
+      if (!existing.contactId) {
+        const linked = await prisma.whatsAppChat.update({
+          where: { id: existing.id },
+          data: { contactId, matchSource: 'phone' },
+          include,
+        });
+        return reply(linked, false);
+      }
+      return reply(existing, false);
+    }
+
+    const phone = phones[0];
+    const jid = phoneToJid(phone);
+    if (!jid) return res.status(422).json({ error: 'contact_has_no_phone' });
+    try {
+      const created = await prisma.whatsAppChat.create({
+        data: {
+          accountId,
+          externalChatId: jid,
+          phoneJid: jid,
+          phoneNumber: phone,
+          type: 'private',
+          contactId,
+          matchSource: 'manual',
+        },
+        include,
+      });
+      return reply(created, true);
+    } catch (err) {
+      // Two bubbles clicked at once → the (accountId, externalChatId) unique
+      // index refuses the second. Re-read instead of failing the operator.
+      if (err?.code === 'P2002') {
+        const raced = await findExisting();
+        if (raced) return reply(raced, false);
+      }
+      throw err;
+    }
+  }),
+);
+
 // ── Active WhatsApp inbox (Slice 8+) ────────────────────────────────────────
 // The working CRM inbox: ALL private conversations (matched and unmatched),
 // filterable per account, newest first. The lazy auto-matcher runs on the
@@ -550,11 +668,20 @@ router.get(
     await autoMatchChats(preliminary);
     const RECENT_UNKNOWN_DAYS = 30;
     const recentCutoff = new Date(Date.now() - RECENT_UNKNOWN_DAYS * 86_400_000);
+    // `lastMessageAt: not null` on the working scope: a chat that has never
+    // carried a single message is not an inbox item. It is either a row a CRM
+    // surface materialised so an operator could START a conversation from a
+    // given number (POST /chats/ensure) or an empty seed — rendering it as a
+    // blank row would be noise the operator cannot act on. The moment any
+    // message flows, the bridge stamps lastMessageAt and it appears normally.
     const scopeWhere =
       scope === 'unmatched'
         ? { contactId: null }
         : scope === 'active'
-          ? { OR: [{ contactId: { not: null } }, { lastMessageAt: { gte: recentCutoff } }] }
+          ? {
+              lastMessageAt: { not: null },
+              OR: [{ contactId: { not: null } }, { lastMessageAt: { gte: recentCutoff } }],
+            }
           : {};
     // Provider/GOS visibility: the working scopes only show what the phone's
     // own chat list would show today — archived/deleted on WhatsApp (bridge-

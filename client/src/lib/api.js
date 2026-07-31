@@ -848,6 +848,11 @@ export const api = {
       request(`/api/whatsapp/context-chats${qs({ subjectType, subjectId })}`),
     chatMessages: (chatId, params) =>
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
+    // Open (creating if needed) the conversation between one of OUR numbers and
+    // a contact — what the CRM number bubbles call when the operator picks a
+    // number this contact has no history with yet.
+    ensureChat: (data) =>
+      request('/api/whatsapp/chats/ensure', { method: 'POST', body: JSON.stringify(data) }),
     // Inbox workflow state (pin / snooze) + message bookmarks (star)
     chatState: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/state`, { method: 'PUT', body: JSON.stringify(data) }),
