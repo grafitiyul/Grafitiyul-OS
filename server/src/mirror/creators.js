@@ -388,6 +388,16 @@ export async function createActivity(db, normalized, row) {
   // The planner's own exclusions (bare person-level rows, no subject) — same
   // rules as Wave 1, reported with the planner's own accounting.
   if (stats.noSubject) {
+    // No subject AT ALL (no person, no deal, no org — a team-internal reminder):
+    // GOS deliberately has nowhere to put it, exactly Wave 1's noSubject rule.
+    // Terminal with its own name, not an endless retry.
+    if (pid(c.person_id) == null && pid(c.deal_id) == null && pid(c.org_id) == null) {
+      return {
+        terminal: true,
+        reason: 'activity_without_subject',
+        detail: `activity ${row.externalId} is attached to no person, deal or organization — Wave-1 noSubject rule, intentionally excluded`,
+      };
+    }
     const excluded = await subjectIsExcludedPerson(db, c);
     if (excluded) {
       return {
