@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -25,6 +25,7 @@ import { formatPhoneDisplay } from '../../lib/phone.js';
 // focuses search.
 
 const LAYOUT_KEY = 'gos-whatsapp-inbox'; // { listWidth }
+const ACCOUNT_KEY = 'gos-whatsapp-inbox-account'; // last chosen account filter (stable account id | 'all')
 const LIST_MIN = 300;
 const LIST_MAX = 540;
 
@@ -282,7 +283,32 @@ function ContactPicker({ onPick, onCancel, busy }) {
 export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [chats, setChats] = useState(null);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
-  const [accountFilter, setAccountFilter] = useState('all');
+  // Account filter — canonical persistent UI state: the URL is the source of
+  // truth (?account=<WhatsAppAccount id>, linkable + back/forward-safe);
+  // localStorage is only the default when the URL carries no value. Always a
+  // stable account ID, never a label or an array position.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlAccount = searchParams.get('account');
+  const accountFilter = useMemo(() => {
+    const wanted = urlAccount || (() => {
+      try { return localStorage.getItem(ACCOUNT_KEY) || 'all'; } catch { return 'all'; }
+    })();
+    if (wanted === 'all') return 'all';
+    // Saved/linked account that no longer exists → safe fallback to 'all'.
+    // (While accounts are still loading, honor the value optimistically so
+    // the first fetch is already scoped.)
+    if (accounts.length > 0 && !accounts.some((a) => a.id === wanted)) return 'all';
+    return wanted;
+  }, [urlAccount, accounts]);
+  const setAccountFilter = useCallback((id) => {
+    try { localStorage.setItem(ACCOUNT_KEY, id); } catch { /* non-fatal */ }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id === 'all') next.delete('account');
+      else next.set('account', id);
+      return next;
+    }, { replace: false });
+  }, [setSearchParams]);
   const [scope, setScope] = useState('active'); // active | unmatched | all
   // Conversation kind: private (default, the CRM workflow) | group | all.
   // Groups are read/reply-only here — no CRM linking or deal actions.
@@ -707,6 +733,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                       cursor={cursorId === chat.id}
                       unreadCount={chat.unreadCount || 0}
                       manualUnread={!!chat.manualUnread}
+                      showAccount={accountFilter === 'all' && accounts.length > 1}
                       snoozeMenuOpen={snoozeMenuFor === chat.id}
                       onOpen={openChat}
                       onTogglePin={(c) => setChatState(c, { pinned: !c.pinnedAt })}

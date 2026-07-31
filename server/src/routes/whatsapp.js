@@ -341,7 +341,10 @@ async function autoMatchChats(chats) {
   const phones = await prisma.contactPhone.findMany({ select: { contactId: true, value: true } });
   const index = buildPhoneIndex(phones);
   for (const chat of candidates) {
-    const contactId = matchContactId(chat.phoneNumber, index);
+    // The bridge stores phoneNumber as intl digits already, but normalize
+    // defensively — a row written in any other shape must still match the
+    // same index the backfill script uses (ONE notion of "same number").
+    const contactId = matchContactId(normalizePhoneIntl(chat.phoneNumber) ?? chat.phoneNumber, index);
     if (!contactId) continue;
     await prisma.whatsAppChat.update({
       where: { id: chat.id },
@@ -581,10 +584,10 @@ router.get(
           ],
         }
       : null;
-    const chatsRaw = await prisma.whatsAppChat.findMany({
+    const inboxQueryArgs = (acct) => ({
       where: {
         ...typeWhere,
-        ...(accountId ? { accountId } : {}),
+        ...(acct ? { accountId: acct } : {}),
         // Both blocks are OR-shaped — combine under AND so they never
         // clobber each other on the same object key.
         AND: [scopeWhere, visibilityWhere, ...(searchWhere ? [searchWhere] : [])],
@@ -607,6 +610,35 @@ router.get(
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
+    // "כל המספרים" gets a PER-ACCOUNT budget, not one shared take-200: with a
+    // large account and a freshly connected small one in the same list, a
+    // shared cap let the big account's recency push every row of the small
+    // account below the horizon. One query per active account, merged and
+    // re-sorted by the same order (desc = nulls last, matching Prisma).
+    let chatsRaw;
+    if (accountId) {
+      chatsRaw = await prisma.whatsAppChat.findMany(inboxQueryArgs(accountId));
+    } else {
+      const activeAccounts = await prisma.whatsAppAccount.findMany({
+        where: { active: true },
+        select: { id: true },
+      });
+      if (activeAccounts.length === 0) {
+        chatsRaw = await prisma.whatsAppChat.findMany(inboxQueryArgs(null));
+      } else {
+        const perAccount = await Promise.all(
+          activeAccounts.map((a) => prisma.whatsAppChat.findMany(inboxQueryArgs(a.id))),
+        );
+        const ts = (v) => (v ? new Date(v).getTime() : -Infinity);
+        chatsRaw = perAccount.flat().sort(
+          (a, b) =>
+            ts(b.pinnedAt) - ts(a.pinnedAt)
+            || ts(b.providerPinnedAt) - ts(a.providerPinnedAt)
+            || ts(b.lastMessageAt) - ts(a.lastMessageAt)
+            || ts(b.createdAt) - ts(a.createdAt),
+        );
+      }
+    }
     // Snoozed chats leave the active work queue (until they wake); they stay
     // findable under 'all', in search, and in the unmatched repair view.
     const chats =

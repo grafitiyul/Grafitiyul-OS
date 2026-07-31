@@ -149,6 +149,7 @@ export default function ChatListRow({
   unreadCount = 0,
   manualUnread = false,
   snoozeMenuOpen = false,
+  showAccount = false, // "כל המספרים" mode: badge which business number owns this thread
   onOpen,
   onTogglePin,
   onToggleRead,
@@ -272,6 +273,17 @@ export default function ChatListRow({
       </div>
 
       <div className="mt-1.5 flex items-center gap-2">
+        {/* Owning business number — only in the combined view, where two
+            threads with the same person (one per number) must be
+            distinguishable at a glance. Canonical account label, quiet chip. */}
+        {showAccount && chat.account?.label && (
+          <span
+            className="max-w-[110px] shrink-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-100"
+            title={`השיחה מתנהלת דרך ${chat.account.label}`}
+          >
+            {chat.account.label}
+          </span>
+        )}
         {/* Phone — always visible, on the identity edge; foreign numbers
             carry a small country flag (Israeli numbers stay bare). */}
         {showPhone && (

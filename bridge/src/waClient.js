@@ -627,12 +627,17 @@ export class WaClient {
       },
       // Visible name on the phone's linked-devices list.
       browser: Browsers.appropriate(`Grafitiyul OS (${this.accountId})`),
-      // We don't want the full history dump — but we DO want the recent
-      // bundle: it carries lidPnMappings (bulk PN↔LID) on every reconnect.
-      // Some v7 rc lines skip ALL history sync when syncFullHistory=false and
-      // shouldSyncHistoryMessage is unset; the explicit () => true keeps the
-      // recent bundle flowing (consumed in Slice 2).
-      syncFullHistory: false,
+      // FULL history: syncFullHistory is baked into the REGISTRATION node
+      // (requireFullSync) — it only matters at pairing time, and false is why
+      // a newly paired number arrived with a ~15-chat "recent" bundle while
+      // the long-lived number looked rich (its data accumulated live). True
+      // asks WhatsApp for the desktop-class full history dump on the NEXT
+      // pairing; already-paired accounts keep their frozen choice until a
+      // hard-reset + re-pair. Reconnects never replay history either way.
+      // shouldSyncHistoryMessage () => true keeps every delivered bundle
+      // flowing into ingest (some v7 rc lines skip ALL history sync without
+      // it).
+      syncFullHistory: true,
       shouldSyncHistoryMessage: () => true,
       // Retry-receipt counter cache — per account instance, survives reopens.
       msgRetryCounterCache: this.msgRetryCounterCache,
@@ -700,6 +705,11 @@ export class WaClient {
     socket.ev.on('chats.delete', guarded(ingest.onChatsDelete));
     socket.ev.on('contacts.upsert', guarded(ingest.onContactsUpsert));
     socket.ev.on('contacts.update', guarded(ingest.onContactsUpdate));
+    // App-state PN↔LID discoveries — free identity enrichment that used to be
+    // dropped (no listener). Reconciles lid/pn chat splits as they surface.
+    socket.ev.on('lid-mapping.update', guarded(ingest.onLidMappingUpdate));
+    // Held for the post-open reconciliation sweep (stale-socket guarded there).
+    this.ingest = ingest;
 
     this.log.info({ socketId, mediaConfigured: isMediaConfigured() }, 'handlers wired');
   }
@@ -799,6 +809,19 @@ export class WaClient {
       this.appStateResyncTimer = setTimeout(() => {
         void this.maybeInitialAppStateResync(socketId);
       }, 30_000);
+      // Account reconciliation sweep — heals dormant lid/pn chat splits and
+      // missing phoneNumbers for THIS account (idempotent, account-scoped).
+      // Delayed 90s so a first-pairing history bundle lands first; the same
+      // deploy-overlap reasoning as the app-state resync applies. Every
+      // connection open re-arms it, so a newly connected account gets its
+      // completion pass automatically — no one-time script.
+      this.clearReconcileTimer();
+      this.reconcileTimer = setTimeout(() => {
+        if (socketId !== this.activeSocketId || !this.ingest) return;
+        void this.ingest.reconcileChats().catch((err) => {
+          this.log.error({ err: errMessage(err) }, 'reconciliation sweep failed');
+        });
+      }, 90_000);
     }
 
     if (connection === 'close') {
@@ -808,6 +831,7 @@ export class WaClient {
       // A pending recovery resync must not fire on a dead/replaced socket —
       // the next 'open' re-schedules it (cursor still absent until it runs).
       this.clearAppStateResyncTimer();
+      this.clearReconcileTimer();
       const code = disconnectCode(lastDisconnect);
       const reason = describeReason(code);
       this.lastDisconnectReason = reason;
@@ -893,6 +917,13 @@ export class WaClient {
     if (this.appStateResyncTimer) {
       clearTimeout(this.appStateResyncTimer);
       this.appStateResyncTimer = null;
+    }
+  }
+
+  clearReconcileTimer() {
+    if (this.reconcileTimer) {
+      clearTimeout(this.reconcileTimer);
+      this.reconcileTimer = null;
     }
   }
 }

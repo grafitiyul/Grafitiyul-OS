@@ -398,6 +398,12 @@ export function createIngest({ prisma, socket, log, accountId }) {
     if (typeof jid !== 'string' || !jid || isExcludedChatJid(jid)) return;
     if (socket.user?.id && jid === socket.user.id) return;
     const isGroup = isGroupJid(jid);
+    // The v7 bundle carries the cross-reference JIDs and the display name ON
+    // the conversation itself (pnJid/lidJid/displayName). Ignoring them was
+    // exactly how a fresh pairing produced @lid rows with no phone and no
+    // name ("ללא שיוך") — the data was in the bundle and dropped on the floor.
+    const bundleLid = !isGroup && typeof c.lidJid === 'string' && c.lidJid.endsWith('@lid') ? c.lidJid : null;
+    const bundlePn = !isGroup && typeof c.pnJid === 'string' && c.pnJid.endsWith('@s.whatsapp.net') ? c.pnJid : null;
     if (isGroup) {
       const existing = await prisma.whatsAppChat.findUnique({
         where: { accountId_externalChatId: { accountId, externalChatId: jid } },
@@ -406,14 +412,18 @@ export function createIngest({ prisma, socket, log, accountId }) {
       if (existing) return;
     } else {
       // Resolves across every JID form AND merges an existing lid/pn split —
-      // seeding must never create the duplicate that merge logic exists to kill.
-      const existing = await resolvePrivateChat(jid);
+      // seeding must never create the duplicate that merge logic exists to
+      // kill. Passing the bundle's cross-references also backfills them onto
+      // an existing row.
+      const existing = await resolvePrivateChat(jid, bundleLid, bundlePn);
       if (existing) return;
     }
     const tsNum = Number(c.conversationTimestamp || 0);
     const lastMessageAt = tsNum > 1e12 ? new Date(tsNum) : tsNum > 0 ? new Date(tsNum * 1000) : null;
-    const name = pickName(c.name);
+    const name = pickName(c.name) || pickName(c.displayName);
     const archived = c.archived ?? c.archive;
+    const lidJid = !isGroup ? (jid.endsWith('@lid') ? jid : bundleLid) : null;
+    const phoneJid = !isGroup ? (jid.endsWith('@s.whatsapp.net') ? jid : bundlePn) : null;
     await prisma.whatsAppChat.create({
       data: {
         accountId,
@@ -421,15 +431,15 @@ export function createIngest({ prisma, socket, log, accountId }) {
         type: isGroup ? 'group' : 'private',
         savedContactName: isGroup ? null : name,
         groupSubject: isGroup ? name : null,
-        phoneNumber: isGroup ? null : jidToPhone(jid),
-        lidJid: !isGroup && jid.endsWith('@lid') ? jid : null,
-        phoneJid: !isGroup && jid.endsWith('@s.whatsapp.net') ? jid : null,
+        phoneNumber: isGroup ? null : (jidToPhone(jid) ?? (phoneJid ? jidToPhone(phoneJid) : null)),
+        lidJid,
+        phoneJid,
         lastMessageAt,
         providerArchivedAt: archived ? new Date() : null,
         providerPinnedAt: pinDate(c.pinned),
       },
     });
-    log.info({ chatId: jid, lastMessageAt }, 'seeded chat from history bundle (no messages in bundle)');
+    log.info({ chatId: jid, lastMessageAt }, 'seeded chat from history bundle');
   }
 
   // ── media pipeline ──────────────────────────────────────────────────────
@@ -633,10 +643,23 @@ export function createIngest({ prisma, socket, log, accountId }) {
     if (!name) return;
     const isGroup = isGroupJid(externalChatId);
     // Only rows we already track — never seed empty chats from metadata.
-    const existing = await prisma.whatsAppChat.findUnique({
-      where: { accountId_externalChatId: { accountId, externalChatId } },
-      select: { id: true, savedContactName: true, groupSubject: true, lidJid: true, phoneJid: true },
-    });
+    // Private rows are resolved across EVERY known JID form (a bundle naming
+    // the chat by @lid must still reach a row created under @s.whatsapp.net
+    // and vice-versa — findUnique on externalChatId silently dropped those).
+    const existing = isGroup
+      ? await prisma.whatsAppChat.findUnique({
+          where: { accountId_externalChatId: { accountId, externalChatId } },
+          select: { id: true, savedContactName: true, groupSubject: true, lidJid: true, phoneJid: true },
+        })
+      : await prisma.whatsAppChat.findFirst({
+          where: {
+            accountId,
+            type: 'private',
+            OR: [{ externalChatId }, { lidJid: externalChatId }, { phoneJid: externalChatId }],
+          },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, savedContactName: true, groupSubject: true, lidJid: true, phoneJid: true },
+        });
     if (!existing) return;
 
     if (isGroup) {
@@ -820,12 +843,27 @@ export function createIngest({ prisma, socket, log, accountId }) {
         }
         for (const c of chats) {
           try {
-            if (c.id) await applyChatIdentity(c.id, c.name);
+            // v7 LID conversations carry the name in displayName, not name.
+            if (c.id) await applyChatIdentity(c.id, pickName(c.name) || pickName(c.displayName));
           } catch (err) {
             log.warn({ phase, chatId: c.id, err: errSummary(err) }, 'history chats identity failed');
           }
         }
       };
+
+      // SEED FIRST. Chats whose messages are not in the bundle used to be
+      // seeded only at the very end — AFTER both enrichment passes — so they
+      // received none of the bundle's names/lid↔pn mappings and landed as bare
+      // @lid rows ("ללא שיוך"). Seeding first means every enrichment pass and
+      // the message pass operate on rows that already exist (idempotent:
+      // seeding resolves across every JID form before creating).
+      for (const c of chats) {
+        try {
+          if (c.id) await seedChatFromHistory(c);
+        } catch (err) {
+          log.warn({ chatId: c.id, err: errSummary(err) }, 'history chat seed failed');
+        }
+      }
 
       await enrich('pre');
       for (const msg of messages) {
@@ -835,20 +873,17 @@ export function createIngest({ prisma, socket, log, accountId }) {
           log.error({ err: errSummary(err), msgId: msg.key?.id ?? null, chatId: msg.key?.remoteJid ?? null }, 'history-sync ingest failed');
         }
       }
-      // The rows exist now — replay the bundle's identity against them.
+      // Replay the bundle's identity against rows the message pass created.
       await enrich('post');
 
-      // Provider state AFTER the message pass — history messages just created
-      // rows for archived chats; this flags them so the active inbox never
-      // shows conversations the phone's own list wouldn't (root-cause fix).
-      // The bundle is a SNAPSHOT, so this pass also:
-      //   * seeds rows for chats whose messages weren't in the bundle,
+      // Provider state AFTER the message pass — the bundle is a SNAPSHOT:
+      //   * flags archived chats so the active inbox never shows conversations
+      //     the phone's own list wouldn't (root-cause fix),
       //   * restores the phone's absolute unread counts (applySnapshotUnread),
       //   * mirrors the phone's pin state.
       for (const c of chats) {
         try {
           if (!c.id) continue;
-          await seedChatFromHistory(c);
           const archived = c.archived ?? c.archive;
           if (archived !== undefined) await applyChatState(c.id, !!archived);
           if (c.unreadCount !== undefined) await applySnapshotUnread(c.id, c.unreadCount);
@@ -869,6 +904,67 @@ export function createIngest({ prisma, socket, log, accountId }) {
       }
     },
 
+    // Baileys emits lid-mapping.update when app-state sync learns a PN↔LID
+    // pair — a free enrichment channel that used to be dropped on the floor.
+    // Same harvest as the history bundle: store into the signal repository +
+    // reconcile any lid/pn chat split the mapping reveals.
+    async onLidMappingUpdate(mappings) {
+      const list = Array.isArray(mappings) ? mappings : [mappings];
+      const usable = list.filter((m) => m && typeof m.lid === 'string' && typeof m.pn === 'string');
+      if (usable.length === 0) return;
+      await harvestLidPnMappings(usable);
+    },
+
+    // ── Account reconciliation sweep ─────────────────────────────────────
+    // Runs after every connection open (delayed, idempotent). The live merge
+    // in resolvePrivateChat only fires when a NEW event touches a split
+    // conversation — dormant lid/pn duplicates (e.g. created by a history
+    // bundle + an outbound send addressed by the other JID form) stayed split
+    // forever. This sweep:
+    //   1. heals phoneNumber on rows whose own JID is a pn-jid,
+    //   2. re-resolves every phone that owns >1 private rows through the ONE
+    //      canonical resolvePrivateChat (same merge, same alias-keeping),
+    // and works identically for every account — onboarding a new number needs
+    // no one-time script.
+    async reconcileChats() {
+      const rows = await prisma.whatsAppChat.findMany({
+        where: { accountId, type: 'private' },
+        select: { id: true, externalChatId: true, phoneNumber: true, phoneJid: true, lidJid: true },
+      });
+      let healedPhones = 0;
+      for (const r of rows) {
+        if (r.phoneNumber) continue;
+        const digits = jidToPhone(r.phoneJid ?? r.externalChatId);
+        if (!digits) continue;
+        await prisma.whatsAppChat.update({ where: { id: r.id }, data: { phoneNumber: digits } });
+        r.phoneNumber = digits;
+        healedPhones++;
+      }
+      const byPhone = new Map();
+      for (const r of rows) {
+        if (!r.phoneNumber) continue;
+        if (!byPhone.has(r.phoneNumber)) byPhone.set(r.phoneNumber, []);
+        byPhone.get(r.phoneNumber).push(r);
+      }
+      let mergedGroups = 0;
+      for (const [phone, group] of byPhone) {
+        if (group.length < 2) continue;
+        try {
+          // resolvePrivateChat's phoneNumber OR-arm finds every row of this
+          // phone; the pn-jid primary keeps the row future pn-events look up.
+          await resolvePrivateChat(`${phone}@s.whatsapp.net`);
+          mergedGroups++;
+        } catch (err) {
+          log.error({ phone, err: errSummary(err) }, 'reconcile sweep: merge failed; rows left split');
+        }
+      }
+      log.info(
+        { total: rows.length, healedPhones, duplicatePhones: mergedGroups },
+        'account chat reconciliation sweep done',
+      );
+      return { total: rows.length, healedPhones, duplicatePhones: mergedGroups };
+    },
+
     async onReactions(reactions) {
       for (const r of reactions || []) {
         try {
@@ -885,7 +981,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
       for (const chat of chats || []) {
         if (!chat.id) continue;
         try {
-          await applyChatIdentity(chat.id, chat.name);
+          await applyChatIdentity(chat.id, pickName(chat.name) || pickName(chat.displayName));
           const archived = chat.archived ?? chat.archive;
           if (archived !== undefined) await applyChatState(chat.id, !!archived);
           if (chat.unreadCount !== undefined) await applySnapshotUnread(chat.id, chat.unreadCount);
