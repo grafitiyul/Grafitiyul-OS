@@ -17,7 +17,7 @@
 // Otherwise a PRIORITY LADDER picks a single deal — one message must never
 // move every deal a contact owns. The first non-empty bucket wins:
 //
-//   P1  open deals, and WON deals whose tour is still ahead
+//   P1  open deals, and WON deals with a genuinely LIVE future tour
 //   P2  WON deals toured within the last 14 days   (still being wrapped up)
 //   P3  WON deals with an outstanding balance      (money still owed)
 //   P4  LOST deals closed within the last 3 months (plausibly being revived)
@@ -31,11 +31,19 @@
 // sweep that may re-see the same messages: the same input must always pick the
 // same deal, or a repeated message would alternate between deals.
 //
-// Tour timing reads Deal.tourDate (the deal's own operational date, in Israel
-// calendar terms). Deliberately NOT the TourEvent status: Deal↔TourEvent runs
-// through Booking, and that join is not worth paying on a per-message path —
-// the existing inbox resolver (crm/dealResolution.js) already treats tourDate
-// as the operational signal, so both stay consistent.
+// "FUTURE TOUR" IS THE CANONICAL LIVE RELATIONSHIP, NOT A DATE COLUMN
+// A WON deal reaches P1 only through Booking → TourEvent, because Deal.tourDate
+// is a plan that outlives the plan: a cancelled tour leaves the date sitting
+// there, and a stale future date must never float a dead deal to the top.
+// A link counts as LIVE only when BOTH sides are alive — Booking.status
+// 'active' (the deal can be un-booked while the tour itself runs on for other
+// deals) AND TourEvent.status not 'cancelled'.
+//
+// Deal.tourDate remains the fallback for exactly ONE state: a WON deal that has
+// no Booking rows at all — genuinely pre-live, the tour not generated yet. The
+// moment a deal has ever had a booking, its bookings are the truth and the date
+// column is ignored; that is precisely what keeps cancelled and reopened deals
+// out of P1.
 
 import { prisma } from '../db.js';
 import { touchDealActivity } from '../timeline/events.js';
@@ -58,6 +66,51 @@ const LADDER_SELECT = {
   lastMeaningfulActivityAt: true,
 };
 
+// No booking information resolved (pure-function default, and the correct
+// state for a contact with no WON deals): every WON deal then looks pre-live,
+// so Deal.tourDate is the only available signal.
+const EMPTY_TOUR_STATE = { futureActive: new Set(), hasAnyBooking: new Set() };
+
+/**
+ * Resolve the live tour relationship for a set of WON deals — ONE batched
+ * query over Booking with its TourEvent.
+ *
+ *   futureActive  — deals with at least one LIVE booking on a tour that is
+ *                   still ahead: 'scheduled' with a future date, or
+ *                   'postponed'. Postponed counts on purpose: the schema's own
+ *                   contract is that a postponed tour keeps its team/notes and
+ *                   returns to 'scheduled' when a new date is applied, so it is
+ *                   unresolved live work — the most likely thing a customer is
+ *                   messaging about. (Say the word if you'd rather it didn't.)
+ *   hasAnyBooking — deals that have EVER been booked, in any state. This is the
+ *                   pre-live discriminator, not a liveness test: an all-
+ *                   cancelled deal has bookings, so it gets no date fallback.
+ */
+export async function resolveTourState(wonDealIds, db, today) {
+  if (!wonDealIds.length) return EMPTY_TOUR_STATE;
+  const bookings = await db.booking.findMany({
+    where: { dealId: { in: wonDealIds } },
+    select: {
+      dealId: true,
+      status: true,
+      tourEvent: { select: { status: true, date: true } },
+    },
+  });
+  const futureActive = new Set();
+  const hasAnyBooking = new Set();
+  for (const b of bookings) {
+    hasAnyBooking.add(b.dealId);
+    if (b.status !== 'active') continue; // un-booked from this tour
+    const ev = b.tourEvent;
+    if (!ev || ev.status === 'cancelled' || ev.status === 'completed') continue;
+    // 'postponed' carries no date by contract — it is future work by nature.
+    if (ev.status === 'postponed' || (ev.date && compareDates(ev.date, today) > 0)) {
+      futureActive.add(b.dealId);
+    }
+  }
+  return { futureActive, hasAnyBooking };
+}
+
 // most recent activity → newest deal → lowest id (stable, total order).
 function compareCandidates(a, b) {
   const at = a.lastMeaningfulActivityAt ? new Date(a.lastMeaningfulActivityAt).getTime() : -Infinity;
@@ -74,16 +127,24 @@ function compareCandidates(a, b) {
  * caller so the (relatively expensive) payment lookup happens ONLY when the
  * ladder actually reaches P3.
  */
-export function attributionBuckets(deals, { today, now = Date.now(), unpaidWonIds = null } = {}) {
+export function attributionBuckets(
+  deals,
+  { today, now = Date.now(), unpaidWonIds = null, tourState = EMPTY_TOUR_STATE } = {},
+) {
   const isWon = (d) => d.status === 'won';
   const recentTourFloor = addDays(today, -RECENT_TOUR_DAYS);
   const lostFloorMs = now - LOST_REVIVAL_DAYS * 86_400_000;
 
+  // A WON deal has live future work when a live booking points at a future
+  // (or postponed) tour. Only a deal that has NEVER been booked falls back to
+  // its planned date — see the header.
+  const hasLiveFutureTour = (d) =>
+    tourState.futureActive.has(d.id) ||
+    (!tourState.hasAnyBooking.has(d.id) && d.tourDate && compareDates(d.tourDate, today) > 0);
+
   return [
-    // P1 — live work: anything open, plus WON deals whose tour is still ahead.
-    deals.filter(
-      (d) => d.status === 'open' || (isWon(d) && d.tourDate && compareDates(d.tourDate, today) > 0),
-    ),
+    // P1 — live work: anything open, plus WON deals with a live future tour.
+    deals.filter((d) => d.status === 'open' || (isWon(d) && hasLiveFutureTour(d))),
     // P2 — just toured: the wrap-up window.
     deals.filter(
       (d) =>
@@ -141,12 +202,17 @@ export async function selectActivityDealForContact(contactId, db = prisma, { now
   if (!deals.length) return null;
 
   const today = israelToday(now);
-  // P1/P2/P4 need no extra reads; only reach for payment state if the cheap
-  // buckets are all empty AND there are WON deals that could populate P3.
-  let buckets = attributionBuckets(deals, { today, now });
-  if (!buckets[0].length && !buckets[1].length && deals.some((d) => d.status === 'won')) {
+  const wonIds = deals.filter((d) => d.status === 'won').map((d) => d.id);
+  // P1 needs the live tour relationship — one batched query, and only when the
+  // contact actually has WON deals (a purely-open contact needs no tour data).
+  const tourState = await resolveTourState(wonIds, db, today);
+
+  let buckets = attributionBuckets(deals, { today, now, tourState });
+  // P3's payment lookup is the expensive one: reach for it ONLY when the cheap
+  // buckets came back empty and there are WON deals that could populate it.
+  if (!buckets[0].length && !buckets[1].length && wonIds.length) {
     const unpaidWonIds = await unpaidWonDealIds(deals, db);
-    buckets = attributionBuckets(deals, { today, now, unpaidWonIds });
+    buckets = attributionBuckets(deals, { today, now, unpaidWonIds, tourState });
   }
 
   for (const bucket of buckets) {

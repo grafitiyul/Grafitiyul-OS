@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   attributionBuckets,
+  resolveTourState,
   selectActivityDealForContact,
   touchDealsForEmailThread,
   touchDealsForWhatsAppChat,
@@ -19,15 +20,21 @@ const deal = (over) => ({
 
 // db double: deal.findMany for the ladder, icountDocument.findMany for P3,
 // $executeRaw for touchDealActivity (tagged template → last value is the id).
-function fakeDb(deals, docs = []) {
+function fakeDb(deals, docs = [], bookings = []) {
   const touched = [];
   return {
     touched,
     deal: { findMany: async () => deals },
     icountDocument: { findMany: async () => docs },
+    booking: { findMany: async () => bookings },
     $executeRaw: async (_s, ...v) => { touched.push(v[v.length - 1]); },
   };
 }
+
+// A deal↔tour link. status = the BOOKING's; ev = the TourEvent's.
+const booking = (dealId, evStatus, evDate, status = 'active') => ({
+  dealId, status, tourEvent: { status: evStatus, date: evDate },
+});
 
 // ── the ladder ─────────────────────────────────────────────────────────────
 
@@ -35,16 +42,70 @@ test('P1 beats every lower bucket — an open deal wins over a recently toured W
   const db = fakeDb([
     deal({ id: 'won-recent', status: 'won', tourDate: addDays(TODAY, -3) }),
     deal({ id: 'open-1', status: 'open' }),
-  ]);
+  ], [], [booking('won-recent', 'completed', addDays(TODAY, -3))]);
   assert.equal(await selectActivityDealForContact('c1', db, { now: NOW }), 'open-1');
 });
 
-test('a WON deal with a FUTURE tour is P1 — the work is still ahead', () => {
-  const [p1] = attributionBuckets(
-    [deal({ id: 'future', status: 'won', tourDate: addDays(TODAY, 5) })],
-    { today: TODAY, now: NOW },
-  );
-  assert.deepEqual(p1.map((d) => d.id), ['future']);
+test('WON + future ACTIVE tour → P1 (scenario 1)', async () => {
+  const d = deal({ id: 'won-live', status: 'won', tourDate: addDays(TODAY, 5) });
+  const db = fakeDb([d], [], [booking('won-live', 'scheduled', addDays(TODAY, 5))]);
+  assert.equal(await selectActivityDealForContact('c1', db, { now: NOW }), 'won-live');
+});
+
+test('WON + future CANCELLED tour → NOT P1, even with a future tourDate (scenario 2)', async () => {
+  // The stale-date trap: Deal.tourDate still says the tour is ahead.
+  const d = deal({ id: 'won-cancelled', status: 'won', tourDate: addDays(TODAY, 5), valueMinor: 0 });
+  const db = fakeDb([d], [], [booking('won-cancelled', 'cancelled', addDays(TODAY, 5))]);
+  const [p1] = attributionBuckets([d], {
+    today: TODAY, now: NOW,
+    tourState: await resolveTourState(['won-cancelled'], db, TODAY),
+  });
+  assert.deepEqual(p1, [], 'a cancelled tour must never reach P1');
+});
+
+test('WON + NO TourEvent + future planned date → P1 by pre-live fallback (scenario 3)', async () => {
+  const d = deal({ id: 'pre-live', status: 'won', tourDate: addDays(TODAY, 5) });
+  const db = fakeDb([d], [], []); // never booked
+  assert.equal(await selectActivityDealForContact('c1', db, { now: NOW }), 'pre-live');
+});
+
+test('WON with one ACTIVE future tour and one CANCELLED → P1 (scenario 4)', async () => {
+  const d = deal({ id: 'mixed', status: 'won', tourDate: addDays(TODAY, 5) });
+  const db = fakeDb([d], [], [
+    booking('mixed', 'cancelled', addDays(TODAY, 3)),
+    booking('mixed', 'scheduled', addDays(TODAY, 9)),
+  ]);
+  assert.equal(await selectActivityDealForContact('c1', db, { now: NOW }), 'mixed');
+});
+
+test('an ALL-cancelled deal gets NO date fallback — that is the stale-date guard', async () => {
+  const d = deal({ id: 'dead', status: 'won', tourDate: addDays(TODAY, 30), valueMinor: 0 });
+  const db = fakeDb([d], [], [booking('dead', 'cancelled', addDays(TODAY, 30))]);
+  const state = await resolveTourState(['dead'], db, TODAY);
+  const [p1] = attributionBuckets([d], { today: TODAY, now: NOW, tourState: state });
+  assert.deepEqual(p1, []);
+  assert.ok(state.hasAnyBooking.has('dead'), 'it HAS bookings, so the date column is ignored');
+});
+
+test('a CANCELLED BOOKING on a live tour does not qualify — both sides must be alive', async () => {
+  const d = deal({ id: 'unbooked', status: 'won', tourDate: addDays(TODAY, 6) });
+  const db = fakeDb([d], [], [booking('unbooked', 'scheduled', addDays(TODAY, 6), 'cancelled')]);
+  const state = await resolveTourState(['unbooked'], db, TODAY);
+  assert.equal(state.futureActive.has('unbooked'), false);
+  assert.equal(state.hasAnyBooking.has('unbooked'), true);
+});
+
+test('a POSTPONED tour counts as live future work (no date by contract)', async () => {
+  const d = deal({ id: 'postponed', status: 'won', tourDate: null });
+  const db = fakeDb([d], [], [booking('postponed', 'postponed', null)]);
+  assert.equal(await selectActivityDealForContact('c1', db, { now: NOW }), 'postponed');
+});
+
+test('a COMPLETED tour is not future work', async () => {
+  const d = deal({ id: 'done', status: 'won', tourDate: addDays(TODAY, -2) });
+  const db = fakeDb([d], [], [booking('done', 'completed', addDays(TODAY, -2))]);
+  const state = await resolveTourState(['done'], db, TODAY);
+  assert.equal(state.futureActive.has('done'), false);
 });
 
 test('P2 is the 14-day wrap-up window, inclusive at both ends', () => {
