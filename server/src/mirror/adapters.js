@@ -135,7 +135,9 @@ export function buildPollTargets({ ingest, airtableClient = null, prisma: db = p
   // Pipedrive FILES are polled (there is no file webhook object) — one
   // /recents request per tick, cursor = max observed update_time. Independent
   // of the Airtable client.
-  if (pipedriveFilesConfigured()) {
+  // Owner-gated (2026-07-31): while the Pipedrive quota is exhausted the poll
+  // is pure 429 noise. OFF until explicitly re-approved after reset.
+  if (pipedriveFilesConfigured() && String(process.env.MIRROR_FILES_POLL_ENABLED || '').toLowerCase() !== 'false') {
     targets.push({
       system: 'pipedrive',
       entity: 'file',
