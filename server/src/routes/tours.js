@@ -35,6 +35,7 @@ import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
 import { resolveStaffDisplayName } from '../../../shared/staffAssignmentDisplay.mjs';
 import {
+  dealBookerLabel,
   resolveBookingsCustomerIdentity,
   withBookingCount,
 } from '../tours/customerDisplay.js';
@@ -164,6 +165,9 @@ async function tourListExtrasFor(tourEventIds) {
         deal: {
           select: {
             title: true,
+            // "מידע חשוב על הלקוח" — projected onto the list for the table's
+            // opt-in column (canonical Deal field, never copied to TourEvent).
+            customerInfo: true,
             organization: { select: { name: true } },
             contacts: {
               orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
@@ -252,6 +256,13 @@ async function tourListExtrasFor(tourEventIds) {
       // ALL distinct customer/org names on the tour (canonical registrations) —
       // the table renders every one, never "first +N".
       customerNames: namesByTour.get(id) || [],
+      // "מידע חשוב על הלקוח" — every active booking's note (rich HTML from
+      // the Deal, the ONE operational customer note), labeled by the same
+      // canonical booker label the identity columns use. The client renders
+      // through RichText only (project rule 16) — never plain interpolation.
+      customerInfos: bookings
+        .filter((b) => b.deal?.customerInfo)
+        .map((b) => ({ label: dealBookerLabel(b.deal), html: b.deal.customerInfo })),
     };
   }
   return out;

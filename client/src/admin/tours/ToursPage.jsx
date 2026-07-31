@@ -12,6 +12,8 @@ import { loadToursView, saveToursView } from './viewPrefs.js';
 import { emitTourChanged, useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
 import { ComponentChip } from './ComponentChips.jsx';
 import TourComponents from './TourComponents.jsx';
+import RichText from '../../editor/RichText.jsx';
+import HoverCard from '../common/HoverCard.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import MultiSelectFilter from '../common/filters/MultiSelectFilter.jsx';
@@ -229,6 +231,42 @@ function ComponentsCell({ tour }) {
   );
 }
 
+// "מידע חשוב על הלקוח" cell — the Deal's operational customer note(s),
+// projected via the list extras (never copied onto TourEvent). Rendering is
+// ALWAYS the canonical RichText (project rule 16): the cell shows a 2-line
+// CSS-clamped render of the first note, and hovering opens the full note(s),
+// each labeled with the same canonical booker label the identity columns use.
+function CustomerInfoCell({ infos }) {
+  if (!infos?.length) return dash;
+  const [first, ...rest] = infos;
+  return (
+    <HoverCard
+      width={380}
+      trigger={
+        <span className="block max-w-[300px] cursor-help text-[12.5px] leading-snug">
+          <span className="block overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+            <RichText html={first.html} tight />
+          </span>
+          {rest.length > 0 && (
+            <span className="text-[11px] text-gray-400">+{rest.length} לקוחות נוספים</span>
+          )}
+        </span>
+      }
+    >
+      <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+        {infos.map((info, i) => (
+          <div key={i}>
+            {infos.length > 1 && (
+              <div className="mb-1 text-[11.5px] font-semibold text-gray-500">{info.label}</div>
+            )}
+            <RichText html={info.html} tight />
+          </div>
+        ))}
+      </div>
+    </HoverCard>
+  );
+}
+
 // Derived schedule helpers for the optional columns — presentation only, the
 // SSOT stays TourEvent.date/startTime + ProductVariant.durationHours.
 const WEEKDAYS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
@@ -324,6 +362,9 @@ const COLUMNS = [
       ) },
   { key: 'status', label: 'סטטוס', def: true, sortVal: (t) => t.status,
     render: (t) => <Chip styles={TOUR_STATUS_STYLES[t.status]} label={TOUR_STATUS_LABELS[t.status] || t.status} /> },
+  { key: 'customerInfo', label: 'מידע חשוב על הלקוח', def: false, sortable: false,
+    cls: 'max-w-[300px] align-top',
+    render: (t) => <CustomerInfoCell infos={t.customerInfos} /> },
   { key: 'notes', label: 'הערות', def: false, sortable: false,
     cls: 'text-gray-500 max-w-[280px] truncate',
     render: (t) => t.notes || dash },
