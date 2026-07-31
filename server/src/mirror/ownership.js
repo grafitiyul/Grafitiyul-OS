@@ -165,6 +165,14 @@ export const OWNERSHIP = Object.freeze({
     ],
   },
 
+  // Files → DealFile / metadata crosswalk. A stored file is an immutable blob:
+  // there are no mergeable fields, only creation (policy C). Declared so file
+  // events are owned and processable rather than dropped as an unknown entity.
+  file: {
+    system: 'pipedrive',
+    fields: [],
+  },
+
   tourEvent: {
     system: 'airtable',
     // Applies ONLY to TourEvents carrying an airtable/tour crosswalk row.

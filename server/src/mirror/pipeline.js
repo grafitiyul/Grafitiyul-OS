@@ -23,6 +23,7 @@ import { advanceBaseline, markSourceDeleted, readBaseline } from './baseline.js'
 import { raiseSyncConflict } from './conflicts.js';
 import { mirrorShouldIgnore, sourceForLegacyLabel } from './sourceRegistry.js';
 import { applyEnabled } from './config.js';
+import { emitMirrorApplied } from './events.js';
 import { MODE, assertAdapterContract, diffSets, modeOf } from './modes.js';
 
 export const OUTCOME = Object.freeze({
@@ -266,6 +267,11 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
         gosEntityId: created.entityId,
         fieldsWritten: created.fieldsWritten || { created: true },
       });
+      emitMirrorApplied(db, {
+        entity, entityId: created.entityId,
+        dealId: created.entityType === 'Deal' ? created.entityId : (created.dealId ?? null),
+        reason: 'created',
+      });
       return { status: 'processed', outcome: OUTCOME.CREATED, entityId: created.entityId };
     }
 
@@ -342,6 +348,16 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
       failureCode: null,
       failureMessage: null,
     });
+
+    // Realtime hint so an open page refetches instead of waiting for a manual
+    // refresh. Post-commit-guarded inside emitMirrorApplied.
+    if (outcome === OUTCOME.MERGED || outcome === OUTCOME.CONFLICT) {
+      emitMirrorApplied(db, {
+        entity, entityId: link.entityId,
+        dealId: entity === 'deal' ? link.entityId : null,
+        reason: outcome,
+      });
+    }
 
     return {
       status: 'processed', outcome, entityId: link.entityId,
@@ -484,6 +500,9 @@ async function runParentRecompute(db, row, adapter, finish) {
     failureMessage: null,
   });
 
+  if (outcome === OUTCOME.RECOMPUTED) {
+    emitMirrorApplied(db, { entity: row.entity, entityId: parent.entityId, dealId: null, reason: 'recomputed' });
+  }
   return { status: 'processed', outcome, entityId: parent.entityId, diff };
 }
 

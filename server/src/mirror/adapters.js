@@ -14,6 +14,7 @@ import { createChildDeps, createChildFetcher } from './sources/airtableTourChild
 import { cursorIdFor } from './worker.js';
 import { airtableClientFromEnv } from './sources/airtableClient.js';
 import { createContact, createDeal, createNote, createOrganization, createActivity, makeTourCreator } from './creators.js';
+import { fileAdapter, pipedriveFilesConfigured, pipedriveFilesSource } from './sources/pipedriveFiles.js';
 import { PARENT_LINK_FIELDS } from './sources/airtableTourChildren.js';
 
 // Stage lookups are cached briefly: the mirror can process a burst of events,
@@ -90,6 +91,7 @@ export function mirrorAdapterFactory(system, entity, row = null) {
   }
 
   if (system !== 'pipedrive') return null;
+  if (entity === 'file') return fileAdapter();
   const adapter = adapterFor(entity, {
     // Pipedrive stage id → GOS stage key is owner-approved mapping data that is
     // not yet exposed as configuration. Until it is, the mirror DECLINES to
@@ -130,6 +132,20 @@ export async function warmMirrorAdapters() {
  */
 export function buildPollTargets({ ingest, airtableClient = null, prisma: db = prisma, budget = null } = {}) {
   const targets = [];
+  // Pipedrive FILES are polled (there is no file webhook object) — one
+  // /recents request per tick, cursor = max observed update_time. Independent
+  // of the Airtable client.
+  if (pipedriveFilesConfigured()) {
+    targets.push({
+      system: 'pipedrive',
+      entity: 'file',
+      cursorKey: 'pipedrive:file',
+      source: pipedriveFilesSource(),
+      adapter: fileAdapter(),
+      ingest,
+    });
+  }
+
   if (!airtableClient) return targets;
 
   // Airtable is polled because its webhooks do not cover every change type and

@@ -12,8 +12,16 @@ import { registryStatus, validateRegistry } from '../mirror/sourceRegistry.js';
 import { resolveConflict, CHOICES } from '../mirror/resolve.js';
 import { mirrorAdapterFactory } from '../mirror/adapters.js';
 import { OWNERSHIP, writableFields } from '../mirror/ownership.js';
+import { openStream } from '../realtime/sse.js';
+import { MIRROR_CHANNEL } from '../mirror/events.js';
 
 const router = Router();
+
+// GET /api/mirror-admin/stream — SSE invalidation hints (shared realtime hub;
+// same contract as /api/tasks/stream). Admin-guarded at the mount site.
+router.get('/stream', (req, res) => {
+  openStream(req, res, { channel: MIRROR_CHANNEL, scope: 'admin' });
+});
 router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 const adapterFactory = mirrorAdapterFactory;

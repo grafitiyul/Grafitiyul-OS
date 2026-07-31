@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import { useRealtime } from '../../lib/realtime.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import CardKebabMenu from '../common/CardKebabMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -260,6 +261,17 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Mirror realtime: a change applied by the legacy mirror (a note added in
+  // Pipedrive, a field synced, a task created) refetches this page without a
+  // manual refresh — the same shared SSE core the Tasks workspace and payroll
+  // use (one realtime system, never two). Per that core's contract the hint
+  // carries no payload: any mirror event triggers ONE debounced canonical
+  // refetch, which also re-emits the timeline channel so TimelineFeed follows.
+  // Mirror traffic is low-frequency, so unscoped refetch is the intended cost.
+  useRealtime('/api/mirror-admin/stream', () => {
+    refresh();
+  });
 
   // Canonical address bar — once the deal is loaded, an internal-cuid URL is
   // replaced with the business-facing "מספר הזמנה" URL (dealPath). Old cuid
