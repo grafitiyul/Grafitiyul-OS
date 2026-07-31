@@ -1,9 +1,13 @@
 import { NavLink } from 'react-router-dom';
-import { TOP_MODULES, BOTTOM_MODULES } from './modules.js';
+import { useResolvedNav } from './navConfig.jsx';
 
 // Sidebar modules. Top group = daily/frequent operational work. Bottom group =
-// less-frequent utility/config, pushed to the bottom by a spacer. The module
-// lists live in ./modules.js so the TopBar breadcrumb shares the same source.
+// less-frequent administrative modules, pushed to the bottom by a spacer.
+//
+// Both groups are RESOLVED (navResolve.js) from the code registry plus the
+// administrator's stored preferences, so which modules appear and in what order
+// is configured at /admin/settings/navigation — never edited in code. Modules
+// kept out of the rail stay reachable from Settings → מודולים לניהול.
 
 function Item({ to, glyph, label, Icon }) {
   return (
@@ -28,16 +32,17 @@ function Item({ to, glyph, label, Icon }) {
 }
 
 export default function NavRail() {
+  const { primary, utility } = useResolvedNav();
   return (
     <nav
       className="hidden lg:flex w-20 shrink-0 bg-gray-900 text-gray-300 border-l border-gray-800 flex-col items-stretch py-3"
       aria-label="ניווט ראשי"
     >
-      {TOP_MODULES.map((m) => (
+      {primary.map((m) => (
         <Item key={m.key} {...m} />
       ))}
       <div className="flex-1" />
-      {BOTTOM_MODULES.map((m) => (
+      {utility.map((m) => (
         <Item key={m.key} {...m} />
       ))}
     </nav>

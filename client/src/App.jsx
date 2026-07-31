@@ -63,15 +63,6 @@ import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
 import ControlPage from './admin/control/ControlPage.jsx';
-// TEMPORARY — Migration Review Center (removed after cutover).
-import MigrationLayout from './admin/migration/MigrationLayout.jsx';
-import StageConfigTab from './admin/migration/tabs/StageConfigTab.jsx';
-import OrganizationsTab from './admin/migration/tabs/OrganizationsTab.jsx';
-import SnapshotBrowserTab from './admin/migration/tabs/SnapshotBrowserTab.jsx';
-import ContactsTab from './admin/migration/tabs/ContactsTab.jsx';
-import NameCleanupTab from './admin/migration/tabs/NameCleanupTab.jsx';
-import DealsTab from './admin/migration/tabs/DealsTab.jsx';
-import ExceptionalTab from './admin/migration/tabs/ExceptionalTab.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
@@ -86,6 +77,7 @@ import AgentReservationPage from './reservations/AgentReservationPage.jsx';
 import ReservationsList from './admin/crm/reservations/ReservationsList.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
+import NavigationSettings from './admin/settings/NavigationSettings.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
 import OpenToursSettings from './admin/tours/settings/OpenToursSettings.jsx';
 import TourComponentsSettingsPage from './admin/tours/settings/TourComponentsSettingsPage.jsx';
@@ -238,21 +230,11 @@ export default function App() {
         </Route>
         {/* Old collection URL keeps working for existing links/bookmarks. */}
         <Route path="collection" element={<Navigate to="/admin/finance/collection" replace />} />
-        {/* בדיקת מיגרציה — TEMPORARY one-time Migration Review Center.
-            DELETION BOUNDARY: this route block + client/src/admin/migration/ +
-            the moduleRoutes entry + the server's /api/migration/review surface.
-            Landing on stage-config: it is the only fully-built tab. */}
-        <Route path="migration" element={<MigrationLayout />}>
-          <Route index element={<Navigate to="/admin/migration/stage-config" replace />} />
-          <Route path="organizations" element={<OrganizationsTab />} />
-          <Route path="contacts" element={<ContactsTab />} />
-          <Route path="name-cleanup" element={<NameCleanupTab />} />
-          <Route path="stage-config" element={<StageConfigTab />} />
-          <Route path="deals" element={<DealsTab />} />
-          <Route path="exceptional" element={<ExceptionalTab />} />
-          {/* Tab 6 "ארכיון מערכת קודמת" IS the read-only Snapshot Browser. */}
-          <Route path="legacy-archive" element={<SnapshotBrowserTab />} />
-        </Route>
+        {/* בדיקת מיגרציה (the one-time Migration Review Center) was removed
+            after cutover, 2026-07-31: this route block, client/src/admin/
+            migration/ and the navigation entry are gone. The server's
+            /api/migration/review surface is still mounted and is a separate
+            backend cleanup. */}
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}
         {/* The tour opens as a modal on top of the list — nested so the list
@@ -274,6 +256,9 @@ export default function App() {
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}
         <Route path="settings" element={<SettingsHome />} />
+        {/* Main-navigation configuration — which modules sit in the rail, in
+            which group, and in what order (NavPreference rows). */}
+        <Route path="settings/navigation" element={<NavigationSettings />} />
         {/* WhatsApp is a top-level module (inbox + connections); the old
             settings path keeps working for existing links/bookmarks. */}
         <Route path="whatsapp" element={<WhatsAppConnectionsPage />} />

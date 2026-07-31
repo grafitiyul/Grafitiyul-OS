@@ -27,6 +27,9 @@
 
 import crypto from 'node:crypto';
 import { prisma } from './db.js';
+// ONE read path for the navigation configuration — /status carries it so the
+// shell needs no second round-trip (see the /status handler below).
+import { readNavPreferences } from './routes/nav.js';
 
 export const SESSION_COOKIE = 'gos_admin_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -359,6 +362,16 @@ export function buildAuthRoutes(express) {
   // Always 200. The client uses `needsBootstrap` to pick between the
   // setup form and the login form on /admin/login. `authenticated`
   // tells the AdminGuard whether to render or redirect.
+  //
+  // It also carries `nav` — the org-wide main-navigation configuration —
+  // for authenticated users. This is the shell's ONE mount-time
+  // round-trip, so piggybacking here lets the nav rail render once,
+  // already in the configured order, instead of flashing the code
+  // defaults and reordering after a second fetch. The read goes through
+  // routes/nav.js's readNavPreferences() so there is a single code path,
+  // and it is wrapped: a navigation-config failure must never be able to
+  // log an admin out. On failure the client falls back to the code
+  // registry's defaults, which is a complete working navigation.
   router.get('/status', async (req, res) => {
     const exists = await hasAnyActiveAdmin();
     if (req.adminAuth?.userId) {
@@ -370,10 +383,17 @@ export function buildAuthRoutes(express) {
         select: { username: true, isActive: true },
       });
       if (user && user.isActive) {
+        let navModules = [];
+        try {
+          navModules = await readNavPreferences();
+        } catch (e) {
+          console.warn('[auth] nav preferences read failed', e);
+        }
         return res.json({
           authenticated: true,
           username: user.username,
           needsBootstrap: false,
+          nav: { modules: navModules },
         });
       }
       // Cookie points at a deactivated/missing user — treat as

@@ -28,6 +28,7 @@ import portalGalleryRouter from './routes/portalGallery.js';
 import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
 import adminUsersRouter from './routes/adminUsers.js';
+import navRouter from './routes/nav.js';
 import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
@@ -319,6 +320,9 @@ app.use('/api/people', requireAdminAuth, peopleRouter);
 app.use('/api/people', requireAdminAuth, guideStationAccessRouter);
 app.use('/api/exports', requireAdminAuth, exportsRouter);
 app.use('/api/admin-users', requireAdminAuth, adminUsersRouter);
+// Main-navigation configuration (org-wide rail order + visibility). The READ is
+// normally piggybacked on /api/auth/status; this surface is the settings screen.
+app.use('/api/nav', requireAdminAuth, navRouter);
 
 // ── CRM foundation (Phase 1) ───────────────────────────────────
 //

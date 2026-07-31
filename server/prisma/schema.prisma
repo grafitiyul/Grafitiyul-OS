@@ -95,6 +95,30 @@ model UserUiState {
   @@unique([userId, key])
 }
 
+// Main-navigation configuration — ORG-WIDE (one shared navigation for every
+// admin), edited at /admin/settings/navigation.
+//
+// The code owns module IDENTITY (client/src/shell/moduleRoutes.js: route,
+// label, icon, component); this table owns only PRESENTATION. That split is
+// deliberate: a row can never point at a route that no longer exists, adding a
+// module stays a one-line code change, and renaming a route needs no data
+// migration. `key` is the registry key — the server stores it opaquely and
+// never validates it against a module list it does not own.
+//
+// Rows are SPARSE OVERRIDES: a module with no row falls back to its code
+// defaults, so a newly added module appears by itself with no seed step. The
+// resolver (client/src/shell/navResolve.js) ignores rows whose key no longer
+// exists in code, and refuses to hide pinned modules — hiding הגדרות would hide
+// the screen that unhides everything else.
+model NavPreference {
+  key       String   @id
+  inNav     Boolean  @default(true)
+  // 'primary' (top of the rail) | 'utility' (bottom). Null = the code default.
+  railGroup String?
+  sortOrder Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
 // Nested organisational folder for the item bank. Folders can contain items
 // (content + question) and/or other folders — no depth cap at the data level.
 // parentId=null means the folder sits at the root. sortOrder is scoped by

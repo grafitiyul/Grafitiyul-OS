@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { NavConfigProvider } from '../../shell/navConfig.jsx';
 
 // Admin auth gate. Wraps everything that lives under `/admin`. Three
 // transient phases:
@@ -19,9 +20,18 @@ import { Navigate, useLocation } from 'react-router-dom';
 // We deliberately do NOT pre-fetch on every navigation between admin
 // pages — the AppShell wraps all of `/admin/*`, so the guard mounts
 // once and lives for the whole admin session.
+//
+// That same single round-trip also carries the navigation configuration
+// (`nav.modules` — the administrator's rail order + visibility). Piggybacking
+// here rather than adding a second fetch is what lets the rail render once,
+// already correct, with no reorder flash; the response is already `no-store`,
+// so no new caching behaviour is introduced. If the server omits it (older
+// build, transient failure) the shell falls back to the code registry's
+// defaults, which is a complete working navigation.
 export default function AdminGuard({ children }) {
   const location = useLocation();
   const [phase, setPhase] = useState('loading');
+  const [navPrefs, setNavPrefs] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +47,7 @@ export default function AdminGuard({ children }) {
           return;
         }
         const data = await res.json();
+        if (Array.isArray(data?.nav?.modules)) setNavPrefs(data.nav.modules);
         setPhase(data?.authenticated ? 'authed' : 'unauthed');
       } catch {
         if (cancelled) return;
@@ -68,5 +79,5 @@ export default function AdminGuard({ children }) {
     return <Navigate to={`/admin/login?${qs}`} replace />;
   }
 
-  return children;
+  return <NavConfigProvider initialPrefs={navPrefs}>{children}</NavConfigProvider>;
 }
