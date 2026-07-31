@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 
 process.env.MIRROR_APPLY_ENABLED = 'true';
 
+// parent_recompute is an ENGINE mode, and this file tests the engine. Its only
+// production consumer (Airtable tour children) was retired by the 2026-07-31
+// cutover, so the mode is exercised in the break-glass mode that still engages
+// it. The cutover's own behaviour — that a retired source never recomputes at
+// all, and that a disappearance can only become a conflict — is pinned in
+// cutover.test.js.
+process.env.LEGACY_MIRROR_MODE = 'full_mirror';
+
 import { MODE, MODES, assertAdapterContract, diffSets, modeOf } from './modes.js';
 import { OUTCOME, ingestMirror, receive, processEvent } from './pipeline.js';
 import { childKindForTable, parentRecIdOf, tourChildrenAdapter } from './sources/airtableTourChildren.js';
@@ -467,6 +475,9 @@ test('a vanished payroll row produces a labelled, operator-actionable conflict',
 test('the label distinguishes a disappearance from a refused value', () => {
   const a = tourChildrenAdapter({ childKind: 'coordination', deps: {} });
   assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'payroll' } }), 'שורת שכר נעלמה מהמקור');
-  assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'booking' } }), 'רשומה נעלמה מהמקור');
+  // A vanished booking that still holds participants gets its OWN wording: the
+  // operator must see that seats are at stake, not a generic "record".
+  assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'booking' } }), 'הזמנה עם משתתפים נעלמה מהמקור');
+  assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'assignment' } }), 'רשומה נעלמה מהמקור');
   assert.equal(a.conflictLabelFor({ kind: 'value', current: { kind: 'booking' } }), 'מקומות בהזמנה');
 });

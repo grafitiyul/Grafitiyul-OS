@@ -226,17 +226,33 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
     },
 
     /**
-     * DISAPPEARANCE policy, per kind. Three deliberately different answers:
+     * DISAPPEARANCE policy, per kind. Deliberately different answers:
      *
      *   payroll     → CONFLICT. Approved pay is never withdrawn by a sync, but
      *                 silently keeping it would be drift nobody can see. The
      *                 operator decides whether reconciliation is needed.
-     *   booking     → allowed through; applyDiff CANCELS rather than deletes,
-     *                 because payments and registrations hang off it.
+     *   booking     → CONFLICT **if it still owns capacity-holding
+     *                 registrations**; otherwise allowed through, and applyDiff
+     *                 cancels rather than deletes.
      *   assignment  → allowed through and genuinely removed; it carries no money.
+     *
+     * The booking rule is the structural invariant behind a real incident
+     * (2026-07-31): bookings created by the legacy migration import have no
+     * Airtable counterpart, so a reconciliation pass classified 8 of them as
+     * removals and cancelled them — including three on the next day's tour.
+     * The seats never moved (TicketRegistration is the seat SSOT and was
+     * untouched), but the tour screen renders customer cards off Booking
+     * status, so the participants vanished from view.
+     *
+     * The absence of a legacy row is NOT evidence that a live booking should
+     * die. GOS owns seats; Airtable does not. `registrations` is already on the
+     * current member (it feeds the seat guard), so this stays synchronous.
      */
     protectRemoval(current) {
       if (current.kind === 'payroll') return 'conflict';
+      if (current.kind === 'booking' && (current.registrations || []).some((q) => Number(q) > 0)) {
+        return 'conflict';
+      }
       return undefined;
     },
 
@@ -244,6 +260,7 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
     conflictLabelFor(c) {
       if (c.kind === 'removal') {
         if (c.current?.kind === 'payroll') return 'שורת שכר נעלמה מהמקור';
+        if (c.current?.kind === 'booking') return 'הזמנה עם משתתפים נעלמה מהמקור';
         return 'רשומה נעלמה מהמקור';
       }
       return 'מקומות בהזמנה';

@@ -18,6 +18,7 @@
 //     the ceiling.
 
 import { normalizePhoneIntl } from '../../whatsapp/phone.js';
+import { CAPACITY_STATUSES } from '../../tours/registrationStatus.js';
 import { CHILD_TABLES, PARENT_LINK_FIELDS } from './airtableTourChildren.js';
 import { normalizeCoordRow, normalizePayrollRow } from '../../migration/import/tourNormalize.js';
 import { escapeFormulaValue } from './airtableClient.js';
@@ -229,7 +230,11 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
       ]);
 
       const regs = await client.ticketRegistration.findMany({
-        where: { tourEventId, status: { in: ['held', 'confirmed', 'active'] } },
+        // THE shared vocabulary, not a local copy — this list also decides
+        // whether a booking may be auto-cancelled (protectRemoval), so a second
+        // hand-maintained copy could silently disagree about what "holds a seat"
+        // means and start releasing live bookings again.
+        where: { tourEventId, status: { in: CAPACITY_STATUSES } },
         select: { dealId: true, quantity: true },
       });
       const regsByDeal = new Map();
@@ -293,7 +298,20 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
       for (const r of diff.remove) {
         if (r.kind === 'booking') {
           // Cancelled, never deleted — payments and registrations hang off it.
-          await client.booking.update({ where: { id: r.id }, data: { status: 'cancelled' } });
+          //
+          // `cancelledAt` is NOT optional. A cancelled booking without a
+          // timestamp is an impossible state: it is indistinguishable from a
+          // genuine cancellation while carrying none of its meaning, and it is
+          // what made the 2026-07-31 incident take an hour to diagnose instead
+          // of a minute. A DB CHECK constraint now enforces this too.
+          //
+          // Reaching here at all means the booking owns NO capacity-holding
+          // registrations — protectRemoval routes those to a conflict — so
+          // there are no seats to release.
+          await client.booking.update({
+            where: { id: r.id },
+            data: { status: 'cancelled', cancelledAt: new Date() },
+          });
         } else if (r.kind === 'assignment') {
           await client.tourAssignment.delete({ where: { id: r.id } });
         } else if (r.kind === 'payroll') {
