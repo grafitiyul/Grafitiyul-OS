@@ -51,10 +51,12 @@ test('pipeline: intake note and history entry are both written', async () => {
   const db = createTestDb();
   await ingest({ source: 'website_form', rawPayload: raw, canonicalEvent: leadEvent() }, db);
   const kinds = db._tables.timelineEntry.map((t) => t.kind);
-  assert.ok(kinds.includes('note'), 'pinned operational note');
+  assert.ok(kinds.includes('note'), 'operational note');
   assert.ok(kinds.includes('change'), 'immutable history event');
   const note = db._tables.timelineEntry.find((t) => t.kind === 'note');
-  assert.equal(note.isPinned, true);
+  // NOT pinned: explicit createdAt ordering already puts it first, so pinning
+  // would spend the operator's manual FOCUS slot for no additional guarantee.
+  assert.equal(note.isPinned, false);
   assert.equal(note.isSystem, false, 'operational note stays editable');
   assert.match(note.body, /מעוניין בסיור/);
 });

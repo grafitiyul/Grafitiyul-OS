@@ -262,6 +262,9 @@ export function buildIntakeNoteBody(normalized, { ambiguous = false } = {}) {
     ['פלטפורמה', extra.platform],
   ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
   if (src.length) {
+    // Two blank lines: the note reads as three distinct blocks — header, what
+    // the customer wrote, where it came from.
+    lines.push('');
     lines.push('');
     lines.push('<b>פרטי מקור</b>');
     for (const [k, v] of src) lines.push(`${k}: ${escapeHtml(v)}`);
@@ -275,8 +278,11 @@ export function buildIntakeNoteBody(normalized, { ambiguous = false } = {}) {
   return `<p>${lines.join('<br>')}</p>`;
 }
 
-// The intake note — what arrived, from where, with which attribution. Pinned so
-// it is the first thing an operator sees on a fresh lead. isSystem:false keeps
+// The intake note — what arrived, from where, with which attribution.
+//
+// Deliberately NOT pinned: the explicit `createdAt` below already makes it the
+// first entry on the deal, so pinning would only spend the operator's manual
+// FOCUS slot on something chronology already guarantees. isSystem:false keeps
 // it editable, matching how the reservations module treats operational notes.
 //
 // `createdAt` is passed explicitly by the pipeline. The column default is
@@ -291,7 +297,7 @@ export async function writeIntakeNote(tx, { dealId, normalized, ambiguous = fals
       subjectId: dealId,
       kind: 'note',
       body: buildIntakeNoteBody(normalized, { ambiguous }),
-      isPinned: true,
+      isPinned: false,
       isSystem: false,
       actorType: 'system',
       actorLabel: sourceLabelFor(normalized),

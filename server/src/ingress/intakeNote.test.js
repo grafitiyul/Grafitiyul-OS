@@ -168,6 +168,31 @@ test('note: an unknown/renamed question never blocks — it just renders', () =>
   assert.ok(b.includes('a brand new question nobody mapped: תשובה חופשית'));
 });
 
+test('note: Meta standard identity fields display in Hebrew', () => {
+  const b = buildIntakeNoteBody(build());
+  assert.ok(b.includes('שם מלא: ישראל ישראלי'));
+  assert.ok(b.includes('טלפון: 050-123-4567'));
+  assert.ok(b.includes('אימייל: israel@example.co.il'));
+  for (const english of ['full name:', 'phone number:', 'email:']) {
+    assert.ok(!b.includes(english), `raw English label leaked: ${english}`);
+  }
+});
+
+test('translation is display-only — raw keys and values are untouched', () => {
+  const answers = buildFormAnswers(FIELD_DATA);
+  const byKey = Object.fromEntries(answers.map((a) => [a.key, a]));
+  assert.equal(byKey.full_name.key, 'full_name');
+  assert.equal(byKey.full_name.label, 'שם מלא');
+  assert.equal(byKey.full_name.value, 'ישראל ישראלי');
+  assert.equal(byKey.phone_number.key, 'phone_number');
+  assert.equal(byKey.email.value, 'israel@example.co.il');
+});
+
+test('note: the source block is separated by two blank lines', () => {
+  const b = buildIntakeNoteBody(build());
+  assert.ok(b.includes('<br><br><br><b>פרטי מקור</b>'), `expected a double break before the source block: ${b}`);
+});
+
 test('note: sources without per-question data keep the compact rendering', () => {
   const n = normalizeEvent({
     kind: 'lead',

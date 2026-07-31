@@ -47,6 +47,15 @@ export function pickField(fieldData, key) {
   return null;
 }
 
+// Meta's three standard identity fields arrive with English keys and no label,
+// even on a Hebrew form. Translated for DISPLAY ONLY — the raw key and the raw
+// value are untouched, and nothing matches on these strings.
+const STANDARD_LABELS = Object.freeze({
+  full_name: 'שם מלא',
+  phone_number: 'טלפון',
+  email: 'אימייל',
+});
+
 /**
  * Meta auto-derives a question's field key from its label — Hebrew wording with
  * spaces turned into underscores and the question mark kept, e.g.
@@ -90,10 +99,11 @@ export function buildFormAnswers(fieldData) {
     const key = String(f.name ?? '').trim();
     return {
       key: key || null,
-      // Meta sends a human `label` on some forms and only `name` on others (the
-      // live Grafitiyul form sends no labels at all). Prefer the real label;
-      // otherwise make the raw key readable.
-      label: String(f.label ?? '').trim() || prettifyKey(key) || key || null,
+      // Display label, in precedence order: the canonical Hebrew term for a
+      // standard identity field (deterministic regardless of what Meta sends),
+      // then a real Meta label, then the raw key made readable. The live
+      // Grafitiyul form sends no labels at all.
+      label: STANDARD_LABELS[key] || String(f.label ?? '').trim() || prettifyKey(key) || key || null,
       value: joined === '' ? null : joined,
       answered: joined !== '',
     };
