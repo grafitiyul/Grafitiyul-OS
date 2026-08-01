@@ -189,9 +189,12 @@ export function automationsForTrigger({ kind, templateKey = null, purpose = null
   return listAutomations().filter((def) => {
     const t = def.trigger;
     if (t.kind !== kind) return false;
-    if (t.templateKey !== templateKey) return false;
-    if (t.purpose && t.purpose !== purpose) return false;
-    return true;
+    // PURPOSE is the canonical binding when a definition declares one: the
+    // office decides which template serves 'tour_summary' via the purpose
+    // config, and template keys are auto-generated (tpl_<hex>), so matching on
+    // the key alone would break the moment a form is rebuilt.
+    if (t.purpose) return t.purpose === purpose;
+    return t.templateKey === templateKey;
   });
 }
 

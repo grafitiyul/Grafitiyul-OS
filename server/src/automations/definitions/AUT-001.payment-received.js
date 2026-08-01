@@ -30,7 +30,12 @@ import { registerAutomation } from '../registry.js';
 
 // The office maps these once. They are the ONLY template-specific values in
 // this file, and they are keys — never question or answer wording.
-const TEMPLATE_KEY = 'tour_summary';
+// The LIVE tour-summary template. Template keys are auto-generated at
+// creation (tpl_<hex>), so this is the real one, verified in production.
+// The TRIGGER matches on PURPOSE, not on this key — the office decides which
+// template serves 'tour_summary' — so rebuilding the form cannot stop the
+// automation. The key is used only for the key-protection dependency check.
+const TEMPLATE_KEY = 'tpl_2ff0ecd9';
 const PAYMENT_QUESTION_KEY = null; // e.g. 'q_9f3a12bd'
 const PAYMENT_YES_OPTION = null;   // e.g. 'o_7c21ab90'
 
