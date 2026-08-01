@@ -3,6 +3,7 @@ import Dialog from '../common/Dialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { api } from '../../lib/api.js';
+import { duplicateLineVat } from '../../../../shared/vatMode.mjs';
 import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
 
 // Price Builder — a roomy, document-style editor for a Deal's base pricing. Edits
@@ -29,8 +30,9 @@ function normalize(l) {
     refId: l.refId || null,
     quantity: l.quantity ?? 1,
     unitPriceMinor: l.unitPriceMinor ?? 0,
-    vatMode: l.vatMode || 'inherit',
-    vatRate: l.vatRate ?? null,
+    // VAT via the ONE resolver's vocabulary: an existing line keeps its exact
+    // meaning, a new line is born 'inherit' = follow the order's mode.
+    ...duplicateLineVat(l),
     active: l.active !== false,
     note: l.note || '',
     overridden: !!l.overridden,
@@ -82,6 +84,13 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   // context controls (product pick, groups, card pin, participants). Editing it
   // ONLY updates the context — no line is created or modified until חישוב
   // אוטומטי runs. One product value — the line drives the Deal.
+  // THE order-level VAT mode ("מחירים כולל/לפני מע״מ · פטור") — canonical, stored
+  // on QuoteVersion.vatMode, loaded with the lines and saved with them. It is
+  // NOT derived from the lines: an order with no lines still holds the choice,
+  // and a line added later inherits it instead of the price-list default (the
+  // bug where a "לפני מע״מ" builder read the next typed amount as VAT-inclusive).
+  // null = never chosen → the price list decides. Resolution: shared/vatMode.mjs.
+  const [vatMode, setVatMode] = useState(null);
   const [ctx, setCtx] = useState(context);
   // The context the CURRENT lines were calculated against. Line edits recompute
   // totals against THIS snapshot; it advances only when חישוב אוטומטי runs, so
@@ -173,6 +182,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       .getPriceLines(deal.id)
       .then(async (r) => {
         if (!live) return;
+        setVatMode(r?.vatMode || null);
         const saved = Array.isArray(r?.lines) ? r.lines.map(normalize) : [];
         // Seed a default line ONLY for a brand-new working version. An existing
         // deal may legitimately have zero lines.
@@ -253,13 +263,13 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     if (calcTimer.current) clearTimeout(calcTimer.current);
     calcTimer.current = setTimeout(() => {
       api.pricing
-        .builder({ context: appliedCtx, lines })
+        .builder({ context: { ...(appliedCtx || {}), vatMode }, lines })
         .then((r) => setComputed(r))
         .catch((e) => setComputed({ ok: false, error: e.message }));
     }, 300);
     return () => calcTimer.current && clearTimeout(calcTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, lines, appliedCtx]);
+  }, [open, lines, appliedCtx, vatMode]);
 
   // Card options for the picker follow the LIVE context (metadata-only request
   // with no lines — nothing on screen changes). The SIMULATOR lists
@@ -291,7 +301,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
   const totals = computed?.totals;
   const vatDefault = computed?.vatDefault;
-  const orderVatMode = lines.find((l) => l.vatMode && l.vatMode !== 'inherit')?.vatMode || vatDefault?.mode;
+  // The picker reads the ORDER's own mode — never inferred from whichever line
+  // happens to carry one (that inference is what let a new line disagree).
+  const orderVatMode = vatMode || vatDefault?.mode;
   // Pin/unpin a Pricing Card (manual option override) — a CONTEXT edit only.
   // Nothing recalculates until חישוב אוטומטי applies it atomically.
   function pickCard(cardGroupId) {
@@ -319,8 +331,13 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   function onReorder(ids) {
     setLines((ls) => ids.map((id) => ls.find((l) => l.id === id)).filter(Boolean));
   }
+  // Choosing the order's VAT mode sets it ONCE and releases the per-line
+  // overrides, so every line — and every line added afterwards — follows it.
+  // (Previously this stamped the mode onto each existing line and left the
+  // order itself unrecorded, so the next added line silently disagreed.)
   function setOrderVat(mode) {
-    setLines((ls) => ls.map((l) => ({ ...l, vatMode: mode })));
+    setVatMode(mode);
+    setLines((ls) => ls.map((l) => ({ ...l, vatMode: 'inherit', vatRate: null })));
   }
   function setFree(id, on) {
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
@@ -349,7 +366,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             ? { ...l, overridden: false, pinnedCardGroupId: ctx?.pinnedCardGroupId ?? null }
             : l,
         );
-      const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
+      const r = await api.pricing.builder({ context: { ...(ctx || {}), vatMode }, lines: reqLines, applyCardNotes: true });
       setComputed(r);
       // A calculation that cannot run must say so explicitly — never a silent
       // no-op. Missing context (city/activity) names the missing input; a
@@ -434,6 +451,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       // the Deal's city.
       await api.deals.savePriceLines(deal.id, {
         lines: toSave,
+        // Saved in the same transaction as the lines it interprets.
+        vatMode,
         valueMinor: totals ? totals.grossMinor : 0,
         productId: ctx?.productId || null,
         productVariantId: ctx?.productVariantId || null,

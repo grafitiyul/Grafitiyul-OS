@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { toClientLine, lineToData } from '../quote/quoteLineMapping.js';
+import { normalizeBuilderVatMode } from '../../../shared/vatMode.mjs';
 import { parseListQuery, containsI } from './listPagination.js';
 import {
   ensureWorkingVersion,
@@ -1477,7 +1478,8 @@ router.get(
       where: { quoteVersionId: version.id },
       orderBy: { sortOrder: 'asc' },
     });
-    res.json({ versionId: version.id, created, lines: lines.map(toClientLine) });
+    // The order-level VAT mode travels WITH the lines — it is what they mean.
+    res.json({ versionId: version.id, created, vatMode: version.vatMode || null, lines: lines.map(toClientLine) });
   }),
 );
 
@@ -1543,6 +1545,13 @@ router.put(
 
     const versionId = await prisma.$transaction(async (tx) => {
       const version = await ensureWorkingVersion(tx, req.params.id);
+      // The order-level VAT mode is saved WITH the lines, in the same
+      // transaction: the amounts and their interpretation can never be
+      // persisted apart, so a reload always reads back the same money.
+      const nextVatMode = normalizeBuilderVatMode(b.vatMode);
+      if (nextVatMode !== (version.vatMode || null)) {
+        await tx.quoteVersion.update({ where: { id: version.id }, data: { vatMode: nextVatMode } });
+      }
       // Replace-sync: the working version's lines are fully owned by the builder.
       await tx.quoteLine.deleteMany({ where: { quoteVersionId: version.id } });
       if (rows.length) {
@@ -1601,7 +1610,7 @@ router.put(
       where: { quoteVersionId: versionId },
       orderBy: { sortOrder: 'asc' },
     });
-    res.json({ versionId, lines: lines.map(toClientLine) });
+    res.json({ versionId, vatMode: normalizeBuilderVatMode(b.vatMode), lines: lines.map(toClientLine) });
   }),
 );
 

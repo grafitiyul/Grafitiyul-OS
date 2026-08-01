@@ -10,6 +10,7 @@
 
 import { splitVat } from './engine.js';
 import { applyCardFirstLineNotes } from './cardNotes.js';
+import { effectiveLineVatMode } from '../../../shared/vatMode.mjs';
 
 const SIGN = (kind) => (kind === 'discount' || kind === 'credit' ? -1 : 1);
 
@@ -47,11 +48,14 @@ export function composeBuilderLines({
         ln.sourceKind === 'price_rule_base' && productResolution.unitBaseMinor != null
           ? Number(productResolution.unitBaseMinor) || 0
           : Number(productResolution.baseAmountMinor) || 0;
-      effMode = ln.vatMode && ln.vatMode !== 'inherit' ? ln.vatMode : productResolution.vatMode;
+      // line override → the ORDER's mode → the winning card's own VAT terms.
+      effMode = effectiveLineVatMode(ln.vatMode, vatDefault.mode, productResolution.vatMode);
       effRate = effMode === 'exempt' ? 0 : productResolution.vatRate != null ? productResolution.vatRate : vatDefault.rate;
     } else {
       unitPriceMinor = Number(ln.unitPriceMinor) || 0;
-      effMode = !ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode;
+      // line override → the ORDER's mode. THE single place an entered amount is
+      // decided to be net / gross / exempt (shared/vatMode.mjs).
+      effMode = effectiveLineVatMode(ln.vatMode, vatDefault.mode);
       effRate = effMode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
     }
 

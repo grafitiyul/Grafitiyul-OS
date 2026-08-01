@@ -1934,6 +1934,13 @@ model QuoteVersion {
   offer          QuoteOffer?     @relation(fields: [offerId], references: [id], onDelete: SetNull)
   offerId        String?
   status         String          @default("draft") // draft | produced | accepted | rejected (only 'draft' used now)
+  // THE order-level VAT mode — 'included' | 'excluded' | 'exempt' (the picker
+  // "מחירים כולל/לפני מע״מ · פטור"). It says how the amounts an operator TYPES
+  // are to be read, so it belongs to the ORDER, not to whichever line happens
+  // to be first. A QuoteLine.vatMode of 'inherit' follows this; an explicit
+  // line mode overrides it. NULL = never chosen → the PriceList default.
+  // Resolution lives in ONE place: shared/vatMode.mjs.
+  vatMode        String?
   isWorking      Boolean         @default(true) // the version the builder/panel edits (exactly one per deal for now)
   isSelected     Boolean         @default(false) // the accepted/main version (unused until the quote workflow)
   // Provenance for imported/immutable versions. Null = a native GOS version.

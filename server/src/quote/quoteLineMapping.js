@@ -1,3 +1,6 @@
+import { LINE_VAT_MODES, duplicateLineVat } from '../../../shared/vatMode.mjs';
+
+export const VALID_LINE_VAT_MODES = LINE_VAT_MODES;
 // Pure mapping between the client builder-line shape and QuoteLine create data.
 // No Prisma / IO — kept separate from the route so it is unit-testable and so the
 // STRUCTURED IDENTITY contract is enforced in one place.
@@ -7,7 +10,7 @@
 // never read as an identifier — editing/clearing it must not change what a line is.
 
 export const VALID_LINE_KINDS = ['product', 'addon', 'discount', 'credit', 'manual'];
-export const VALID_LINE_VAT_MODES = ['inherit', 'included', 'excluded', 'exempt'];
+// Re-exported from the ONE VAT vocabulary — never a second list.
 
 // QuoteLine row → the client's builder line shape (generic refId).
 export function toClientLine(l) {
@@ -18,8 +21,8 @@ export function toClientLine(l) {
     refId: l.kind === 'product' ? l.productVariantId : l.kind === 'addon' ? l.addonId : null,
     quantity: l.quantity,
     unitPriceMinor: l.unitPriceMinor, // BigInt → Number via the app json replacer
-    vatMode: l.vatMode || 'inherit',
-    vatRate: l.vatRate ?? null,
+    // Same vocabulary on the way out — the DTO never re-interprets a line.
+    ...duplicateLineVat(l),
     active: l.active,
     note: l.note || '',
     overridden: l.overridden,
@@ -37,7 +40,7 @@ export function toClientLine(l) {
 // Client builder line → QuoteLine create data (validated; refId → typed FK).
 export function lineToData(ln, i) {
   const kind = VALID_LINE_KINDS.includes(ln.kind) ? ln.kind : 'manual';
-  const vatMode = VALID_LINE_VAT_MODES.includes(ln.vatMode) ? ln.vatMode : 'inherit';
+  const vatMode = duplicateLineVat(ln).vatMode;
   // Quantity applies to every line, the product line included. Default 1.
   let qty = parseInt(ln.quantity, 10);
   if (!Number.isFinite(qty) || qty < 0) qty = 1;

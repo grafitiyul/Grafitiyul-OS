@@ -8,6 +8,7 @@ import { tourMoment, AUTO_ADDON_SOURCE_KIND } from '../pricing/autoAddons.js';
 import { buildNoteVars, renderNoteTemplate, selectNoteTemplate } from '../pricing/noteTemplates.js';
 import { buildCardOptions } from '../pricing/cardOptions.js';
 import { loadAndBuildAutoAddons } from '../pricing/resolveAutoAddons.js';
+import { resolveBuilderVatMode } from '../../../shared/vatMode.mjs';
 
 // Pricing engine HTTP surface: /preview (per-card draft preview), /builder (the
 // ONE multi-line calculation used by the Deal builders AND the pricing
@@ -227,8 +228,13 @@ router.post(
           },
         })
       : null;
+    // THE order-level VAT mode for this composition. `c.vatMode` is the Builder's
+    // canonical setting (QuoteVersion.vatMode — what the picker shows); the price
+    // list is the fallback for an order that never chose one. Every 'inherit'
+    // line resolves against THIS, which is what makes a line added to a
+    // "לפני מע״מ" quote net instead of silently VAT-inclusive.
     const vatDefault = {
-      mode: priceList?.defaultVatMode || 'included',
+      mode: resolveBuilderVatMode(c.vatMode, priceList?.defaultVatMode),
       rate: priceList?.defaultVatRate != null ? priceList.defaultVatRate : 18,
     };
 
