@@ -1,0 +1,55 @@
+// AUT-002 — כרטיסי בקרה לסיכום סיור.
+//
+// EVERY submitted tour summary produces a review card in משימות הנהלה, plus a
+// separate red logistics card when the summary reports a logistics problem.
+//
+// No `when` condition on purpose: this fires for every summary. The logistics
+// card's own condition lives in the card builder (logisticsReport.js), because
+// it is a per-answer rule over several questions rather than a single trigger
+// condition — encoding it here would flatten six independent checks into one
+// unreadable expression.
+//
+// The two cards are separate ReviewItem rows with separate dedupeKeys, so the
+// office handles them independently.
+
+import { registerAutomation } from '../registry.js';
+
+const TEMPLATE_KEY = 'tour_summary';
+
+const definition = {
+  id: 'AUT-002',
+  slug: 'tour_summary_review_cards',
+  nameHe: 'כרטיסי בקרה לסיכום סיור',
+  descriptionHe:
+    'כל סיכום סיור שמוגש יוצר כרטיס לקריאה במשימות הנהלה. אם הסיכום מדווח על בעיה '
+    + 'לוגיסטית (ניקיון, מלאי, ציוד או תקלה טכנית) נוצר בנוסף דו״ח לוגיסטי נפרד, '
+    + 'שמטופל בנפרד מהסיכום.',
+  category: 'tours',
+  defaultEnabled: true,
+
+  trigger: {
+    kind: 'questionnaire_submitted',
+    templateKey: TEMPLATE_KEY,
+    purpose: 'tour_summary',
+    firstSubmitOnly: true,
+  },
+
+  when: null, // every summary is reviewed
+
+  actions: [{ kind: 'review_item', reviewKind: 'tour_summary' }],
+
+  dependsOn: [
+    { kind: 'questionnaire_template', templateKey: TEMPLATE_KEY, severity: 'hard' },
+  ],
+
+  idempotency: (ev) => `AUT-002:${ev.submissionId}`,
+
+  notesHe:
+    'התוכן מוקפא על הכרטיס ברגע היצירה — מדריך, לקוח, ארגון, מוצר, וריאציה, מועד '
+    + 'והתשובות עצמן — כך שעריכה מאוחרת של השאלון, הדיל או הסיור לא משכתבת את מה '
+    + 'שההנהלה כבר קראה. השאלות מזוהות לפי תפקיד (config.summaryRole / '
+    + 'config.logisticsRole) ולא לפי מפתח קשיח, כדי שניסוח וסדר יישארו חופשיים.',
+};
+
+registerAutomation(definition);
+export default definition;

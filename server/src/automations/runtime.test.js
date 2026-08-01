@@ -208,10 +208,12 @@ test('an executor that THROWS still ends as an auditable failed run', async () =
   assert.match(lastRun(db).reasonHe, /boom/);
 });
 
-test('an unimplemented action kind fails loudly instead of doing nothing', async () => {
+test('an action kind with no executor fails loudly instead of doing nothing', async () => {
+  // A kind declared in the catalogue but not yet wired must be a visible
+  // failure, never a silent no-op that looks like success.
   reset();
   const db = stubDb();
-  const r = await runAutomation(def({ actions: [{ kind: 'review_item', reviewKind: 'x' }] }), {
+  const r = await runAutomation(def({ actions: [{ kind: 'not_wired_yet' }] }), {
     submission, answers: {}, refs: { submissionId: 'sub1' },
   }, { db, log: silent });
   assert.equal(r.status, RUN_STATUS.failed);

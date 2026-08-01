@@ -12,9 +12,11 @@
 // runtime — it reports, and the run row records the outcome.
 
 import { fireCommunicationAction } from './communication.js';
+import { createReviewItemAction } from './reviewItem.js';
 
 const EXECUTORS = {
   communication: fireCommunicationAction,
+  review_item: createReviewItemAction,
 };
 
 export function actionExecutor(kind) {

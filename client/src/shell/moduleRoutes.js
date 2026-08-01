@@ -42,6 +42,15 @@ export const MODULE_REGISTRY = [
     pinned: true,
     description: 'מה דורש טיפול עכשיו — חריגים ותקלות תפעוליות.',
   },
+  {
+    key: 'management-tasks',
+    to: '/admin/management-tasks',
+    label: 'משימות הנהלה',
+    glyph: '📋',
+    railGroup: 'primary',
+    defaultInNav: true,
+    description: 'תיבת הבקרה התפעולית — סיכומי סיור ודוחות לוגיסטיים לקריאה ואישור.',
+  },
   // CRM hub: Deals (primary) + Contacts + Organizations.
   {
     key: 'crm',

@@ -82,7 +82,7 @@ test('INVARIANT: rail ∪ settings grid covers every module, under any preferenc
 
 test('the real registry ships the intended default rail', () => {
   const r = resolveNav(MODULE_REGISTRY, null);
-  assert.deepEqual(r.primary.map((m) => m.key), ['control', 'crm', 'tours', 'whatsapp', 'email']);
+  assert.deepEqual(r.primary.map((m) => m.key), ['control', 'management-tasks', 'crm', 'tours', 'whatsapp', 'email']);
   assert.deepEqual(r.utility.map((m) => m.key), ['finance', 'settings']);
   assert.deepEqual(
     settingsModules(r).map((m) => m.key),
@@ -90,7 +90,7 @@ test('the real registry ships the intended default rail', () => {
       // The six management modules lead — Settings is their home…
       'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people',
       // …then every operational module, which also gets a permanent card.
-      'control', 'crm', 'tours', 'whatsapp', 'email', 'finance',
+      'control', 'management-tasks', 'crm', 'tours', 'whatsapp', 'email', 'finance',
     ],
     'every full module has a card, in the order the Settings page presents them',
   );

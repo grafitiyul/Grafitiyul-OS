@@ -26,7 +26,10 @@
 // "הוסרה" with its full run history, and the number is never reused.
 
 /** Every id ever allocated, in allocation order. APPEND ONLY. */
-export const ALLOCATED = [];
+export const ALLOCATED = [
+  'AUT-001', // התקבל תשלום בסיכום סיור
+  'AUT-002', // כרטיסי בקרה לסיכום סיור
+];
 
 /** Ids whose definition has been removed. They remain visible as "הוסרה". */
 export const RETIRED = {

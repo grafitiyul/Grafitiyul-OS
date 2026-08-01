@@ -6260,3 +6260,66 @@ model SendingWindowPolicy {
 
   @@unique([audienceKind, channel])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REVIEW ITEMS  ("משימות הנהלה")
+// ─────────────────────────────────────────────────────────────────────────────
+// The operational inbox: things that HAPPENED and need a human to look at them.
+//
+// Deliberately NOT Task and deliberately NOT OperationalIssue:
+//
+//   Task              is Deal-scoped (dealId required, cascade). A tour-summary
+//                     review belongs to a tour and a guide, not to a deal.
+//   OperationalIssue  auto-resolves when its condition disappears — that is its
+//                     entire contract, and every detector depends on it. A
+//                     review card must NOT vanish because the summary still
+//                     exists; it is dismissed by a person, once. Forcing this
+//                     lifecycle into OperationalIssue would corrupt that
+//                     contract for every existing detector.
+//
+// What IS reused: the registry + card + action pattern from control/, and the
+// same entityRefs shape the control dashboard already renders.
+model ReviewItem {
+  id   String @id @default(cuid())
+  // Registered card type — 'tour_summary' | 'logistics_report' | future kinds.
+  // A new kind is one definition file, exactly like a control detector.
+  kind String
+
+  // Exactly-once creation. A re-submitted questionnaire or a replayed
+  // automation must never produce a second card for the same business event.
+  dedupeKey String @unique
+
+  // open | handled. There is no auto-resolve and no third state: a person
+  // decides, or it stays open.
+  status String @default("open")
+
+  title   String
+  summary String?
+  // Card-specific payload: the answers that mattered, frozen at creation so a
+  // later questionnaire edit never rewrites what a manager reviewed.
+  data    Json?
+  // Same shape the בקרה dashboard renders: [{ type, id, label, orderNo? }]
+  entityRefs Json?
+
+  // Loose refs (audit rows outlive their entities — no FKs).
+  tourEventId  String?
+  submissionId String?
+  personRefId  String? // the guide the card is about
+  dealId       String?
+
+  // Cards created BY an automation carry its id, so the registry's run log and
+  // the inbox can be reconciled.
+  autId String?
+
+  handledAt     DateTime?
+  handledBy     String?
+  handledByName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([kind, status])
+  @@index([tourEventId])
+  @@index([submissionId])
+}

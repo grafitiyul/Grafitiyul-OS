@@ -129,6 +129,9 @@ import { validateRegistry } from './automations/registry.js';
 import { syncAutomationChanges } from './automations/boot.js';
 import automationsRouter from './routes/automations.js';
 import queueRouter from './routes/queue.js';
+import reviewItemsRouter from './routes/reviewItems.js';
+// Review-item kinds register themselves, exactly like control detectors.
+import './reviewItems/kinds/index.js';
 import migrationRouter from './routes/migration.js';
 import legacyCardRouter from './routes/legacyCard.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -477,6 +480,7 @@ app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 app.use('/api/control', requireAdminAuth, controlRouter);
 app.use('/api/automations', requireAdminAuth, automationsRouter);
 app.use('/api/queue', requireAdminAuth, queueRouter);
+app.use('/api/management-tasks', requireAdminAuth, reviewItemsRouter);
 
 // Legacy Data Migration (Pipedrive + Airtable → GOS) — admin-only. Slice 1 is
 // FOUNDATION ONLY: a read-only status/health endpoint over the migration

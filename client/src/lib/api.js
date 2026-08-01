@@ -1688,6 +1688,14 @@ export const api = {
   // exist (enable/disable/rerun); no definition field is writable.
   // Queue — read-only aggregation over the four existing send queues, plus
   // the audience x channel sending-window policy.
+  managementTasks: {
+    list: (params) => request('/api/management-tasks' + qs(params)),
+    kinds: () => request('/api/management-tasks/kinds'),
+    counts: () => request('/api/management-tasks/counts'),
+    handle: (id) => request('/api/management-tasks/' + id + '/handle', { method: 'POST' }),
+    reopen: (id) => request('/api/management-tasks/' + id + '/reopen', { method: 'POST' }),
+  },
+
   queue: {
     overview: () => request('/api/queue/overview'),
     list: (params) => request('/api/queue' + qs(params)),
