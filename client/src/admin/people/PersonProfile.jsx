@@ -122,6 +122,10 @@ function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
       {tab === 'technical' && (
         <div className="space-y-5">
           <IdentityAccessSection person={person} onChanged={onChanged} onDeleted={onDeleted} />
+          {/* GOS-owned name + language: editable for EVERY staff member, including
+              recruitment-sourced ones, because these fields are ours and sync
+              can never reach them. */}
+          <StaffNameSection person={person} onChanged={onChanged} />
           {person.identitySource !== IDENTITY_SOURCES.MANAGEMENT && (
             <IdentitySection person={person} onChanged={onChanged} />
           )}
@@ -620,6 +624,106 @@ function TrainingFactsSection({ person, onChanged }) {
           />
         </Field>
       </div>
+      <div className="flex justify-end pt-3">
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
+        >
+          {saving ? 'שומר…' : 'שמירה'}
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+// ── Name and language ──────────────────────────────────────────────────────
+// Canonical GOS-owned staff identity, edited in the SAME place as the rest of
+// the profile. These live on PersonProfile precisely so recruitment identity
+// sync can never overwrite them; PersonRef.displayName stays as the legacy
+// fallback until recruitment consolidates into GOS.
+//
+// Hebrew and English sit side by side because they are ONE decision about a
+// person, not two screens. Preferred language decides which one a guide
+// actually receives in forms and messages.
+
+function StaffNameSection({ person, onChanged }) {
+  const stored = person.profile || {};
+  const fields = ['firstNameHe', 'lastNameHe', 'firstNameEn', 'lastNameEn', 'preferredLanguage'];
+  const baselineOf = (src) => ({
+    firstNameHe: src.firstNameHe || '',
+    lastNameHe: src.lastNameHe || '',
+    firstNameEn: src.firstNameEn || '',
+    lastNameEn: src.lastNameEn || '',
+    preferredLanguage: src.preferredLanguage || 'he',
+  });
+  const baseline = baselineOf(stored);
+  const [form, setForm] = useState(baseline);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setForm(baselineOf(person.profile || {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [person]);
+  const dirty = fields.some((k) => form[k] !== baseline[k]);
+  useDirtyForm(dirty);
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.people.updateProfile(person.id, {
+        firstNameHe: form.firstNameHe || null,
+        lastNameHe: form.lastNameHe || null,
+        firstNameEn: form.firstNameEn || null,
+        lastNameEn: form.lastNameEn || null,
+        preferredLanguage: form.preferredLanguage,
+      });
+      await onChanged();
+    } catch (e) {
+      window.alert('שמירה נכשלה: ' + (e.payload?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const input = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
+
+  return (
+    <Section title="שם ושפה">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-3">
+          <div className="text-[12px] font-medium text-gray-500">עברית</div>
+          <Field label="שם פרטי">
+            <input type="text" value={form.firstNameHe} onChange={set('firstNameHe')} className={input} dir="rtl" />
+          </Field>
+          <Field label="שם משפחה">
+            <input type="text" value={form.lastNameHe} onChange={set('lastNameHe')} className={input} dir="rtl" />
+          </Field>
+        </div>
+        <div className="space-y-3">
+          <div className="text-[12px] font-medium text-gray-500">English</div>
+          <Field label="First name">
+            <input type="text" value={form.firstNameEn} onChange={set('firstNameEn')} className={input} dir="ltr" />
+          </Field>
+          <Field label="Last name">
+            <input type="text" value={form.lastNameEn} onChange={set('lastNameEn')} className={input} dir="ltr" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-gray-100 pt-4">
+        <Field label="שפה מועדפת">
+          <select value={form.preferredLanguage} onChange={set('preferredLanguage')} className={input}>
+            <option value="he">עברית</option>
+            <option value="en">English</option>
+          </select>
+        </Field>
+        <p className="mt-1 text-[11.5px] text-gray-500">
+          שאלונים והודעות שמופנים לאיש הצוות הזה יישלחו בשפה שנבחרה כאן.
+        </p>
+      </div>
+
       <div className="flex justify-end pt-3">
         <button
           onClick={save}

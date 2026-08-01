@@ -5,6 +5,7 @@ import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
 import { summaryCompletionState, completeTour } from '../../tours/completion.js';
+import { staffLanguage } from '../../../../shared/staffName.mjs';
 
 // Human-readable feed body — unknown kinds render through the generic
 // NoteCard, so the body carries the whole story.
@@ -44,12 +45,27 @@ export const tourEventAdapter = {
     return {};
   },
 
+  // The CUSTOMER-facing language of this tour. Deliberately untouched by the
+  // staff-language work: internal forms must never take this value — that leak
+  // is what once rendered Hebrew questionnaires LTR on English tours.
   async resolveLanguage(subjectId) {
     const t = await prisma.tourEvent.findUnique({
       where: { id: subjectId },
       select: { tourLanguage: true },
     });
     return t?.tourLanguage || null;
+  },
+
+  // The language the FILLING GUIDE reads. A tour summary is an internal form,
+  // so it follows the PERSON, never the tour: an English-speaking guide on a
+  // Hebrew tour gets an English form, and vice versa. A different question from
+  // resolveLanguage above, with a different source — hence a separate hook.
+  async resolveActorLanguage(actorScope) {
+    const person = await prisma.personRef.findUnique({
+      where: { externalPersonId: actorScope },
+      select: { profile: { select: { preferredLanguage: true } } },
+    });
+    return person ? staffLanguage(person) : null;
   },
 
   // perActor scope (tour_summary): the scope is a guide's externalPersonId

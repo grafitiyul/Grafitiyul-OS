@@ -743,13 +743,18 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     if (probe.answersLocked) throw new QError(409, 'subject_closed');
   }
 
-  // Staff-audience purposes are INTERNAL forms — they render in the
-  // template's own language (typically Hebrew → RTL), never the tour/customer
-  // language the adapter resolves. That customer-language leak is what made
+  // Staff-audience purposes are INTERNAL forms. They must NEVER take the
+  // tour/customer language the adapter resolves — that leak is what made
   // internal Hebrew questionnaires render left-aligned LTR on English tours.
+  //
+  // They DO follow the filling staff member's own preferred language, which is
+  // a different question with a different source: resolveActorLanguage reads
+  // the person, never the booking. Falling back to the template default keeps
+  // the previous behaviour for anyone without an explicit preference.
+  const staffAudience = getPurpose(template.purpose)?.audience === 'staff';
   const language =
-    (getPurpose(template.purpose)?.audience === 'staff'
-      ? template.defaultLanguage
+    (staffAudience
+      ? (actorScope && (await adapter?.resolveActorLanguage?.(actorScope))) || template.defaultLanguage
       : adapter && (await adapter.resolveLanguage?.(subjectId))) ||
     template.defaultLanguage ||
     'he';

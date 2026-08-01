@@ -2,6 +2,7 @@ import { markGuideFutureToursCalendarPending } from '../tours/calendar/service.j
 import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { STAFF_LANGUAGES } from '../../../shared/staffName.mjs';
 import { getRecruitmentSnapshot } from './recruitment.js';
 import { userOrigin, emitTimelineEvent } from '../timeline/events.js';
 import { kickPayrollReconcile } from '../payroll/service.js';
@@ -493,6 +494,7 @@ router.put(
       senioritySupplement,
       travelAllowance,
       displayColor,
+      firstNameHe, lastNameHe, firstNameEn, lastNameEn, preferredLanguage,
     } = req.body || {};
 
     // Plain-decimal payroll amount: ≥ 0, two decimals (DECIMAL(10,2)).
@@ -521,6 +523,17 @@ router.put(
         return res.status(400).json({ error: 'invalid_training_start_date' });
       }
       data.trainingStartDate = d || null;
+    }
+    // Canonical GOS-owned staff identity. Edited in the SAME screen as the rest
+    // of the profile, and unreachable by recruitment identity sync.
+    for (const [key, value] of Object.entries({ firstNameHe, lastNameHe, firstNameEn, lastNameEn })) {
+      if (value !== undefined) data[key] = String(value || '').trim().slice(0, 80) || null;
+    }
+    if (preferredLanguage !== undefined) {
+      if (!STAFF_LANGUAGES.includes(preferredLanguage)) {
+        return res.status(400).json({ error: 'invalid_preferred_language' });
+      }
+      data.preferredLanguage = preferredLanguage;
     }
     if (trainingCohort !== undefined) {
       data.trainingCohort = String(trainingCohort || '').trim().slice(0, 80) || null;

@@ -642,6 +642,22 @@ model PersonProfile {
   // label (free text — "מרץ 2026", "מחזור 14").
   trainingStartDate   String?
   trainingCohort      String?
+  // ── Canonical staff identity, GOS-OWNED ────────────────────────────────────
+  // Deliberately on PersonProfile, not PersonRef: PersonRef.displayName/email/
+  // phone are overwritten by recruitment identity sync, and these must never be
+  // clobbered. PersonProfile is documented as management-owned, so a sync can
+  // never reach them.
+  //
+  // These are the FORWARD identity model: when recruitment consolidates into
+  // GOS, PersonRef.displayName simply retires and these stay canonical — no
+  // second identity model is needed then or now. shared/staffName.mjs is the
+  // ONE resolver; nothing reads these fields directly.
+  firstNameHe         String?
+  lastNameHe          String?
+  firstNameEn         String?
+  lastNameEn          String?
+  // he | en — which language this person receives forms and messages in.
+  preferredLanguage   String   @default("he")
   // Admin-only payroll facts (NEVER exposed to the guide portal — the portal
   // profile DTO whitelists its fields explicitly):
   //   vatStatus            'exempt' | 'vat_18' (validated scalar, Hebrew in UI)
