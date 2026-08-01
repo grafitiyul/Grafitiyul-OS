@@ -245,3 +245,93 @@ test('a non-shared document is unaffected by the allocation field', () => {
   assert.equal(c.paidMinor, 100_000);
   assert.equal(c.payments[0].sharedHistorical, false);
 });
+
+// ── Company totals: the aggregate invariant ─────────────────────────────────
+// A shared historical document settles several deals. Per deal it contributes
+// that deal's own total; company-wide it must contribute its OWN amount exactly
+// once. Getting this wrong turns one consolidated receipt into fictional revenue.
+
+import { companyCollectionTotals } from './collection.js';
+
+function fakeDb({ documents = [], evidence = [], deals = [] }) {
+  return {
+    icountDocument: { findMany: async () => documents },
+    dealCollectionEvidence: { findMany: async () => evidence },
+    deal: { findMany: async () => deals },
+  };
+}
+
+test('one shared document linked to three deals is counted ONCE company-wide', async () => {
+  // ₪3,000 receipt settling three ₪1,000 deals.
+  const shared = (dealId) => ({
+    dealId, doctype: 'receipt', docnum: '20241',
+    amountMinor: 300_000n, paidMinor: 300_000n,
+    sharedHistorical: true, allocationMinor: 100_000n,
+  });
+  const t = await companyCollectionTotals(
+    fakeDb({
+      documents: [shared('a'), shared('b'), shared('c')],
+      deals: [{ valueMinor: 100_000n }, { valueMinor: 100_000n }, { valueMinor: 100_000n }],
+    }),
+  );
+  assert.equal(t.uniqueDocuments, 1);
+  assert.equal(t.documentsReceivedMinor, 300_000); // the document's own amount, once
+  assert.equal(t.collectedMinor, 300_000);
+  assert.equal(t.wonValueMinor, 300_000);
+  assert.equal(t.outstandingMinor, 0);
+  assert.equal(t.sharedDocuments.documents, 1);
+  assert.equal(t.sharedDocuments.dealLinks, 3);
+});
+
+test('per-deal and company-wide answers legitimately differ for a shared document', async () => {
+  // Each deal reads as settled…
+  const perDeal = computeCollection(deal(100_000), [
+    doc('receipt', 300_000, { sharedHistorical: true, allocationMinor: 100_000 }),
+  ]);
+  assert.equal(perDeal.status, 'paid');
+  assert.equal(perDeal.paidMinor, 100_000);
+  // …while the company counts the document once, not once per deal.
+  const t = await companyCollectionTotals(
+    fakeDb({
+      documents: ['a', 'b', 'c'].map((dealId) => ({
+        dealId, doctype: 'receipt', docnum: '20241', amountMinor: 300_000n,
+        paidMinor: 300_000n, sharedHistorical: true, allocationMinor: 100_000n,
+      })),
+      deals: [{ valueMinor: 100_000n }, { valueMinor: 100_000n }, { valueMinor: 100_000n }],
+    }),
+  );
+  assert.equal(t.documentsReceivedMinor, 300_000);
+  assert.notEqual(t.documentsReceivedMinor, 900_000); // what naive summation would say
+});
+
+test('ordinary documents on different deals are each counted', async () => {
+  const t = await companyCollectionTotals(
+    fakeDb({
+      documents: [
+        { dealId: 'a', doctype: 'invrec', docnum: '1', amountMinor: 100_000n, paidMinor: null, sharedHistorical: false, allocationMinor: null },
+        { dealId: 'b', doctype: 'invrec', docnum: '2', amountMinor: 250_000n, paidMinor: null, sharedHistorical: false, allocationMinor: null },
+      ],
+      deals: [{ valueMinor: 100_000n }, { valueMinor: 250_000n }],
+    }),
+  );
+  assert.equal(t.uniqueDocuments, 2);
+  assert.equal(t.documentsReceivedMinor, 350_000);
+  assert.equal(t.outstandingMinor, 0);
+});
+
+test('refunds subtract and manual money is reported on its own line', async () => {
+  const t = await companyCollectionTotals(
+    fakeDb({
+      documents: [
+        { dealId: 'a', doctype: 'invrec', docnum: '1', amountMinor: 100_000n, paidMinor: null, sharedHistorical: false, allocationMinor: null },
+        { dealId: 'a', doctype: 'refund', docnum: '9', amountMinor: 20_000n, paidMinor: null, sharedHistorical: false, allocationMinor: null },
+      ],
+      evidence: [{ direction: 'in', amountMinor: 5_000n }],
+      deals: [{ valueMinor: 100_000n }],
+    }),
+  );
+  assert.equal(t.documentsReceivedMinor, 100_000);
+  assert.equal(t.documentsRefundedMinor, 20_000);
+  assert.equal(t.manualReceivedMinor, 5_000);
+  assert.equal(t.collectedMinor, 85_000);
+});

@@ -70,6 +70,7 @@ import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Questionnaire Engine — template list + builder + new-tab preview.
+import QueuePage from './admin/queue/QueuePage.jsx';
 import AutomationsPage from './admin/automations/AutomationsPage.jsx';
 import AutomationDetailPage from './admin/automations/AutomationDetailPage.jsx';
 import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
@@ -248,6 +249,7 @@ export default function App() {
         </Route>
         {/* Questionnaire Engine — generic templates (tour summary /
             coordination / future forms). List + per-template builder. */}
+        <Route path="settings/queue" element={<QueuePage />} />
         <Route path="settings/automations" element={<AutomationsPage />} />
         <Route path="settings/automations/:autId" element={<AutomationDetailPage />} />
         <Route path="questionnaires" element={<QuestionnairesPage />} />

@@ -74,6 +74,12 @@ export default function SettingsHome() {
             description="התראות פנימיות אוטומטיות המנוהלות בקוד — תשלום, הצעת מחיר, שינוי מועד."
           />
           <CategoryCard
+            to="/admin/settings/queue"
+            icon="📤"
+            title="תור שליחה"
+            description="כל ההודעות היוצאות במקום אחד — WhatsApp ואימייל, כולל זמני שליחה לכל קהל."
+          />
+          <CategoryCard
             to="/admin/settings/automations"
             icon="⚡"
             title="אוטומציות"

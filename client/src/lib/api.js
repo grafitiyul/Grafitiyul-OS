@@ -1686,6 +1686,16 @@ export const api = {
   // submissions (blueprint: docs/architecture/questionnaire-engine-design.md).
   // Automation Registry — read-only operational view. Only three mutations
   // exist (enable/disable/rerun); no definition field is writable.
+  // Queue — read-only aggregation over the four existing send queues, plus
+  // the audience x channel sending-window policy.
+  queue: {
+    overview: () => request('/api/queue/overview'),
+    list: (params) => request('/api/queue' + qs(params)),
+    policies: () => request('/api/queue/policies'),
+    setPolicy: (audienceKind, channel, body) =>
+      request('/api/queue/policies/' + audienceKind + '/' + channel, { method: 'PUT', body: JSON.stringify(body) }),
+  },
+
   automations: {
     list: () => request('/api/automations'),
     get: (autId) => request(`/api/automations/${autId}`),

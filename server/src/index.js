@@ -128,6 +128,7 @@ import './automations/definitions/index.js';
 import { validateRegistry } from './automations/registry.js';
 import { syncAutomationChanges } from './automations/boot.js';
 import automationsRouter from './routes/automations.js';
+import queueRouter from './routes/queue.js';
 import migrationRouter from './routes/migration.js';
 import legacyCardRouter from './routes/legacyCard.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -475,6 +476,7 @@ app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 // this router serves the dashboard + acknowledge/recheck/server actions.
 app.use('/api/control', requireAdminAuth, controlRouter);
 app.use('/api/automations', requireAdminAuth, automationsRouter);
+app.use('/api/queue', requireAdminAuth, queueRouter);
 
 // Legacy Data Migration (Pipedrive + Airtable → GOS) — admin-only. Slice 1 is
 // FOUNDATION ONLY: a read-only status/health endpoint over the migration

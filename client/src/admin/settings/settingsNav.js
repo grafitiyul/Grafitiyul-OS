@@ -35,6 +35,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/communication': { label: 'נוסחים למייל + WhatsApp', parent: '/admin/settings' },
   '/admin/settings/admin-reports': { label: 'דיווחי מנהלים', parent: '/admin/settings' },
   '/admin/settings/automations': { label: 'אוטומציות', parent: '/admin/settings' },
+  '/admin/settings/queue': { label: 'תור שליחה', parent: '/admin/settings' },
   '/admin/settings/finance': { label: 'הגדרות כספים', parent: '/admin/settings' },
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
   '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },
