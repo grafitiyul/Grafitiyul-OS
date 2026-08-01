@@ -4461,6 +4461,14 @@ model QuestionnaireQuestion {
   config      Json?
   // Backward-only conditional visibility (enforced at publish → acyclic).
   visibleWhen Json?
+  // MANUAL business flag — "משמשת באוטומציות". The author's DECISION that this
+  // question is an automation extension point. Deliberately NOT derived from the
+  // Automation Registry: a question may be flagged before any automation exists,
+  // and that intent is itself the fact worth recording. Checking it creates
+  // nothing. Live usage (which AUTs reference this key) is a separate DERIVED
+  // read — see server/src/automations/references.js. Carried verbatim by
+  // cloneStructureForNewVersion so the decision survives every version.
+  automationFlag Boolean @default(false)
 
   options QuestionnaireQuestionOption[]
   answers QuestionnaireAnswer[]
@@ -6041,4 +6049,88 @@ model MirrorCursor {
   updatedAt DateTime @updatedAt
 
   @@index([system, entity])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTOMATION REGISTRY
+// ─────────────────────────────────────────────────────────────────────────────
+// Automations themselves live in CODE (server/src/automations/definitions/) —
+// the same modules the runtime executes are what the registry renders, so there
+// can be no documentation layer that drifts from the implementation.
+//
+// These three tables therefore hold NO business logic. Only:
+//   AutomationState  — operator config (the on/off switch)
+//   AutomationRun    — execution facts (last run, counts, errors, skip reasons)
+//   AutomationChange — change history, including auto-detected definition drift
+//
+// Runtime STATUS (Active / Disabled / Waiting for dependency / Broken / Error /
+// Retired) is deliberately NOT stored: it is computed on read by
+// automations/health.js from the definition + these rows + live dependency
+// checks. A stored status column is exactly the drift this design prevents.
+
+// Operator-owned state for one code-defined automation. No row = follow the
+// definition's `defaultEnabled`.
+model AutomationState {
+  autId         String   @id // 'AUT-014' — the permanent identifier from the code ledger
+  // null = inherit defaultEnabled; true/false = explicit operator override.
+  enabled       Boolean?
+  updatedBy     String? // AdminUser.id
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// One row per execution ATTEMPT — the SOLE source of "last execution", run
+// counts and the error indicator. Never written by hand.
+model AutomationRun {
+  id             String @id @default(cuid())
+  autId          String
+  // Business identity of the triggering event. Unique ⇒ a replayed trigger
+  // (double WON, webhook retry, worker restart) hits P2002 and is dropped —
+  // the same idempotency contract the Communication Center and Admin Reports
+  // already use.
+  idempotencyKey String @unique
+  // ran | skipped | failed
+  status         String
+  // Hebrew explanation, shown VERBATIM in the registry. A skipped run without
+  // a reason would be exactly the silence this module exists to remove.
+  reasonHe       String?
+  // Which stage stopped it: dependency | condition | guard | action
+  stoppedAt      String?
+  // Frozen trigger input (subject refs + the answer values that mattered), so
+  // a run stays explainable after the questionnaire or the deal moves on.
+  input          Json?
+  // Per-action outcome: [{ kind, ok, ref, error }]
+  actionResults  Json?
+
+  dealId       String?
+  tourEventId  String?
+  submissionId String?
+
+  durationMs Int?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([autId, startedAt])
+  @@index([autId, status, startedAt])
+  @@index([submissionId])
+}
+
+// Change history. `definition_changed` rows are written AUTOMATICALLY at boot
+// when a definition's declared shape hash moves — so "updated date" and the
+// change log are facts about the code, never hand-maintained prose.
+model AutomationChange {
+  id        String @id @default(cuid())
+  autId     String
+  // registered | enabled | disabled | definition_changed | retired
+  kind      String
+  summaryHe String
+  fromHash  String?
+  toHash    String?
+  actorId   String?
+  actorName String?
+
+  createdAt DateTime @default(now())
+
+  @@index([autId, createdAt])
 }

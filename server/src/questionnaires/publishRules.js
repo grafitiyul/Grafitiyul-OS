@@ -12,14 +12,50 @@
 //     answerable questions that appear EARLIER in document order
 //     (backward-only ⇒ acyclic by construction)
 //   • sections may reference only questions from EARLIER sections
+//   • AUTOMATION KEY PROTECTION (see below)
+//
+// ── Automation key protection ────────────────────────────────────────────────
+// Question keys (q_<hex>) and option values (o_<hex>) are generated once and
+// preserved across version clones, so wording and ordering are free to change.
+// The ONE action that destroys a key is deleting a question/option and adding
+// it back — which mints a new random key. Before this gate existed, that would
+// silently stop every automation bound to it, with no error anywhere.
+//
+// Two levels, matching the two independent signals (see automations/references.js):
+//   error   — a key a NON-RETIRED automation actually references is gone.
+//             Publishing is blocked; the message names the AUT ids.
+//   warning — a key the author flagged "משמשת באוטומציות" is gone. No automation
+//             depends on it yet, so this is acknowledgeable — but the flag was a
+//             deliberate business decision and must not vanish unnoticed.
+//
+// Callers pass `automation` (see buildAutomationGuardInput in the service); when
+// it is omitted the rules below simply do not fire, which keeps this module pure
+// and independently testable.
 
 import { validateConditionShape } from '../../../shared/questionnaire/conditions.mjs';
 import { hasLanguage } from '../../../shared/questionnaire/localized.mjs';
 import { orderedSections } from './structure.js';
 import { isKnownType, typeHasOptions, typeIsAnswerable } from './types.js';
 
-// Returns [{ code, sectionKey?, questionKey?, detail? }] — empty = publishable.
-export function validateVersionForPublish({ template, structure }) {
+// Problem levels. A publish is blocked by 'error' only.
+export const PROBLEM_ERROR = 'error';
+export const PROBLEM_WARNING = 'warning';
+
+/** Errors block publishing; warnings are surfaced and acknowledgeable. */
+export function blockingProblems(problems) {
+  return (problems || []).filter((p) => (p.level || PROBLEM_ERROR) === PROBLEM_ERROR);
+}
+
+/**
+ * Returns [{ code, level, sectionKey?, questionKey?, detail?, automations? }] —
+ * no blocking entries = publishable.
+ *
+ * `automation` (optional):
+ *   { referencedQuestions: Map<questionKey, [{autId,nameHe}]>,
+ *     referencedOptions:   Map<`${qKey}:${oValue}`, [{autId,nameHe}]>,
+ *     flaggedQuestionKeys: Set<questionKey> }   ← from the CURRENT PUBLISHED version
+ */
+export function validateVersionForPublish({ template, structure, automation = null }) {
   const errors = [];
   const lang = template.defaultLanguage || 'he';
   const sections = orderedSections(structure);
@@ -39,6 +75,9 @@ export function validateVersionForPublish({ template, structure }) {
   // legal condition targets for anything that comes after them.
   const seenAnswerable = new Set();
   const allKeys = new Set();
+  // `${questionKey}:${optionValue}` for every option present in this draft —
+  // the automation guard compares against these.
+  const allOptionValues = new Set();
 
   for (const section of sections) {
     if (!hasLanguage(section.title, lang)) {
@@ -76,6 +115,7 @@ export function validateVersionForPublish({ template, structure }) {
               errors.push({ code: 'duplicate_option_value', questionKey: q.key, detail: o.value });
             }
             values.add(o.value);
+            allOptionValues.add(`${q.key}:${o.value}`);
             if (!hasLanguage(o.label, lang)) {
               errors.push({ code: 'option_label_missing_default_language', questionKey: q.key, detail: o.value });
             }
@@ -99,5 +139,65 @@ export function validateVersionForPublish({ template, structure }) {
     }
   }
 
-  return errors;
+  errors.push(...automationProblems({ automation, allKeys, allOptionValues }));
+
+  // Everything above is blocking unless it says otherwise.
+  return errors.map((e) => ({ level: PROBLEM_ERROR, ...e }));
+}
+
+/**
+ * Automation key protection. Pure over the draft's key sets — the caller
+ * supplies what the registry references and what the CURRENT PUBLISHED version
+ * had flagged.
+ */
+function automationProblems({ automation, allKeys, allOptionValues }) {
+  if (!automation) return [];
+  const problems = [];
+  const {
+    referencedQuestions = new Map(),
+    referencedOptions = new Map(),
+    flaggedQuestionKeys = new Set(),
+  } = automation;
+
+  // BLOCKING — a key a live automation actually depends on is gone.
+  for (const [questionKey, automations] of referencedQuestions) {
+    if (allKeys.has(questionKey)) continue;
+    problems.push({
+      code: 'automation_question_removed',
+      level: PROBLEM_ERROR,
+      questionKey,
+      automations,
+      detail: automations.map((a) => a.autId).join(', '),
+    });
+  }
+
+  for (const [composite, automations] of referencedOptions) {
+    if (allOptionValues.has(composite)) continue;
+    const [questionKey, optionValue] = composite.split(':');
+    // A missing question is already reported above — don't report it twice as
+    // a missing option, which would read like two separate faults.
+    if (!allKeys.has(questionKey)) continue;
+    problems.push({
+      code: 'automation_option_removed',
+      level: PROBLEM_ERROR,
+      questionKey,
+      optionValue,
+      automations,
+      detail: automations.map((a) => a.autId).join(', '),
+    });
+  }
+
+  // WARNING — a key the author deliberately marked as an automation extension
+  // point is gone, but nothing depends on it yet.
+  for (const questionKey of flaggedQuestionKeys) {
+    if (allKeys.has(questionKey)) continue;
+    if (referencedQuestions.has(questionKey)) continue; // already blocking
+    problems.push({
+      code: 'automation_flagged_question_removed',
+      level: PROBLEM_WARNING,
+      questionKey,
+    });
+  }
+
+  return problems;
 }

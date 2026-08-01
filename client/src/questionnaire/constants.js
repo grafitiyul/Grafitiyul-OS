@@ -94,4 +94,10 @@ export const PUBLISH_PROBLEM_LABELS = {
   unknown_question_type: 'סוג שאלה לא מוכר',
   invalid_condition: 'תנאי תצוגה לא תקין (ייתכן שהוא מפנה לשאלה מאוחרת יותר)',
   invalid_regex: 'תבנית (regex) לא תקינה',
+  // Automation key protection. A question key is generated once and preserved
+  // across versions — deleting a question and re-adding it mints a NEW key and
+  // would silently stop every automation bound to it.
+  automation_question_removed: 'שאלה שאוטומציות תלויות בה הוסרה מהגרסה',
+  automation_option_removed: 'אפשרות תשובה שאוטומציות תלויות בה הוסרה מהגרסה',
+  automation_flagged_question_removed: 'שאלה שסומנה "משמשת באוטומציות" הוסרה מהגרסה',
 };

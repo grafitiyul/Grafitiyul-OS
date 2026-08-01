@@ -89,6 +89,9 @@ export function cloneStructureForNewVersion(structure) {
       sortOrder: q.sortOrder ?? 0,
       config: q.config ?? null,
       visibleWhen: q.visibleWhen ?? null,
+      // The author's "משמשת באוטומציות" decision is part of the question, not
+      // of a version — it must survive every new draft exactly like the key.
+      automationFlag: !!q.automationFlag,
       options: q.options.map((o) => ({
         value: o.value,
         label: o.label,

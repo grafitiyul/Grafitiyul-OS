@@ -6,7 +6,7 @@ import { QUESTION_TYPE_KEYS } from '../questionnaires/types.js';
 import {
   QError, sendQError,
   listTemplates, getTemplate, createTemplate, updateTemplateMeta, deleteTemplate,
-  getVersionRuntime, updateVersionMeta, createNextDraft, publishVersion,
+  getVersionRuntime, getVersionAuthoring, updateVersionMeta, createNextDraft, publishVersion,
   createSection, updateSection, deleteSection,
   createQuestion, updateQuestion, deleteQuestion,
   createOption, updateOption, deleteOption, reorderOptions, updateLayout,
@@ -131,8 +131,16 @@ router.put('/versions/:versionId', qh(async (req, res) => {
   res.json(await getVersionRuntime(req.params.versionId));
 }));
 
+// Authoring-only view: stable keys + automation references. Deliberately NOT
+// part of the fill runtime — the learner surface never sees automation vocabulary.
+router.get('/versions/:versionId/authoring', qh(async (req, res) => {
+  res.json(await getVersionAuthoring(req.params.versionId));
+}));
+
 router.post('/versions/:versionId/publish', qh(async (req, res) => {
-  res.json(await publishVersion(req.params.versionId));
+  res.json(await publishVersion(req.params.versionId, {
+    acknowledgeWarnings: !!(req.body || {}).acknowledgeWarnings,
+  }));
 }));
 
 router.put('/versions/:versionId/layout', qh(async (req, res) => {

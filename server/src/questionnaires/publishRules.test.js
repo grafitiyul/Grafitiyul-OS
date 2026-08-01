@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateVersionForPublish } from './publishRules.js';
+import { validateVersionForPublish, blockingProblems } from './publishRules.js';
 import { cloneStructureForNewVersion, buildQuestionSnapshot, buildSingletonKey, flatQuestions } from './structure.js';
 
 // Publish-time gate + structure helpers (blueprint §6–§7, §10).
@@ -201,4 +201,140 @@ test('buildSingletonKey: subject-bound only', () => {
     'booking:b1:coordination',
   );
   assert.equal(buildSingletonKey({ subjectType: null, subjectId: null, purpose: 'general' }), null);
+});
+
+// ── Automation key protection ────────────────────────────────────────────────
+// Question keys are generated once and preserved across version clones, so
+// wording and ordering are free to change. The ONE action that destroys a key
+// is deleting a question and re-adding it — which used to silently stop every
+// automation bound to it, with no error anywhere. This is that gate.
+
+const AUT = (autId, nameHe = 'אוטומציה') => ({ autId, nameHe });
+
+const guard = ({ questions = [], options = [], flagged = [] } = {}) => ({
+  referencedQuestions: new Map(questions),
+  referencedOptions: new Map(options),
+  flaggedQuestionKeys: new Set(flagged),
+});
+
+const autCodes = (problems) => problems.map((p) => p.code).filter((c) => c.startsWith('automation_'));
+
+test('automation guard: a key a live automation depends on cannot be dropped', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_bbbbbbbb', 'text')]),
+    automation: guard({ questions: [['q_aaaaaaaa', [AUT('AUT-004', 'שיחת תיאום בזמן')]]] }),
+  });
+  const hit = problems.find((p) => p.code === 'automation_question_removed');
+  assert.ok(hit, 'expected the removal to be reported');
+  assert.equal(hit.level, 'error');
+  assert.equal(hit.questionKey, 'q_aaaaaaaa');
+  // Naming the AUT ids is the point — the author must know WHICH break.
+  assert.deepEqual(hit.automations.map((a) => a.autId), ['AUT-004']);
+});
+
+test('automation guard: a key still present publishes cleanly', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_aaaaaaaa', 'text')]),
+    automation: guard({ questions: [['q_aaaaaaaa', [AUT('AUT-004')]]] }),
+  });
+  assert.deepEqual(blockingProblems(problems), []);
+});
+
+test('automation guard: reordering and rewording never trip it', () => {
+  // The whole promise of the architecture: content stays freely editable.
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([
+      q('q_bbbbbbbb', 'text', { sortOrder: 0, label: { he: 'שאלה אחרת לגמרי' } }),
+      q('q_aaaaaaaa', 'text', { sortOrder: 1, label: { he: 'נוסח חדש לחלוטין' } }),
+    ]),
+    automation: guard({ questions: [['q_aaaaaaaa', [AUT('AUT-004')]]] }),
+  });
+  assert.deepEqual(blockingProblems(problems), []);
+});
+
+test('automation guard: a removed option value blocks publishing', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([
+      q('q_aaaaaaaa', 'choice', { options: [opt('o_11111111', 'כן')] }),
+    ]),
+    automation: guard({
+      questions: [['q_aaaaaaaa', [AUT('AUT-004')]]],
+      options: [['q_aaaaaaaa:o_22222222', [AUT('AUT-004')]]],
+    }),
+  });
+  const hit = problems.find((p) => p.code === 'automation_option_removed');
+  assert.ok(hit);
+  assert.equal(hit.optionValue, 'o_22222222');
+});
+
+test('automation guard: renaming an option label keeps the key valid', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([
+      q('q_aaaaaaaa', 'choice', { options: [opt('o_11111111', 'בוצע בהחלט')] }),
+    ]),
+    automation: guard({
+      questions: [['q_aaaaaaaa', [AUT('AUT-004')]]],
+      options: [['q_aaaaaaaa:o_11111111', [AUT('AUT-004')]]],
+    }),
+  });
+  assert.deepEqual(blockingProblems(problems), []);
+});
+
+test('automation guard: a deleted question is not ALSO reported as a missing option', () => {
+  // One fault should read as one fault.
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_zzzzzzzz', 'text')]),
+    automation: guard({
+      questions: [['q_aaaaaaaa', [AUT('AUT-004')]]],
+      options: [['q_aaaaaaaa:o_11111111', [AUT('AUT-004')]]],
+    }),
+  });
+  assert.deepEqual(autCodes(problems), ['automation_question_removed']);
+});
+
+test('automation guard: a FLAGGED question that disappears is a warning, not a block', () => {
+  // Nothing depends on it yet — but the flag was a deliberate business decision
+  // and must not vanish unnoticed.
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_bbbbbbbb', 'text')]),
+    automation: guard({ flagged: ['q_aaaaaaaa'] }),
+  });
+  const hit = problems.find((p) => p.code === 'automation_flagged_question_removed');
+  assert.ok(hit);
+  assert.equal(hit.level, 'warning');
+  assert.deepEqual(blockingProblems(problems), []);
+});
+
+test('automation guard: a flagged key that is ALSO referenced blocks once, as an error', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_bbbbbbbb', 'text')]),
+    automation: guard({
+      questions: [['q_aaaaaaaa', [AUT('AUT-004')]]],
+      flagged: ['q_aaaaaaaa'],
+    }),
+  });
+  assert.deepEqual(autCodes(problems), ['automation_question_removed']);
+  assert.equal(blockingProblems(problems).length, 1);
+});
+
+test('automation guard: absent automation input changes nothing (Slice 0 with an empty registry)', () => {
+  const problems = validateVersionForPublish({
+    template,
+    structure: structureOf([q('q_aaaaaaaa', 'text')]),
+  });
+  assert.deepEqual(blockingProblems(problems), []);
+});
+
+test('every problem carries an explicit level', () => {
+  const problems = validateVersionForPublish({ template, structure: structureOf([]) });
+  assert.ok(problems.length > 0);
+  for (const p of problems) assert.ok(['error', 'warning'].includes(p.level), `${p.code} has no level`);
 });

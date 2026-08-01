@@ -100,8 +100,14 @@ export default function QuestionnaireBuilderPage() {
   const [template, setTemplate] = useState(null);
   const [versionId, setVersionId] = useState(null);
   const [runtime, setRuntime] = useState(null);
+  // Authoring-only companion payload: stable keys + which automations reference
+  // them. Kept apart from `runtime` because the fill surface must never see it.
+  const [authoring, setAuthoring] = useState(null);
   const [inspecting, setInspecting] = useState(null); // { sectionId, question } | null
   const [publishProblems, setPublishProblems] = useState(null);
+  // True when the only publish blockers are warnings — publishing again with an
+  // explicit acknowledgement is then allowed.
+  const [publishWarningsOnly, setPublishWarningsOnly] = useState(false);
   const [confirm, setConfirm] = useState(null); // { title, body, action }
   const [error, setError] = useState('');
   const [editLang, setEditLang] = useState(null); // null → template default
@@ -121,7 +127,14 @@ export default function QuestionnaireBuilderPage() {
 
   const refreshRuntime = useCallback(async (vid) => {
     if (!vid) return;
-    setRuntime(await api.questionnaires.getVersion(vid));
+    const [rt, auth] = await Promise.all([
+      api.questionnaires.getVersion(vid),
+      // The automation panel is informational: if the registry read fails the
+      // builder must still work, so this degrades to "no automation info".
+      api.questionnaires.getVersionAuthoring(vid).catch(() => null),
+    ]);
+    setRuntime(rt);
+    setAuthoring(auth);
   }, []);
 
   useEffect(() => {
@@ -154,16 +167,19 @@ export default function QuestionnaireBuilderPage() {
     }
   };
 
-  const publish = async () => {
+  const publish = async ({ acknowledgeWarnings = false } = {}) => {
     setError('');
     setPublishProblems(null);
+    setPublishWarningsOnly(false);
     try {
-      await api.questionnaires.publishVersion(versionId);
+      await api.questionnaires.publishVersion(versionId, { acknowledgeWarnings });
       await loadTemplate(versionId);
       await refreshRuntime(versionId);
     } catch (e) {
-      if (e.status === 422 && e.payload?.problems) setPublishProblems(e.payload.problems);
-      else setError(e.payload?.error || e.message);
+      if (e.status === 422 && e.payload?.problems) {
+        setPublishProblems(e.payload.problems);
+        setPublishWarningsOnly(e.payload.error === 'publish_warnings_unacknowledged');
+      } else setError(e.payload?.error || e.message);
     }
   };
 
@@ -236,7 +252,7 @@ export default function QuestionnaireBuilderPage() {
             👁️ תצוגה מקדימה
           </button>
           {isDraft ? (
-            <button type="button" onClick={publish} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-emerald-700">
+            <button type="button" onClick={() => publish()} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-emerald-700">
               פרסום גרסה
             </button>
           ) : !hasDraft ? (
@@ -270,17 +286,12 @@ export default function QuestionnaireBuilderPage() {
       ) : null}
 
       {publishProblems ? (
-        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
-          <div className="text-[13.5px] font-semibold text-amber-800">לא ניתן לפרסם — יש לתקן:</div>
-          <ul className="mt-1.5 list-disc space-y-0.5 pe-5 text-[12.5px] text-amber-800">
-            {publishProblems.map((p, i) => (
-              <li key={i}>
-                {PUBLISH_PROBLEM_LABELS[p.code] || p.code}
-                {p.questionKey ? ` — "${questionLabelByKey.get(p.questionKey) || p.questionKey}"` : ''}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <PublishProblems
+          problems={publishProblems}
+          warningsOnly={publishWarningsOnly}
+          questionLabelByKey={questionLabelByKey}
+          onAcknowledge={() => publish({ acknowledgeWarnings: true })}
+        />
       ) : null}
 
       {!isDraft ? (
@@ -451,6 +462,7 @@ export default function QuestionnaireBuilderPage() {
       <QuestionInspector
         state={inspecting}
         runtime={runtime}
+        authoring={authoring}
         isDraft={isDraft}
         versionId={versionId}
         lx={lx}
@@ -459,7 +471,10 @@ export default function QuestionnaireBuilderPage() {
         onDelete={(q) =>
           setConfirm({
             title: 'מחיקת שאלה',
-            body: `למחוק את השאלה "${lx.show(q.label) || 'ללא כותרת'}"?`,
+            // Deleting a question mints a NEW key if it is ever re-added, which
+            // silently breaks every automation bound to it. Say so BEFORE the
+            // destructive action, not in a publish error afterwards.
+            body: deleteQuestionWarning(q, authoring, lx),
             action: async () => {
               setInspecting(null);
               await mutate(() => api.questionnaires.removeQuestion(q.id));
@@ -480,6 +495,172 @@ export default function QuestionnaireBuilderPage() {
           await a();
         }}
       />
+    </div>
+  );
+}
+
+// ── Automations ──────────────────────────────────────────────────────────────
+// Two facts live here, and they are deliberately NOT derived from each other:
+//
+//   flag        MANUAL — the author's business decision that this question is an
+//               automation extension point. May be true before any automation
+//               exists; checking it creates nothing.
+//   automations DERIVED — which automations reference this key right now, read
+//               live from the Automation Registry.
+//
+// Showing them side by side (instead of collapsing them into one "is it used?"
+// checkbox) is what lets the screen point out where intent and reality diverge
+// rather than silently reconciling them.
+
+/** Confirmation body for deleting a question — names the automations at risk. */
+function deleteQuestionWarning(q, authoring, lx) {
+  const title = lx.show(q.label) || 'ללא כותרת';
+  const info = authoring?.questions?.[q.key];
+  const auts = info?.automations || [];
+  if (!auts.length) {
+    return info?.flag
+      ? `למחוק את השאלה "${title}"?\n\nהשאלה מסומנת "משמשת באוטומציות". מחיקתה תאבד את מפתח השאלה לצמיתות — הוספה מחדש תיצור מפתח חדש.`
+      : `למחוק את השאלה "${title}"?`;
+  }
+  const list = auts.map((a) => `• ${a.autId} · ${a.nameHe}`).join('\n');
+  return `למחוק את השאלה "${title}"?\n\n⚠ האוטומציות הבאות תלויות בשאלה זו ויפסיקו לפעול:\n${list}\n\nהוספת השאלה מחדש תיצור מפתח חדש ולא תשחזר את הקשר.`;
+}
+
+function AutomationPanel({ q, info, isDraft, onToggleFlag }) {
+  // The registry read failed or the version predates it — say nothing rather
+  // than imply "no automations use this".
+  if (!info) return null;
+  const auts = info.automations || [];
+  const optionRefs = Object.entries(info.options || {}).filter(([, list]) => list.length);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3.5">
+      <Toggle
+        checked={!!info.flag}
+        disabled={!isDraft}
+        onChange={onToggleFlag}
+        label="משמשת באוטומציות"
+        showLabel
+      />
+      <p className="mt-1 text-[11.5px] text-gray-500">
+        סימון עסקי בלבד — מציין שהשאלה מיועדת לשמש כנקודת חיבור לאוטומציות. הסימון אינו יוצר אוטומציה.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3">
+        <span className="text-[11.5px] text-gray-500">מפתח קבוע:</span>
+        <code className="rounded bg-white px-2 py-0.5 text-[11.5px] text-gray-700 ring-1 ring-gray-200" dir="ltr">
+          {info.reference}
+        </code>
+        <button
+          type="button"
+          onClick={() => navigator.clipboard?.writeText(info.reference)}
+          className="rounded-lg border border-gray-300 px-2 py-0.5 text-[11.5px] text-gray-600 hover:bg-white"
+        >
+          העתקה
+        </button>
+      </div>
+      <p className="mt-1 text-[11.5px] text-gray-500">
+        המפתח נשמר בין גרסאות. שינוי נוסח השאלה או סדר השאלות אינו משנה אותו — מחיקה ויצירה מחדש כן.
+      </p>
+
+      {auts.length ? (
+        <div className="mt-3 border-t border-gray-200 pt-3">
+          <div className="text-[12px] font-medium text-gray-700">אוטומציות המשתמשות בשאלה כרגע</div>
+          <ul className="mt-1.5 space-y-1">
+            {auts.map((a) => (
+              <li key={a.autId} className="flex items-center gap-2 text-[12px]">
+                <code className="rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200" dir="ltr">
+                  {a.autId}
+                </code>
+                <Link to={`/admin/settings/automations/${a.autId}`} className="text-blue-600 hover:underline">
+                  {a.nameHe}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11.5px] text-amber-800">
+            ⚠ מחיקת השאלה או מחיקת אפשרויות התשובה ישברו את האוטומציות האלה.
+          </div>
+        </div>
+      ) : info.flag ? (
+        <div className="mt-3 border-t border-gray-200 pt-3 text-[11.5px] text-gray-500">
+          השאלה מסומנת כנקודת חיבור לאוטומציות; טרם נבנתה אוטומציה המשתמשת בה.
+        </div>
+      ) : null}
+
+      {!info.flag && auts.length ? (
+        <div className="mt-2 text-[11.5px] text-amber-700">
+          ⚠ קיימות אוטומציות התלויות בשאלה זו למרות שאינה מסומנת.
+        </div>
+      ) : null}
+
+      {optionRefs.length ? (
+        <div className="mt-3 border-t border-gray-200 pt-3">
+          <div className="text-[12px] font-medium text-gray-700">אפשרויות תשובה בשימוש</div>
+          <ul className="mt-1.5 space-y-1 text-[11.5px] text-gray-600">
+            {optionRefs.map(([value, list]) => (
+              <li key={value} className="flex flex-wrap items-center gap-1.5">
+                <code className="rounded bg-white px-1.5 py-0.5 text-[11px] ring-1 ring-gray-200" dir="ltr">{value}</code>
+                <span>{list.map((a) => a.autId).join(', ')}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Publish problems, split by what they actually mean:
+//   errors   — structural faults, and keys live automations depend on. Blocking.
+//   warnings — a question the author flagged "משמשת באוטומציות" disappeared.
+//              Nothing depends on it yet, so this is a deliberate decision the
+//              author can confirm — but never something that passes silently.
+function PublishProblems({ problems, warningsOnly, questionLabelByKey, onAcknowledge }) {
+  const label = (p) => {
+    const text = PUBLISH_PROBLEM_LABELS[p.code] || p.code;
+    const q = p.questionKey ? questionLabelByKey.get(p.questionKey) : null;
+    const named = p.questionKey ? `${text} — "${q || p.questionKey}"` : text;
+    // Naming the AUT ids is the whole point: the author needs to know WHICH
+    // automations break, not merely that something does.
+    const auts = (p.automations || []).map((a) => `${a.autId} · ${a.nameHe}`).join(' · ');
+    return auts ? `${named} · ${auts}` : named;
+  };
+
+  const errors = problems.filter((p) => (p.level || 'error') === 'error');
+  const warnings = problems.filter((p) => p.level === 'warning');
+
+  return (
+    <div className="mb-4 space-y-3">
+      {errors.length ? (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3">
+          <div className="text-[13.5px] font-semibold text-red-800">לא ניתן לפרסם — יש לתקן:</div>
+          <ul className="mt-1.5 list-disc space-y-0.5 pe-5 text-[12.5px] text-red-800">
+            {errors.map((p, i) => <li key={i}>{label(p)}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
+      {warnings.length ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="text-[13.5px] font-semibold text-amber-800">שימו לב לפני פרסום:</div>
+          <ul className="mt-1.5 list-disc space-y-0.5 pe-5 text-[12.5px] text-amber-800">
+            {warnings.map((p, i) => <li key={i}>{label(p)}</li>)}
+          </ul>
+          {warningsOnly ? (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onAcknowledge}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-amber-700"
+              >
+                הבנתי — פרסמו בכל זאת
+              </button>
+              <span className="text-[11.5px] text-amber-700">מפתח השאלה יאבד ולא ניתן יהיה לשחזר אותו.</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -652,7 +833,7 @@ function earlierQuestions(runtime, { beforeQuestionId, beforeSectionId }) {
   return out;
 }
 
-function QuestionInspector({ state, runtime, isDraft, versionId, lx, onClose, onMutate, onDelete }) {
+function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, onClose, onMutate, onDelete }) {
   const question = state?.question || null;
   // Always re-resolve the question from the fresh runtime (post-mutation).
   const live = useMemo(() => {
@@ -782,6 +963,13 @@ function QuestionInspector({ state, runtime, isDraft, versionId, lx, onClose, on
           earlier={earlier}
           disabled={!isDraft}
           onChange={(expr) => save({ visibleWhen: expr })}
+        />
+
+        <AutomationPanel
+          q={q}
+          info={authoring?.questions?.[q.key] || null}
+          isDraft={isDraft}
+          onToggleFlag={(v) => save({ automationFlag: v })}
         />
 
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">

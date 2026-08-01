@@ -1689,8 +1689,14 @@ export const api = {
     getVersion: (versionId) => request(`/api/questionnaires/versions/${versionId}`),
     updateVersion: (versionId, data) =>
       request(`/api/questionnaires/versions/${versionId}`, { method: 'PUT', body: JSON.stringify(data) }),
-    publishVersion: (versionId) =>
-      request(`/api/questionnaires/versions/${versionId}/publish`, { method: 'POST' }),
+    // Authoring-only: stable keys + which automations reference them. Separate
+    // from getVersion so the fill runtime never carries automation vocabulary.
+    getVersionAuthoring: (versionId) => request(`/api/questionnaires/versions/${versionId}/authoring`),
+    publishVersion: (versionId, { acknowledgeWarnings = false } = {}) =>
+      request(`/api/questionnaires/versions/${versionId}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ acknowledgeWarnings }),
+      }),
     createNextDraft: (templateId) =>
       request(`/api/questionnaires/${templateId}/versions`, { method: 'POST' }),
     updateLayout: (versionId, layout) =>

@@ -24,7 +24,8 @@ import {
   cloneStructureForNewVersion,
 } from './structure.js';
 import { isKnownType, typeHasOptions } from './types.js';
-import { validateVersionForPublish } from './publishRules.js';
+import { validateVersionForPublish, blockingProblems } from './publishRules.js';
+import { referencesForTemplate, referencePayloadForTemplate } from '../automations/references.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
@@ -259,6 +260,66 @@ export async function getVersionRuntime(versionId) {
   return runtimePayload(version);
 }
 
+/**
+ * The AUTHORING view of a version: the runtime payload plus everything the
+ * builder needs about automations. Deliberately a separate call from
+ * runtimePayload — the fill runtime (public link, learner surface) must never
+ * carry internal automation vocabulary.
+ *
+ * Per question:
+ *   flag        — the MANUAL "משמשת באוטומציות" business decision
+ *   automations — DERIVED: which automations reference this key right now
+ * The two are independent by design (see automations/references.js), so the
+ * builder can show where the author's intent and reality diverge instead of
+ * silently reconciling them.
+ */
+export async function getVersionAuthoring(versionId) {
+  const version = await loadVersion(versionId);
+  const templateKey = version.template.key;
+  const refs = referencePayloadForTemplate(templateKey);
+  const questions = {};
+
+  for (const q of flatQuestions(structureOf(version))) {
+    const ref = refs[q.key] || null;
+    questions[q.key] = {
+      // Fully-qualified stable reference — what an operator copies and what an
+      // automation definition names. The template scope matters: a key is only
+      // unique inside its own template.
+      reference: `${templateKey}#${q.key}`,
+      flag: !!q.automationFlag,
+      automations: ref?.automations || [],
+      options: Object.fromEntries(
+        (q.options || []).map((o) => [o.value, {
+          reference: `${templateKey}#${q.key}:${o.value}`,
+          automations: ref?.options?.[o.value] || [],
+        }]),
+      ),
+    };
+  }
+
+  return { templateKey, questions };
+}
+
+/**
+ * Input for the publish-time automation guard: what the registry references,
+ * and which keys the CURRENT PUBLISHED version had flagged (the flag is only
+ * meaningful as "it used to be there and now it is not").
+ */
+async function buildAutomationGuardInput(template) {
+  const { questions, options } = referencesForTemplate(template.key);
+
+  const flaggedQuestionKeys = new Set();
+  if (template.currentVersionId) {
+    const published = await prisma.questionnaireQuestion.findMany({
+      where: { versionId: template.currentVersionId, automationFlag: true },
+      select: { key: true },
+    });
+    for (const q of published) flaggedQuestionKeys.add(q.key);
+  }
+
+  return { referencedQuestions: questions, referencedOptions: options, flaggedQuestionKeys };
+}
+
 export async function updateVersionMeta(versionId, patch) {
   await assertDraftVersion(versionId);
   const data = {};
@@ -327,11 +388,22 @@ export async function createNextDraft(templateId) {
   return { id: created.id, existed: false };
 }
 
-export async function publishVersion(versionId) {
+export async function publishVersion(versionId, { acknowledgeWarnings = false } = {}) {
   const version = await loadVersion(versionId);
   if (version.status !== 'draft') throw new QError(409, 'version_not_draft');
-  const errors = validateVersionForPublish({ template: version.template, structure: structureOf(version) });
-  if (errors.length) throw new QError(422, 'publish_validation_failed', { problems: errors });
+  const problems = validateVersionForPublish({
+    template: version.template,
+    structure: structureOf(version),
+    automation: await buildAutomationGuardInput(version.template),
+  });
+  const blocking = blockingProblems(problems);
+  if (blocking.length) throw new QError(422, 'publish_validation_failed', { problems });
+  // Warnings (a deliberately flagged extension point disappearing) stop the
+  // FIRST publish attempt so the author sees them, and are cleared by an
+  // explicit acknowledgement rather than by being silently ignored.
+  if (problems.length && !acknowledgeWarnings) {
+    throw new QError(422, 'publish_warnings_unacknowledged', { problems });
+  }
 
   return prisma.$transaction(async (tx) => {
     // Archive the previously-published version (history stays readable).
@@ -456,6 +528,9 @@ export async function updateQuestion(questionId, patch) {
   if (patch.required !== undefined) data.required = !!patch.required;
   if (patch.config !== undefined) data.config = patch.config && typeof patch.config === 'object' ? patch.config : null;
   if (patch.visibleWhen !== undefined) data.visibleWhen = patch.visibleWhen ?? null;
+  // The manual automation-extension-point decision. Setting it creates nothing
+  // and triggers nothing — it records intent and protects the key at publish.
+  if (patch.automationFlag !== undefined) data.automationFlag = !!patch.automationFlag;
   return prisma.questionnaireQuestion.update({
     where: { id: questionId },
     data,

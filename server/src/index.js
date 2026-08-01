@@ -121,6 +121,11 @@ import publicReservationsRouter from './routes/publicReservations.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import './control/detectors/index.js';
+// Automation Registry — importing the definitions registers every automation.
+// validateRegistry() then runs at startup (see below): a bad definition must
+// fail loudly at boot, never at 3am when the trigger finally fires.
+import './automations/definitions/index.js';
+import { validateRegistry } from './automations/registry.js';
 import migrationRouter from './routes/migration.js';
 import legacyCardRouter from './routes/legacyCard.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -645,6 +650,14 @@ const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, () => {
   console.log(`[grafitiyul-os-server] listening on port ${port}`);
+  // Automation Registry integrity. An inconsistent registry means the screen
+  // would misrepresent what actually runs in production, so it is reported at
+  // full volume — but never fatal: a registry problem must not take down the
+  // business system it merely describes.
+  const registryProblems = validateRegistry();
+  if (registryProblems.length) {
+    console.error(`[automations] REGISTRY INCONSISTENT: ${registryProblems.join('; ')}`);
+  }
   // Ingress Platform — report which external lead/order sources are credentialed.
   // Purely informational: an unconfigured source is a pending deployment step,
   // never a boot failure, so a missing key can't take the service down.
