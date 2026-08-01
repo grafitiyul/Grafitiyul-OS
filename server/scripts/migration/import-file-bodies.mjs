@@ -1,11 +1,13 @@
-// FILE BODIES — 2026 deals only. The scoped, self-throttling resume.
+// FILE BODIES — the scoped, self-throttling, resumable body import.
 //
-//   railway run --service Grafitiyul-OS node server/scripts/migration/import-files-2026.mjs [--execute] [--max N]
+//   railway run --service Grafitiyul-OS node server/scripts/migration/import-file-bodies.mjs
+//       [--execute] [--year 2026|all] [--wait-for-window] [--ceiling N] [--delay ms]
 //
-// Why a separate script from import-files.mjs: that one walks the whole census
-// under policy C. This one is deliberately narrow — the owner's priority is
-// PIPEDRIVE USABILITY, so the job is scoped to files on Pipedrive deals created
-// in calendar 2026, and it is built to stop rather than to push through.
+// Why a separate script from import-files.mjs: the owner's priority is
+// PIPEDRIVE USABILITY. This one is scoped (--year), budget-aware, single-process
+// and built to STOP rather than push through. --year all covers every source
+// year; --wait-for-window lets it be launched inside a throttle window and begin
+// by itself when the budget resets.
 //
 // ── The real endpoint contract (audited, not assumed) ───────────────────────
 //   * LISTING file metadata is bulk: GET /v1/files?start&limit, 500 rows/page.
@@ -35,8 +37,12 @@ const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.
 const EXECUTE = process.argv.includes('--execute');
 const MAX = Number(arg('--max') || 0) || Infinity;
 const SNAP = arg('--snapshot') || 'snap-20260730T081731Z-44cb';
-const YEAR = arg('--year') || '2026';
-const BASE_DELAY_MS = Number(arg('--delay') || 1500);   // ~40 req/min — deliberately gentle
+const YEAR = arg('--year') || '2026';           // 'all' = every year in the census
+const ALL_YEARS = YEAR === 'all';
+const WAIT = process.argv.includes('--wait-for-window'); // idle until the throttle clears
+const CEILING = Number(arg('--ceiling') || 6500);        // hard per-run request cap
+const BUDGET_RESERVE = Number(arg('--reserve') || 500);  // stop with this much daily budget left
+const BASE_DELAY_MS = Number(arg('--delay') || 2000);   // 30 req/min — deliberately gentle
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const token = String(process.env.PIPEDRIVE_API_TOKEN || '').trim();
 const domain = String(process.env.PIPEDRIVE_COMPANY_DOMAIN || '').trim();
@@ -80,7 +86,7 @@ async function scope() {
     for (const row of await reader.readShard(s.key)) {
       const id = row?.id ?? row?.fields?.id;
       const add = String(row?.add_time ?? row?.fields?.add_time ?? '');
-      if (id != null && add.startsWith(YEAR)) inYear.add(String(id));
+      if (id != null && (ALL_YEARS ? add : add.startsWith(YEAR))) inYear.add(String(id));
     }
     reader._shardCache.clear();
   }
@@ -125,19 +131,35 @@ async function preflight() {
 
 // ── 4. the run ──────────────────────────────────────────────────────────────
 const { work, censusId, dealsInYear } = await scope();
-console.log(`${EXECUTE ? 'EXECUTE' : 'DRY RUN'} · ${YEAR} deals in snapshot: ${dealsInYear} · census ${censusId}`);
+console.log(`${EXECUTE ? 'EXECUTE' : 'DRY RUN'} · scope ${ALL_YEARS ? 'ALL YEARS' : YEAR} · source deals: ${dealsInYear} · census ${censusId}`);
 console.log(`bodies still missing in scope: ${work.length} (${(work.reduce((s, w) => s + (Number(w.f.file_size) || 0), 0) / 1048576).toFixed(1)} MB)`);
 console.log(`API requests this run would make: ${Math.min(work.length, MAX)} downloads + 1 preflight`);
 
 if (!EXECUTE) { console.log('\n--dry: nothing fetched, nothing written. Re-run with --execute.'); await prisma.$disconnect(); process.exit(0); }
-if (!work.length) { console.log('nothing to do — 2026 scope is complete.'); await prisma.$disconnect(); process.exit(0); }
+if (!work.length) { console.log(`nothing to do — the ${ALL_YEARS ? 'full' : YEAR} scope is complete.`); await prisma.$disconnect(); process.exit(0); }
 if (!(await claimLock())) { await prisma.$disconnect(); process.exit(2); }
 
 process.on('SIGINT', async () => { stats.stoppedBecause = 'interrupted'; await heartbeat(); await releaseLock(); await prisma.$disconnect(); process.exit(130); });
 
-if (!(await preflight())) {
+// THE gate. One probe. With --wait-for-window the run then IDLES for exactly as
+// long as Pipedrive asked (plus a minute) and probes once more — so a job
+// started inside a throttle window costs 1 request now, sleeps, and begins the
+// moment the budget resets. Never a polling storm: one probe per wait.
+let clear = await preflight();
+if (!clear && WAIT) {
+  for (let attempt = 1; attempt <= 6 && !clear; attempt += 1) {
+    const waitMs = Math.max(60_000, (stats.backoff.retryAfterSeconds + 60) * 1000);
+    console.log(`[${new Date().toISOString()}] throttled — idling ${(waitMs / 3600000).toFixed(2)}h (attempt ${attempt}); safe after ${stats.backoff.safeAfter}`);
+    await heartbeat({ waitingUntil: stats.backoff.safeAfter, stoppedBecause: null });
+    await sleep(waitMs);
+    stats.backoff = null;
+    clear = await preflight();
+    if (clear) console.log(`[${new Date().toISOString()}] window cleared — starting transfers.`);
+  }
+}
+if (!clear) {
   console.error(`\nPREFLIGHT REFUSED — Pipedrive returned ${stats.backoff.status}, Retry-After ${stats.backoff.retryAfterSeconds}s.`);
-  console.error(`Safe to resume after ${stats.backoff.safeAfter}. Not one body was requested.`);
+  console.error(`Safe to resume after ${stats.backoff?.safeAfter}. Not one body was requested.`);
   await heartbeat({ stoppedBecause: 'preflight_429' });
   await releaseLock();
   await prisma.$disconnect();
@@ -149,6 +171,8 @@ let streak = 0;
 let delay = BASE_DELAY_MS;
 const latencies = [];
 for (const { f, gosId } of work.slice(0, MAX === Infinity ? undefined : MAX)) {
+  if (requests >= CEILING) { stats.stoppedBecause = 'request_ceiling'; console.log(`
+ceiling ${CEILING} reached — re-run to continue.`); break; }
   const t0 = Date.now();
   try {
     const res = await fetch(`https://${domain}.pipedrive.com/api/v1/files/${f.id}/download?api_token=${encodeURIComponent(token)}`, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
@@ -159,6 +183,18 @@ for (const { f, gosId } of work.slice(0, MAX === Infinity ? undefined : MAX)) {
       stats.stoppedBecause = 'rate_limited';
       console.error(`\n429 mid-run — stopping immediately (Retry-After ${ra}s). Progress is checkpointed; re-run to resume.`);
       break;
+    }
+    // Leave real headroom for normal Pipedrive work: if the account reports a
+    // remaining daily budget, stop while a reserve is still untouched.
+    const left = Number(res.headers.get('x-daily-requests-left') ?? res.headers.get('x-ratelimit-remaining') ?? NaN);
+    if (Number.isFinite(left)) {
+      stats.budgetLeft = left;
+      if (left <= BUDGET_RESERVE) {
+        stats.stoppedBecause = 'budget_reserve';
+        console.error(`
+stopping: only ${left} API requests left today (reserve ${BUDGET_RESERVE}). Re-run after the reset.`);
+        break;
+      }
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = Buffer.from(await res.arrayBuffer());
