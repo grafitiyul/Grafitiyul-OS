@@ -833,6 +833,10 @@ export const api = {
   // per-number bridge services.
   whatsapp: {
     accounts: () => request('/api/whatsapp/accounts'),
+    // The numbers an operator may SEND from (canonical order + live connection
+    // state) — the one list behind every sender picker. Distinct from
+    // `accounts`, which is the admin management view of every configured row.
+    connectedAccounts: () => request('/api/whatsapp/connected-accounts'),
     updateAccount: (id, data) =>
       request(`/api/whatsapp/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     accountStatus: (id) => request(`/api/whatsapp/accounts/${id}/status`),

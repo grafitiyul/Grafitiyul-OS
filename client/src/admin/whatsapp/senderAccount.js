@@ -33,8 +33,11 @@ const broadcast = () => { for (const l of listeners) l({ accounts: cache }); };
 function loadAccounts(force = false) {
   if (cache && !force) return Promise.resolve(cache);
   if (!inflight) {
-    inflight = api
-      .get('/api/whatsapp/connected-accounts')
+    // `api` is a NAMESPACED client (api.whatsapp.*, api.deals.* …) — it has no
+    // generic api.get(path). Calling one threw TypeError at module load and
+    // took the whole admin shell down with it (2026-08-01).
+    inflight = api.whatsapp
+      .connectedAccounts()
       .then((d) => {
         cache = Array.isArray(d?.accounts) ? d.accounts : [];
         return cache;
