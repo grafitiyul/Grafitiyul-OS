@@ -126,6 +126,10 @@ async function icountRequest(path, payload) {
     const err = new Error(`icount_request_failed: ${reason}`);
     err.code = 'icount_request_failed';
     err.reason = String(reason);
+    // doc/search reports the TRUE match count even when it refuses to return
+    // the rows (too_many_results) — that number is what lets the census split a
+    // date window intelligently instead of guessing.
+    if (data && data.results_count != null) err.resultsCount = Number(data.results_count);
     throw err;
   }
   return data;
@@ -171,6 +175,46 @@ export async function searchDocs(filters) {
   }
   const rows = data.results_list ?? data.data;
   return Array.isArray(rows) ? rows : [];
+}
+
+// Enumerate documents of ONE type inside a date window (doc/search). Verified
+// live 2026-08-01:
+//   • `start_date` / `end_date` are the ONLY date filters doc/search honours —
+//     from_date/date_from/dateissued_from/year+month are all silently ignored
+//     and the call falls back to the whole account;
+//   • there is NO paging. `max_results`, `offset` and `page` are echoed back
+//     unused, and a window holding more than 100 documents is refused outright
+//     with reason `too_many_results` (the response still reports the true
+//     `results_count`, which is what makes adaptive window splitting possible);
+//   • detail_level 4 is the richest search projection and already carries
+//     everything the collection math needs — dateissued, client identity,
+//     currency, totals, VAT, `totalpaid` and the cancellation flags. It does NOT
+//     carry doc_url or based_on; those need doc/info.
+//
+// Returns { rows, count, tooMany } — `tooMany` tells the caller to split the
+// window rather than treating an empty result as "no documents".
+export async function searchDocsWindow({ doctype, startDate, endDate, detailLevel = 4 }) {
+  let data;
+  try {
+    data = await icountRequest('doc/search', {
+      doctype,
+      start_date: startDate,
+      end_date: endDate,
+      detail_level: detailLevel,
+      max_results: 5000,
+    });
+  } catch (err) {
+    const reason = String(err?.reason || '');
+    if (/too_many_results/i.test(reason)) {
+      return { rows: [], count: err?.resultsCount ?? null, tooMany: true };
+    }
+    if (NO_RESULTS_REASONS.test(reason) || /empty_query/i.test(reason)) {
+      return { rows: [], count: 0, tooMany: false };
+    }
+    throw err;
+  }
+  const rows = data.results_list ?? data.data;
+  return { rows: Array.isArray(rows) ? rows : [], count: data.results_count ?? null, tooMany: false };
 }
 
 // One document's details (doc/info) — the payload nests everything under

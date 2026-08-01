@@ -18,14 +18,18 @@ const deal = (over) => ({
   createdAt: daysAgo(30), lastMeaningfulActivityAt: null, ...over,
 });
 
-// db double: deal.findMany for the ladder, icountDocument.findMany for P3,
-// $executeRaw for touchDealActivity (tagged template → last value is the id).
-function fakeDb(deals, docs = [], bookings = []) {
+// db double: deal.findMany for the ladder, and — for P3 — the two reads the
+// CANONICAL collection service performs (icountDocument + dealCollectionEvidence).
+// This module deliberately does not query documents itself; it asks
+// collectionSummariesFor, so the double must satisfy that contract.
+// $executeRaw serves touchDealActivity (tagged template → last value is the id).
+function fakeDb(deals, docs = [], bookings = [], evidence = []) {
   const touched = [];
   return {
     touched,
     deal: { findMany: async () => deals },
     icountDocument: { findMany: async () => docs },
+    dealCollectionEvidence: { findMany: async () => evidence },
     booking: { findMany: async () => bookings },
     $executeRaw: async (_s, ...v) => { touched.push(v[v.length - 1]); },
   };

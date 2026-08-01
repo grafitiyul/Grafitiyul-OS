@@ -10,6 +10,7 @@ import {
   fetchBaseDocumentPrefill,
   searchExternalDocuments,
   linkExternalDocument,
+  resolveDocumentForLinking,
 } from '../icountDocs.js';
 import { sendDocByEmail, getDocUrl } from '../icount.js';
 import { sendSimpleEmail, getSendAccount } from '../email/simpleSend.js';
@@ -95,7 +96,32 @@ router.get(
   }),
 );
 
-// Link a confirmed external document to the deal (idempotent).
+// Resolve ONE document for the "חבר מסמך קיים מ־iCount" confirmation step:
+// the real document from iCount plus every safety signal (already linked here /
+// linked on another deal / customer or amount mismatch / cancelled). Read-only.
+router.get(
+  '/:id/icount/resolve-document',
+  handle(async (req, res) => {
+    const deal = await loadDeal(req.params.id);
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    try {
+      res.json(
+        await resolveDocumentForLinking(prisma, deal, {
+          doctype: String(req.query.doctype || '') || null,
+          docnum: String(req.query.docnum || '') || null,
+          url: String(req.query.url || '') || null,
+        }),
+      );
+    } catch (err) {
+      const code = err?.code || 'resolve_failed';
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
+    }
+  }),
+);
+
+// Link a confirmed external document to the deal (idempotent). An operator who
+// went ahead despite a warning must say why — the reason is stored on the link
+// and shown in the Collection panel, so an unusual attachment is never silent.
 router.post(
   '/:id/icount/link-document',
   handle(async (req, res) => {
@@ -105,7 +131,11 @@ router.post(
       const { doc, reused } = await linkExternalDocument(
         prisma,
         deal,
-        { doctype: String(req.body?.doctype || ''), docnum: req.body?.docnum },
+        {
+          doctype: String(req.body?.doctype || ''),
+          docnum: req.body?.docnum,
+          reason: req.body?.reason,
+        },
         req.adminAuth?.userId || null,
       );
       res.status(reused ? 200 : 201).json({ document: doc, reused });

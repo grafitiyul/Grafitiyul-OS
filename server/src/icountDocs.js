@@ -590,21 +590,37 @@ export async function searchExternalDocuments({ query, doctype }) {
   return out.slice(0, 30);
 }
 
+// THE canonical identity of "this document is attached to this deal". Every
+// path that attaches a document — the operator's link flow, the historical
+// backfill — derives its idempotency key here, so one document can never land
+// on one deal twice regardless of which path put it there.
+export const dealDocumentKey = (dealId, doctype, docnum) => `dealdoc:${dealId}:${doctype}:${docnum}`;
+
+// A document that is cancelled/voided in iCount is recorded with status
+// 'cancelled': the collection resolver only ever loads 'issued' rows, so it is
+// preserved as evidence without ever counting as money.
+export const ledgerDocStatus = (info) =>
+  info?.is_cancelled === true || info?.is_cancelled === 1 || info?.is_cancelled === '1' ||
+  info?.is_cancellation === true || info?.is_cancellation === 1 || info?.is_cancellation === '1'
+    ? 'cancelled'
+    : 'issued';
+
 // Link an EXTERNAL iCount document (not issued through GOS) to a deal so it
-// becomes a base-document candidate. Verified against doc/info before linking
-// (never links a document iCount doesn't confirm), recorded in the SAME
-// IcountDocument table (source 'linked'), idempotent via the derived key —
-// re-linking returns the existing row and emits nothing.
-export async function linkExternalDocument(prisma, deal, { doctype, docnum }, userId) {
+// becomes a base-document candidate AND collection evidence. Verified against
+// doc/info before linking (never links a document iCount doesn't confirm),
+// recorded in the SAME IcountDocument table (source 'linked'), idempotent via
+// the canonical key — re-linking returns the existing row and emits nothing.
+// READ-ONLY toward iCount: nothing is issued, emailed or modified.
+export async function linkExternalDocument(prisma, deal, { doctype, docnum, reason }, userId) {
   if (!DOC_TYPE_LABELS[doctype]) throw codedError('invalid_doctype');
   const num = String(docnum || '').trim();
   if (!num) throw codedError('docnum_required');
 
-  const idempotencyKey = `linked:${deal.id}:${doctype}:${num}`;
+  const idempotencyKey = dealDocumentKey(deal.id, doctype, num);
   const existing = await prisma.icountDocument.findUnique({ where: { idempotencyKey } });
   if (existing) return { doc: existing, reused: true };
-  // Also treat a GOS-issued/webhook-captured row of the same document as
-  // already-linked — one document must never appear twice on a deal.
+  // Also treat a GOS-issued/webhook-captured/backfilled row of the same document
+  // as already-linked — one document must never appear twice on a deal.
   const sameDoc = await prisma.icountDocument.findFirst({
     where: { dealId: deal.id, doctype, docnum: num },
   });
@@ -613,6 +629,12 @@ export async function linkExternalDocument(prisma, deal, { doctype, docnum }, us
   const info = await docInfo(doctype, num);
   const gross = grossFromDocInfo(info) ?? 0;
   const clientName = info?.client_name || 'לקוח';
+  const issuedAt = info?.dateissued ? new Date(`${String(info.dateissued).slice(0, 10)}T00:00:00.000Z`) : null;
+  // What the document RECORDS as received — a partial receipt records less than
+  // its face value, and the collection math must count the money, not the paper.
+  const totalPaid = Number(info?.totalpaid ?? info?.paid);
+  const status = ledgerDocStatus(info);
+  const based = Array.isArray(info?.based_on) && info.based_on.length ? info.based_on[0] : null;
 
   const origin = await userOrigin(userId);
   const doc = await prisma.$transaction(async (tx) => {
@@ -623,11 +645,21 @@ export async function linkExternalDocument(prisma, deal, { doctype, docnum }, us
         doctype,
         docnum: num,
         providerDocId: info?.doc_id != null ? String(info.doc_id) : null,
-        amountMinor: BigInt(Math.round(gross * 100)),
-        currency: deal.currency || 'ILS',
+        // Stored as a MAGNITUDE: iCount reports credit notes negative and the
+        // direction lives in the doctype (see collection.js).
+        amountMinor: BigInt(Math.abs(Math.round(gross * 100))),
+        paidMinor: Number.isFinite(totalPaid) ? BigInt(Math.abs(Math.round(totalPaid * 100))) : null,
+        currency: info?.currency_code || deal.currency || 'ILS',
         clientName,
-        clientVatId: info?.vat_id ? String(info.vat_id) : null,
+        clientVatId: info?.client_idno ? String(info.client_idno) : info?.vat_id ? String(info.vat_id) : null,
         docUrl: info?.doc_url || null,
+        basedOnDoctype: based?.doctype || null,
+        basedOnDocnum: based?.docnum != null ? String(based.docnum) : null,
+        status,
+        issuedAt,
+        linkConfidence: 'operator_link',
+        linkReason: String(reason || '').trim() || 'שויך ידנית על ידי מפעיל מתוך אייקאונט',
+        verifiedAt: new Date(),
         idempotencyKey,
         issuedBy: userId || null,
         raw: info ?? undefined,
@@ -653,6 +685,134 @@ export async function linkExternalDocument(prisma, deal, { doctype, docnum }, us
     return created;
   });
   return { doc, reused: false };
+}
+
+// ── Resolve-before-link ("חבר מסמך קיים מ־iCount") ───────────────────────────
+// The operator gives a document number (and optionally its type, or a pasted
+// iCount link); this returns the REAL document plus every safety signal, so the
+// confirmation step shows what is actually about to be attached. Read-only:
+// doc/info only — nothing is issued, emailed or modified.
+//
+// Type resolution: when the operator did not state a type, each type is tried
+// in turn. A wrong guess costs one cheap `doc_not_found` and writes nothing.
+const RESOLVE_ORDER = ['invrec', 'receipt', 'invoice', 'deal', 'refund'];
+
+// An iCount document link carries a per-document hash — a stable identifier we
+// cannot decode, but one we may already have stored next to a document number.
+export function icountUrlHash(url) {
+  const m = String(url || '').match(/[?&]code=([^&\s]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+export async function resolveDocumentForLinking(prisma, deal, { doctype, docnum, url }) {
+  let type = doctype && DOC_TYPE_LABELS[doctype] ? doctype : null;
+  let num = String(docnum || '').trim();
+
+  // A pasted link resolves only through something GOS already recorded for it:
+  // iCount offers no lookup by hash. Saying so plainly beats a false "not found".
+  if (!num && url) {
+    const hash = icountUrlHash(url);
+    if (!hash) throw codedError('url_not_recognised');
+    const [ledger, linked] = await Promise.all([
+      prisma.icountLedgerDoc.findFirst({ where: { docUrl: { contains: hash } } }),
+      prisma.icountDocument.findFirst({ where: { docUrl: { contains: hash } } }),
+    ]);
+    const hit = ledger || linked;
+    if (!hit) throw codedError('url_not_resolvable');
+    type = hit.doctype;
+    num = String(hit.docnum);
+  }
+  if (!num) throw codedError('docnum_required');
+  if (!/^\d+$/.test(num)) throw codedError('docnum_invalid');
+
+  let info = null;
+  let resolvedType = null;
+  for (const t of type ? [type] : RESOLVE_ORDER) {
+    try {
+      const found = await docInfo(t, num);
+      if (found && found.docnum != null) {
+        info = found;
+        resolvedType = t;
+        break;
+      }
+    } catch (err) {
+      // Not this type — keep looking. A real provider failure still surfaces.
+      if (/doc_not_found|not_found/i.test(String(err?.reason || ''))) continue;
+      throw err;
+    }
+  }
+  if (!info) throw codedError('document_not_found');
+
+  const gross = grossFromDocInfo(info) ?? 0;
+  const totalPaid = Number(info.totalpaid ?? info.paid);
+  const cancelled = ledgerDocStatus(info) === 'cancelled';
+  const countsAsPayment = ['receipt', 'invrec'].includes(resolvedType) && !cancelled;
+
+  // ── Safety signals — shown, never silently enforced ──────────────────────
+  const [onThisDeal, elsewhere] = await Promise.all([
+    prisma.icountDocument.findFirst({
+      where: { dealId: deal.id, doctype: resolvedType, docnum: num },
+      select: { id: true },
+    }),
+    prisma.icountDocument.findMany({
+      where: { doctype: resolvedType, docnum: num, dealId: { not: deal.id } },
+      select: { dealId: true, deal: { select: { orderNo: true, title: true } } },
+      take: 10,
+    }),
+  ]);
+
+  const identityNames = [
+    deal.organization?.name,
+    deal.organizationUnit?.name,
+    ...(deal.contacts || []).map((dc) => contactFullName(dc.contact)),
+  ].filter(Boolean);
+  const docClient = String(info.client_name || '');
+  const customerMatch =
+    !docClient ||
+    identityNames.some((n) => {
+      const a = n.replace(/["'״׳]/g, '').toLowerCase();
+      const b = docClient.replace(/["'״׳]/g, '').toLowerCase();
+      return a && (b.includes(a) || a.includes(b));
+    });
+
+  const dealTotal = Number(deal.valueMinor || 0) / 100;
+  const amountMismatch = dealTotal > 0 && Math.abs(gross - dealTotal) > Math.max(1, dealTotal * 0.05);
+
+  return {
+    document: {
+      doctype: resolvedType,
+      doctypeLabel: DOC_TYPE_LABELS[resolvedType],
+      docnum: num,
+      clientName: info.client_name || null,
+      clientVatId: info.client_idno || info.vat_id || null,
+      issuedAt: info.dateissued || null,
+      amountIls: gross,
+      paidIls: Number.isFinite(totalPaid) ? totalPaid : null,
+      currency: info.currency_code || 'ILS',
+      vatPercent: info.vat_percent != null ? Number(info.vat_percent) : null,
+      cancelled,
+      // The single most important line in the preview: does attaching this
+      // document change the money, or is it billing paper?
+      countsAsPayment,
+      paymentMeaning: cancelled
+        ? 'מסמך מבוטל — לא ייספר כתשלום'
+        : countsAsPayment
+          ? 'מסמך זה מהווה הוכחת תשלום — הסכום ייספר בגבייה'
+          : resolvedType === 'refund'
+            ? 'חשבונית זיכוי — הסכום יופחת מהגבייה'
+            : 'מסמך חיוב בלבד — אינו מהווה הוכחת תשלום',
+      docUrl: info.doc_url || null,
+      basedOn: Array.isArray(info.based_on) ? info.based_on : [],
+    },
+    warnings: {
+      alreadyOnThisDeal: !!onThisDeal,
+      linkedElsewhere: elsewhere.map((e) => ({ dealId: e.dealId, orderNo: e.deal?.orderNo, title: e.deal?.title })),
+      customerMismatch: !customerMatch,
+      amountMismatch,
+      dealTotalIls: dealTotal || null,
+      cancelled,
+    },
+  };
 }
 
 // Previous documents for the modal's base/close/credit selector: GOS-recorded

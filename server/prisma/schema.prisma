@@ -1165,6 +1165,16 @@ model Deal {
   quoteOffers           QuoteOffer[]
   paymentLinks          DealPaymentLink[]
   icountDocuments       IcountDocument[]
+  collectionEvidence    DealCollectionEvidence[]
+  // Collection needs a HUMAN, not an algorithm. Set when the accounting
+  // evidence for this deal is contradictory or ambiguous (the same document
+  // claimed by several deals, a currency mismatch, an unresolved credit chain,
+  // amounts that conflict materially). Shape:
+  //   { code, reason, details, flaggedAt, flaggedBy, clearedAt, clearedBy }
+  // NULL = nothing to review. The collection resolver reports status 'review'
+  // while it is set, INSTEAD of pretending it knows the answer — the numbers it
+  // computed are still returned alongside so the operator can see them.
+  collectionReview      Json?
   customPaymentLinks    DealCustomPaymentLink[]
   paymentRequests       PaymentRequest[]
   tasks                 Task[]
@@ -1307,6 +1317,11 @@ model DealFile {
   uploadedById String? // AdminUser id — loose key
   createdAt    DateTime @default(now())
 
+  // Back-relation: manual collection evidence this file supports (a bank
+  // confirmation, a scanned external receipt…). The file itself stays an
+  // ordinary Deal file — this is only the link.
+  collectionEvidence DealCollectionEvidence[]
+
   @@index([dealId, createdAt])
 }
 
@@ -1376,12 +1391,14 @@ model IcountDocument {
   deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
   dealId         String
   provider       String   @default("icount")
-  source         String   @default("user") // 'user' | 'webhook'
+  source         String   @default("user") // 'user' | 'webhook' | 'linked' | 'backfill'
   doctype        String // iCount doctype: 'deal'|'invoice'|'invrec'|'receipt'|'refund'
   docnum         String? // iCount document number (string — provider-owned format)
   providerDocId  String? // iCount internal doc_id (used as origin_doc_id for credits)
-  status         String   @default("issued") // 'issued' (failed attempts are never stored)
-  amountMinor    BigInt // agorot, VAT-inclusive gross as issued
+  status         String   @default("issued") // 'issued' | 'cancelled' (failed attempts are never stored)
+  amountMinor    BigInt // agorot, VAT-inclusive gross as issued. ALWAYS POSITIVE —
+  // iCount reports credit notes with a negative total; the sign is carried by
+  // `doctype` (refund) and applied by the collection resolver, never by the data.
   currency       String   @default("ILS")
   clientName     String
   clientVatId    String? // ח.פ / ע.מ / ת.ז as sent to iCount
@@ -1393,7 +1410,118 @@ model IcountDocument {
   raw            Json? // iCount doc/create response (or webhook payload extract)
   createdAt      DateTime @default(now())
 
+  // ── Historical / linked-document evidence ─────────────────────────────────
+  // `createdAt` is when the GOS ROW was written; for a document that was issued
+  // in iCount years earlier and only mirrored into GOS now, that is not the
+  // accounting date. `issuedAt` is the document's REAL date (iCount
+  // `dateissued`) and is what every collection surface renders and orders by.
+  issuedAt       DateTime?
+  // The money the document itself RECORDS as received (iCount `totalpaid`) —
+  // set only for the types that record money. A partial receipt has
+  // paidMinor < amountMinor, and the resolver counts paidMinor when present.
+  paidMinor      BigInt?
+  // How this document came to be attached to this deal. Purely audit — the
+  // resolver never reads it — but it is what lets an operator see WHY a
+  // historical document was linked. 'gos_issued' | 'webhook' | 'operator_link'
+  // | 'note_url' | 'note_typed_number' | 'note_number_series'.
+  linkConfidence String?
+  linkReason     String? // one human sentence explaining the attachment
+  // When iCount last confirmed this row's numbers (census or doc/info read).
+  verifiedAt     DateTime?
+
   @@index([dealId])
+  @@index([doctype, docnum])
+}
+
+// ── iCount account-wide document census (READ-ONLY CACHE) ────────────────────
+// A local mirror of every document that exists in the iCount account, built by
+// the collection census (doc/search over adaptive date windows). This is a
+// CACHE, not an accounting record and not a deal relationship:
+//
+//   • it exists so a document reference found in a Deal note can be resolved,
+//     verified and previewed WITHOUT an API call per lookup;
+//   • it never participates in the collection calculation — only an
+//     IcountDocument row (a document actually ATTACHED to a deal) does;
+//   • it is safe to truncate and rebuild at any time.
+//
+// Amounts are stored exactly as iCount reports them (credit notes negative), so
+// this table can always be compared byte-for-byte against the provider. The
+// sign normalisation happens when a document is ATTACHED to a deal.
+model IcountLedgerDoc {
+  id             String   @id @default(cuid())
+  doctype        String
+  docnum         String
+  issuedAt       DateTime // iCount `dateissued`
+  clientId       String?
+  clientName     String?
+  clientVatId    String? // iCount `client_idno`
+  currency       String   @default("ILS")
+  fxRate         String? // iCount `rate` (1 for ILS) — string to avoid float drift
+  totalMinor     BigInt // `totalwithvat` (or `total`) in minor units, SIGNED
+  paidMinor      BigInt? // `totalpaid` — only meaningful for money-recording types
+  vatMinor       BigInt?
+  vatPercent     String?
+  isCancelled    Boolean  @default(false)
+  isCancellation Boolean  @default(false)
+  providerStatus Int? // iCount doc status (0 open / 1 closed / 2 partial)
+  docUrl         String? // filled lazily from doc/info — doc/search never returns it
+  basedOn        Json? // [{doctype,docnum}] — filled lazily from doc/info
+  basedOnThis    Json?
+  raw            Json?
+  syncedAt       DateTime @default(now())
+
+  @@unique([doctype, docnum])
+  @@index([docnum])
+  @@index([issuedAt])
+  @@index([clientId])
+}
+
+// ── Manual collection evidence ("תשלום ידני") ────────────────────────────────
+// Money that GOS knows about but iCount did not record as a document reachable
+// from this deal: a bank transfer confirmed by the operator, a historical
+// payment whose paperwork is lost, or an explicit "this deal is settled"
+// decision. It is DELIBERATELY a separate model from IcountDocument so that no
+// surface can ever present operator-entered money as a verified accounting
+// document.
+//
+// Nothing here is ever mutated: correcting a manual payment means REVERSING the
+// row (status 'reversed', with a reason) and writing a new one. The collection
+// resolver counts only status='active' rows.
+model DealCollectionEvidence {
+  id             String   @id @default(cuid())
+  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId         String
+  // 'manual_payment'    — money received, operator-attested
+  // 'manual_credit'     — money returned / written off, operator-attested
+  // 'settlement'        — an explicit "fully paid" decision; amount is the
+  //                       remaining balance AT THE MOMENT it was recorded, so
+  //                       the balance reaches zero through a real number rather
+  //                       than through a boolean that hides it.
+  kind           String
+  direction      String // 'in' | 'out' — derived from kind, stored for query simplicity
+  amountMinor    BigInt // always positive; `direction` carries the sign
+  currency       String   @default("ILS")
+  paidAt         DateTime // when the money actually moved (operator-entered)
+  method         String? // 'banktransfer' | 'cash' | 'cc' | 'cheque' | 'bit' | 'other'
+  reference      String? // external reference / document number the operator has
+  note           String?
+  // Optional supporting document (bank confirmation, scanned receipt, external
+  // invoice). A DealFile — the unified Files/R2 infrastructure, never a second
+  // file concept. Evidence only: it is NEVER presented as an iCount document.
+  file           DealFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  fileId         String?
+  status         String   @default("active") // 'active' | 'reversed'
+  reversedAt     DateTime?
+  reversedBy     String?
+  reversedByName String?
+  reversalReason String?
+  // 'operator' — a human recorded it; 'backfill' — the historical reconstruction.
+  origin         String   @default("operator")
+  createdBy      String? // loose AdminUser id
+  createdByName  String?
+  createdAt      DateTime @default(now())
+
+  @@index([dealId, status])
 }
 
 // ── Custom payment links ("קישור לתשלום מותאם אישית") ────────────────────────

@@ -585,13 +585,29 @@ export const api = {
       request(`/api/deals/${id}/icount/search-documents${qs({ q, doctype })}`),
     icountLinkDocument: (id, data) =>
       request(`/api/deals/${id}/icount/link-document`, { method: 'POST', body: JSON.stringify(data) }),
+    // "חבר מסמך קיים מ־iCount" — resolve ONE document (by number, type or a
+    // pasted iCount link) and get every safety signal before confirming.
+    icountResolveDocument: (id, params) =>
+      request(`/api/deals/${id}/icount/resolve-document${qs(params)}`),
     // Custom-description payment links (/pay/c/<token>).
     customPaymentLinks: (id) => request(`/api/deals/${id}/custom-payment-links`),
     createCustomPaymentLink: (id, data) =>
       request(`/api/deals/${id}/custom-payment-links`, { method: 'POST', body: JSON.stringify(data) }),
     // Collection (גבייה) — the server-computed financial summary (total /
-    // paid / balance / payment rows). The client never derives these itself.
+    // paid / balance / evidence rows). The client never derives these itself;
+    // every write below returns the RECALCULATED summary, so the panel can
+    // never drift from the server.
     collection: (id) => request(`/api/deals/${id}/collection`),
+    collectionSettlementPreview: (id) => request(`/api/deals/${id}/collection/settlement-preview`),
+    recordCollectionEvidence: (id, data) =>
+      request(`/api/deals/${id}/collection/evidence`, { method: 'POST', body: JSON.stringify(data) }),
+    reverseCollectionEvidence: (id, evidenceId, data) =>
+      request(`/api/deals/${id}/collection/evidence/${evidenceId}/reverse`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    resolveCollectionReview: (id, data) =>
+      request(`/api/deals/${id}/collection/review/resolve`, { method: 'POST', body: JSON.stringify(data) }),
     // Cardcom tourist payment links (/payment/cardcom/<token>).
     touristPayment: (id) => request(`/api/deals/${id}/tourist-payment`),
     createTouristPayment: (id, data) =>

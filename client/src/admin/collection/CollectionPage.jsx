@@ -121,6 +121,8 @@ const STATUS_FILTERS = [
   ['unpaid', COLLECTION_STATUS_LABELS.unpaid],
   ['partial', COLLECTION_STATUS_LABELS.partial],
   ['no_amount', COLLECTION_STATUS_LABELS.no_amount],
+  ['overpaid', COLLECTION_STATUS_LABELS.overpaid],
+  ['review', COLLECTION_STATUS_LABELS.review],
 ];
 
 export default function CollectionPage() {
@@ -160,11 +162,12 @@ export default function CollectionPage() {
   }, []);
 
   const summary = useMemo(() => {
-    const s = { count: rows.length, balance: 0, unpaid: 0, partial: 0 };
+    const s = { count: rows.length, balance: 0, unpaid: 0, partial: 0, review: 0 };
     for (const r of rows) {
       s.balance += Math.max(0, Number(r.balanceMinor || 0));
       if (r.status === 'unpaid') s.unpaid++;
       if (r.status === 'partial') s.partial++;
+      if (r.status === 'review') s.review++;
     }
     return s;
   }, [rows]);
@@ -216,10 +219,11 @@ export default function CollectionPage() {
       </div>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         <SummaryCard label="יתרה לגבייה" value={formatMinor(summary.balance, 'ILS')} tone="emerald" icon="💰" />
         <SummaryCard label="טרם שולם" value={summary.unpaid} tone="red" icon="⏳" />
         <SummaryCard label="שולם חלקית" value={summary.partial} tone="amber" icon="◐" />
+        <SummaryCard label="דורש בדיקה" value={summary.review} tone="purple" icon="⚑" />
       </div>
 
       {/* Filter bar */}
@@ -316,11 +320,13 @@ const SUMMARY_TONES = {
   emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-100',
   red: 'bg-red-50 text-red-600 ring-red-100',
   amber: 'bg-amber-50 text-amber-600 ring-amber-100',
+  purple: 'bg-purple-50 text-purple-600 ring-purple-100',
 };
 const SUMMARY_TEXT = {
   emerald: 'text-emerald-700',
   red: 'text-red-700',
   amber: 'text-amber-700',
+  purple: 'text-purple-700',
 };
 
 function SummaryCard({ label, value, tone, icon }) {

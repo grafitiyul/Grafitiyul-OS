@@ -6,12 +6,15 @@ import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
 import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
 import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
+import ManualPaymentModal from './collection/ManualPaymentModal.jsx';
+import LinkExistingDocumentModal from './collection/LinkExistingDocumentModal.jsx';
 import { formatMinor } from '../../lib/money.js';
 import { contactNameHe } from './config.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import {
   COLLECTION_STATUS_LABELS,
   COLLECTION_STATUS_STYLES,
+  EVIDENCE_CLASS_BADGE,
 } from '../collection/collectionConfig.js';
 
 // גבייה — the Deal's financial DASHBOARD (not a pricing editor) and the single
@@ -80,20 +83,38 @@ function fmtDay(v) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('he-IL');
 }
 
-// One actual-payment row (server `payments`): receipt-type in green, credit
-// notes in red. Clicking opens the document when a docUrl exists.
-function PaymentRow({ row }) {
+// One money row. Every row states HOW it was established — a verified iCount
+// document, an automatic clearing capture, or money an operator typed in. That
+// distinction is a product requirement: the balance may be identical, but the
+// trust behind it is not, and the panel must never blur the two.
+function PaymentRow({ row, onReverse }) {
   const out = row.direction === 'out';
+  const manual = row.evidenceClass === 'manual';
+  const badge = EVIDENCE_CLASS_BADGE[row.evidenceClass] || EVIDENCE_CLASS_BADGE.verified;
+
+  const title = manual
+    ? row.kindLabel
+    : `${row.doctypeLabel}${row.docnum ? ` ${row.docnum}` : ''}`;
+  const subtitle = manual
+    ? [row.reference, row.note, row.createdByName].filter(Boolean).join(' · ')
+    : [row.clientName, row.linkReason ? null : undefined].filter(Boolean).join(' · ');
+
   const body = (
     <>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] text-gray-800">
-          {row.doctypeLabel}
-          {row.docnum ? ` ${row.docnum}` : ''}
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[13px] text-gray-800">{title}</span>
+          <span className={`shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium ring-1 ${badge.cls}`}>
+            {badge.label}
+          </span>
         </span>
         <span className="block truncate text-[11px] text-gray-400">
-          {[row.clientName, fmtDay(row.createdAt)].filter(Boolean).join(' · ')}
+          {[subtitle, fmtDay(row.occurredAt)].filter(Boolean).join(' · ')}
         </span>
+        {/* Why a historical/linked document is on this deal — the audit line. */}
+        {row.linkReason && (
+          <span className="block truncate text-[10.5px] text-gray-400">{row.linkReason}</span>
+        )}
       </span>
       <span
         dir="ltr"
@@ -103,11 +124,49 @@ function PaymentRow({ row }) {
       </span>
     </>
   );
-  const cls = 'flex items-center justify-between gap-3 rounded-lg px-2 py-1.5';
+  const cls = 'flex items-start justify-between gap-3 rounded-lg px-2 py-1.5';
+  return (
+    <div className="group/row flex items-start gap-1">
+      {row.docUrl ? (
+        <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} flex-1 hover:bg-gray-50`}>
+          {body}
+        </a>
+      ) : (
+        <div className={`${cls} flex-1`}>{body}</div>
+      )}
+      {manual && onReverse && (
+        <button
+          type="button"
+          onClick={() => onReverse(row)}
+          title="ביטול הרישום הידני"
+          className="mt-1.5 shrink-0 rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Billing paper the deal holds (חשבון עסקה / חשבונית מס). Shown deliberately
+// APART from the payment rows: a customer holding an invoice is useful context,
+// but it is not money and must never read like it is.
+function BillingRow({ row }) {
+  const body = (
+    <>
+      <span className="min-w-0 flex-1 truncate text-[12px] text-gray-500">
+        {row.doctypeLabel}{row.docnum ? ` ${row.docnum}` : ''} · {fmtDay(row.occurredAt)}
+      </span>
+      <span dir="ltr" className="shrink-0 text-[12px] tabular-nums text-gray-400">
+        {formatMinor(row.amountMinor, row.currency)}
+      </span>
+    </>
+  );
+  const cls = 'flex items-center justify-between gap-3 rounded-lg px-2 py-1';
   return row.docUrl ? (
-    <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-gray-50`}>
-      {body}
-    </a>
+    <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-gray-50`}>{body}</a>
   ) : (
     <div className={cls}>{body}</div>
   );
@@ -147,6 +206,12 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
   // SendDocumentModal via shareEntry.
   const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
   const [shareEntry, setShareEntry] = useState(null);
+  // Operator controls — manual money and existing-document linking.
+  const [manualOpen, setManualOpen] = useState(false);
+  const [linkDocOpen, setLinkDocOpen] = useState(false);
+  const [reverseTarget, setReverseTarget] = useState(null); // the manual row being reversed
+  const [reverseReason, setReverseReason] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
   const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
   const feedbackTimer = useRef(null);
@@ -268,6 +333,35 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
     });
   }
 
+  // Reverse a manual row — an explicit, audited action; the row survives with
+  // its reversal recorded, so a balance change is never unexplained.
+  async function confirmReverse() {
+    if (!reverseTarget || reverseReason.trim().length < 3) return;
+    setPayBusy(true);
+    try {
+      setSummary(await api.deals.reverseCollectionEvidence(deal.id, reverseTarget.id, { reason: reverseReason.trim() }));
+      setReverseTarget(null);
+      setReverseReason('');
+      flash('✓ הרישום בוטל');
+    } catch {
+      flash('ביטול הרישום נכשל — נסו שוב');
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  async function clearReview() {
+    setReviewBusy(true);
+    try {
+      setSummary(await api.deals.resolveCollectionReview(deal.id, {}));
+      flash('✓ סומן כנבדק');
+    } catch {
+      flash('הפעולה נכשלה — נסו שוב');
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
   const paidPct = summary?.paidPct;
   const barPct = paidPct == null ? null : Math.min(100, Math.max(0, paidPct));
 
@@ -341,6 +435,15 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                   onClick={() => { close(); setCardcomOpen(true); }}>
                   קישור לתשלום כרטיס תייר
                 </button>
+                <button type="button" className={MENU_ITEM}
+                  onClick={() => { close(); setLinkDocOpen(true); }}>
+                  חבר מסמך קיים מ־iCount
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button type="button" className={MENU_ITEM}
+                  onClick={() => { close(); setManualOpen(true); }}>
+                  רישום תשלום ידני
+                </button>
                 <div className="my-1 border-t border-gray-100" />
                 <button type="button" className={MENU_ITEM}
                   onClick={() => { close(); setNewInvoiceOpen(true); }}>
@@ -371,14 +474,69 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         )}
         {summary && (
           <>
+            {/* The server refused to decide — say exactly why, and let the
+                operator answer it. The numbers below are still shown. */}
+            {summary.review && (
+              <div className="rounded-lg bg-purple-50 px-3 py-2.5 ring-1 ring-purple-200">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold text-purple-900">הגבייה בעסקה זו דורשת בדיקה</div>
+                    <p className="mt-0.5 text-[11.5px] leading-relaxed text-purple-800">{summary.review.reason}</p>
+                    {summary.review.details?.problems?.length > 1 && (
+                      <p className="mt-1 text-[11px] text-purple-700">
+                        ועוד {summary.review.details.problems.length - 1} ממצאים נוספים.
+                      </p>
+                    )}
+                  </div>
+                  {!summary.review.derived && (
+                    <button type="button" onClick={clearReview} disabled={reviewBusy}
+                      className="shrink-0 rounded-md bg-white px-2.5 py-1 text-[11.5px] font-medium text-purple-800 ring-1 ring-purple-300 hover:bg-purple-100 disabled:opacity-50">
+                      {reviewBusy ? '…' : 'בדקתי — תקין'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div>
               <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">תשלומים שהתקבלו</div>
               {summary.payments.length === 0 ? (
                 <p className="px-2 text-[12px] text-gray-400">עדיין לא התקבלו תשלומים לעסקה זו.</p>
               ) : (
-                summary.payments.map((row) => <PaymentRow key={row.id} row={row} />)
+                summary.payments.map((row) => (
+                  <PaymentRow key={row.id} row={row} onReverse={setReverseTarget} />
+                ))
               )}
             </div>
+
+            {/* Reversed manual rows stay visible: a balance that changed must
+                never look like it changed by itself. */}
+            {summary.manualHistory?.some((h) => h.status === 'reversed') && (
+              <div className="border-t border-gray-100 pt-2">
+                <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">רישומים ידניים שבוטלו</div>
+                {summary.manualHistory.filter((h) => h.status === 'reversed').map((h) => (
+                  <div key={h.id} className="flex items-start justify-between gap-3 px-2 py-1">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] text-gray-400 line-through">
+                        {formatMinor(h.amountMinor, h.currency)} · {fmtDay(h.paidAt)}
+                      </span>
+                      <span className="block truncate text-[10.5px] text-gray-400">
+                        בוטל{h.reversedByName ? ` ע״י ${h.reversedByName}` : ''} · {h.reversalReason}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Billing paper the customer holds — context, deliberately not
+                mixed into the payment rows. */}
+            {summary.billingDocuments?.length > 0 && (
+              <div className="border-t border-gray-100 pt-2">
+                <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">מסמכי חיוב (אינם תשלום)</div>
+                {summary.billingDocuments.map((row) => <BillingRow key={row.id} row={row} />)}
+              </div>
+            )}
 
             {/* Summary — server numbers, rendered as-is. */}
             <div className="space-y-1.5 border-t border-gray-100 pt-3">
@@ -388,6 +546,14 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                   {formatMinor(summary.paidMinor, summary.currency)}
                 </span>
               </div>
+              {summary.creditedMinor > 0 && (
+                <div className="flex items-center justify-between px-2 text-[13px]">
+                  <span className="text-gray-500">זוכה / הוחזר</span>
+                  <span dir="ltr" className="font-semibold text-red-600 tabular-nums">
+                    −{formatMinor(summary.creditedMinor, summary.currency)}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between px-2 text-[13px]">
                 <span className="text-gray-500">יתרה לגבייה</span>
                 <span dir="ltr" className={`font-semibold tabular-nums ${summary.balanceMinor > 0 ? 'text-gray-900' : 'text-emerald-700'}`}>
@@ -438,6 +604,57 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         maxLabel="היתרה לגבייה"
       />
       <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => setCardcomOpen(false)} />
+
+      {/* Operator controls. Both write through the canonical collection service
+          and hand back the RECALCULATED summary, so the panel updates
+          immediately without a second round-trip. */}
+      <ManualPaymentModal
+        dealId={deal.id}
+        open={manualOpen}
+        currency={deal.currency || 'ILS'}
+        onClose={() => setManualOpen(false)}
+        onSaved={(next) => setSummary(next)}
+      />
+      <LinkExistingDocumentModal
+        dealId={deal.id}
+        open={linkDocOpen}
+        onClose={() => setLinkDocOpen(false)}
+        onLinked={() => reload()}
+      />
+
+      {/* Reversing a manual row requires a reason — the record survives. */}
+      <Dialog
+        open={!!reverseTarget}
+        onClose={() => (payBusy ? null : setReverseTarget(null))}
+        title="ביטול רישום ידני"
+        size="md"
+        footer={
+          <>
+            {dlgBtn('חזרה', () => setReverseTarget(null), { disabled: payBusy })}
+            {dlgBtn(payBusy ? 'מבטל…' : 'בטל את הרישום', confirmReverse, {
+              primary: true,
+              disabled: payBusy || reverseReason.trim().length < 3,
+            })}
+          </>
+        }
+      >
+        <div className="space-y-3 py-1">
+          <p className="text-sm text-gray-800">
+            הרישום לא יימחק — הוא יסומן כמבוטל ויישאר בהיסטוריה עם הסיבה ושם המבטל, כדי שהשינוי ביתרה יהיה מוסבר.
+          </p>
+          {reverseTarget && (
+            <div className="rounded-lg bg-gray-50 px-3 py-2 text-[13px] text-gray-700 ring-1 ring-gray-200">
+              {reverseTarget.kindLabel} · <span dir="ltr">{formatMinor(reverseTarget.amountMinor, reverseTarget.currency)}</span>
+              {' · '}{fmtDay(reverseTarget.occurredAt)}
+            </div>
+          )}
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-gray-500">סיבת הביטול (חובה)</span>
+            <input autoFocus value={reverseReason} onChange={(e) => setReverseReason(e.target.value)}
+              placeholder="למשל: נרשם בטעות על העסקה הלא נכונה" className={DLG_FIELD} />
+          </label>
+        </div>
+      </Dialog>
 
       {/* Missing-data dialog — the only popup in the payment flow. Details are
           completed INLINE and saved to the Contact, then the action continues. */}

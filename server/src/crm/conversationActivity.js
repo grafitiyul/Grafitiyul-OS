@@ -48,7 +48,7 @@
 import { prisma } from '../db.js';
 import { touchDealActivity } from '../timeline/events.js';
 import { israelToday, addDays, compareDates } from '../lib/israelDate.js';
-import { computeCollection, RECEIPT_DOCTYPES, REFUND_DOCTYPE } from '../collection.js';
+import { collectionSummariesFor, requiresCollection } from '../collection.js';
 
 const RECENT_TOUR_DAYS = 14;
 const LOST_REVIVAL_DAYS = 90; // "last 3 months"
@@ -61,7 +61,12 @@ const LADDER_SELECT = {
   status: true,
   tourDate: true,
   lostAt: true,
+  // valueMinor + currency + collectionReview are the inputs the canonical
+  // collection resolver needs for P3 — selected here so the ladder never has to
+  // re-read the deal.
   valueMinor: true,
+  currency: true,
+  collectionReview: true,
   createdAt: true,
   lastMeaningfulActivityAt: true,
 };
@@ -160,31 +165,22 @@ export function attributionBuckets(
   ];
 }
 
-/** WON deal ids whose money has not fully arrived. One batched docs query. */
+/**
+ * WON deal ids whose money has not fully arrived. Resolved through the CANONICAL
+ * collection service — this module must not assemble its own document query, or
+ * it would quietly disagree with the Deal card (e.g. by ignoring manual
+ * payments). 'paid' is the only fully-settled state; 'no_amount' (WON but never
+ * priced) and 'review' deliberately count as outstanding, the same rule the
+ * Collection screen uses, because those are exactly the deals that fall through.
+ */
 async function unpaidWonDealIds(deals, db) {
-  const wonIds = deals.filter((d) => d.status === 'won').map((d) => d.id);
-  if (!wonIds.length) return new Set();
-  const docs = await db.icountDocument.findMany({
-    where: {
-      dealId: { in: wonIds },
-      status: 'issued',
-      doctype: { in: [...RECEIPT_DOCTYPES, REFUND_DOCTYPE] },
-    },
-    select: { dealId: true, doctype: true, amountMinor: true, createdAt: true },
-  });
-  const byDeal = new Map();
-  for (const d of docs) {
-    if (!byDeal.has(d.dealId)) byDeal.set(d.dealId, []);
-    byDeal.get(d.dealId).push(d);
-  }
+  const won = deals.filter((d) => d.status === 'won');
+  if (!won.length) return new Set();
+  const summaries = await collectionSummariesFor(db, won);
   const unpaid = new Set();
-  for (const deal of deals) {
-    if (deal.status !== 'won') continue;
-    // 'paid' is the only fully-settled state; 'no_amount' (WON but never
-    // priced) deliberately counts as outstanding — same rule the Collection
-    // screen uses, because those are exactly the deals that fall through.
-    const summary = computeCollection(deal.valueMinor, byDeal.get(deal.id) || []);
-    if (summary.status !== 'paid') unpaid.add(deal.id);
+  for (const deal of won) {
+    if (!requiresCollection(summaries.get(deal.id))) continue;
+    unpaid.add(deal.id);
   }
   return unpaid;
 }
