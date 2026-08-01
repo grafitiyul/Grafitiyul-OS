@@ -1,64 +1,82 @@
-// THE number switcher — one bubble per connected WhatsApp number, shared by
-// every CRM surface that can read or send (Deal dock, template modal), so the
-// control looks and behaves identically everywhere.
+import { isUsableAccount } from './senderAccount.js';
+
+// THE number picker. Every WhatsApp sending surface in GOS renders this and
+// nothing else — Deal conversation panel, Deal templates, scheduled WhatsApp
+// tasks, Contact/Organization panels, payment links, operational
+// notifications, staff broadcasts. One control, one behaviour, so an operator
+// reads "which number am I sending from" the same way everywhere.
 //
-// Design intent: the operator must never wonder which of our numbers they are
-// reading or sending from. So the row is LABELLED ("שולח מ־"), the selected
-// bubble is filled and ringed rather than merely tinted, and a number with no
-// conversation yet is drawn dashed — present and clickable, visibly empty.
+// Design intent: the selected number must be unmistakable, so it is FILLED and
+// ringed rather than merely tinted; a number with no conversation with this
+// contact yet is drawn dashed — present and clickable, visibly empty; a number
+// whose bridge is down or unreachable is dimmed and cannot be chosen, because
+// selecting it would only queue messages nowhere.
 //
-// Renders nothing with a single number: a switcher with one option implies a
-// decision that does not exist (the same rule SenderAccountSelect follows).
-// The surrounding surface still names the number in its header.
+// `alwaysShow` forces the row even with a single number, for surfaces whose
+// whole job is choosing a sender (staff broadcasts). Elsewhere a one-option
+// picker is hidden: it would imply a decision that does not exist, and those
+// surfaces name the number in their header instead.
 
 export default function AccountBubbles({
   accounts = [],
   activeId = null,
-  chatByAccount = {},
+  chatByAccount = null,
   unreadByAccount = {},
   busyId = null,
   onSelect,
+  label = 'שולח מ־',
+  alwaysShow = false,
   className = '',
 }) {
-  if (accounts.length < 2) return null;
+  if (accounts.length === 0) return null;
+  if (accounts.length < 2 && !alwaysShow) return null;
 
   return (
-    <div className={`flex items-center gap-1.5 overflow-x-auto ${className}`}>
-      <span className="shrink-0 text-[11px] font-medium text-gray-400">שולח מ־</span>
+    <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+      {label && <span className="shrink-0 text-[11px] font-medium text-gray-400">{label}</span>}
       {accounts.map((a) => {
         const active = a.id === activeId;
-        const hasChat = !!chatByAccount[a.id];
+        // chatByAccount is optional: surfaces with no conversation concept
+        // (staff broadcasts, notifications) pass nothing and get plain bubbles.
+        const knowsChats = !!chatByAccount;
+        const hasChat = knowsChats && !!chatByAccount[a.id];
         const unread = unreadByAccount[a.id] || 0;
         const busy = busyId === a.id;
+        const selectable = a.retired ? false : isUsableAccount(a);
         return (
           <button
             key={a.id}
             type="button"
-            onClick={() => onSelect?.(a.id)}
+            disabled={!selectable && !active}
+            onClick={() => selectable && onSelect?.(a.id)}
             aria-pressed={active}
             title={
               a.retired
                 ? `${a.label} — מספר שאינו פעיל עוד (היסטוריה בלבד)`
-                : hasChat
-                  ? `שיחה עם הלקוח מ${a.label}`
-                  : `אין עדיין שיחה מ${a.label} — לחיצה תפתח שיחה חדשה`
+                : !selectable
+                  ? `${a.label} — לא מחובר כרגע, אי אפשר לשלוח ממנו`
+                  : knowsChats && !hasChat
+                    ? `אין עדיין שיחה מ${a.label} — ההודעה הראשונה תפתח אותה`
+                    : `שליחה מ${a.label}`
             }
             className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-semibold transition ${
               active
                 ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-200'
-                : hasChat
-                  ? 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
-                  : 'border border-dashed border-gray-300 bg-white text-gray-400 hover:border-emerald-400 hover:text-emerald-700'
+                : !selectable
+                  ? 'cursor-not-allowed border border-gray-200 bg-gray-50 text-gray-400'
+                  : knowsChats && !hasChat
+                    ? 'border border-dashed border-gray-300 bg-white text-gray-500 hover:border-emerald-400 hover:text-emerald-700'
+                    : 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
             {/* Live connection state — an operator about to type into a number
                 whose bridge is down deserves to see it before they send. */}
             {!a.retired && (
               <span
+                aria-hidden
                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                  a.connected ? (active ? 'bg-emerald-200' : 'bg-emerald-500') : 'bg-amber-400'
+                  isUsableAccount(a) ? (active ? 'bg-emerald-200' : 'bg-emerald-500') : 'bg-amber-400'
                 }`}
-                title={a.connected ? 'מחובר' : 'לא מחובר כרגע'}
               />
             )}
             <span>{a.label}</span>

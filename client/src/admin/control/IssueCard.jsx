@@ -5,6 +5,8 @@ import { MODULE_LABELS, SEVERITY_BY_KEY, entityHref, fmtDetected } from './confi
 import { apiActionHandler } from './issueActions.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import PromptDialog from '../common/PromptDialog.jsx';
+import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
+import { useConnectedAccounts, resolveAccountId } from '../whatsapp/senderAccount.js';
 
 const BTN_STYLES = {
   primary: 'bg-blue-600 text-white hover:bg-blue-700 border-transparent',
@@ -238,6 +240,15 @@ function NotifyPanel({ issue, onChanged, onClose }) {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [channels, setChannels] = useState(['email']);
+  // The canonical WhatsApp sender: this browser's remembered number,
+  // overridable per notification, always sent explicitly.
+  const { accounts, remembered, select } = useConnectedAccounts();
+  const [senderOverride, setSenderOverride] = useState(null);
+  const senderAccountId = resolveAccountId(accounts, { explicit: senderOverride, remembered });
+  const setSenderAccountId = (id) => {
+    setSenderOverride(id);
+    select(id);
+  };
   const [picked, setPicked] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -266,7 +277,13 @@ function NotifyPanel({ issue, onChanged, onClose }) {
     setBusy(true);
     setErr(null);
     try {
-      await api.control.notify(issue.id, { subject, body, channels, recipientKeys: [...picked] });
+      await api.control.notify(issue.id, {
+        subject,
+        body,
+        channels,
+        recipientKeys: [...picked],
+        ...(channels.includes('whatsapp') && senderAccountId ? { accountId: senderAccountId } : {}),
+      });
       await load();
       onChanged?.();
     } catch (e) {
@@ -278,7 +295,8 @@ function NotifyPanel({ issue, onChanged, onClose }) {
   async function retry() {
     setBusy(true);
     try {
-      await api.control.notifyRetry(issue.id);
+      // A retry is still an operator-initiated send — it names its number too.
+      await api.control.notifyRetry(issue.id, senderAccountId ? { accountId: senderAccountId } : {});
       await load();
       onChanged?.();
     } finally {
@@ -315,13 +333,19 @@ function NotifyPanel({ issue, onChanged, onClose }) {
         <div className="text-[12px] text-gray-400">טוען…</div>
       ) : (
         <>
-          <div className="mb-2 flex flex-wrap gap-2 text-[12px]">
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px]">
             {['email', 'whatsapp'].map((ch) => (
               <label key={ch} className="flex items-center gap-1">
                 <input type="checkbox" checked={channels.includes(ch)} onChange={() => toggle(setChannels, channels, ch)} />
                 {ch === 'email' ? 'אימייל' : 'וואטסאפ'}
               </label>
             ))}
+            {/* Which number these go out from. This surface used to send NO
+                account at all and let the server pick from a stored preference —
+                with two numbers connected that is a guess. */}
+            {channels.includes('whatsapp') && (
+              <AccountBubbles accounts={accounts} activeId={senderAccountId} onSelect={setSenderAccountId} />
+            )}
           </div>
           <input
             value={subject}

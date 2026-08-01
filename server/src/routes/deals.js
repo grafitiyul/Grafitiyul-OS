@@ -1215,13 +1215,14 @@ router.post(
     let externalMessageId = null;
     let failureReason = null;
     try {
-      // Explicit account: the operator's chosen sender (remembered globally),
-      // never a fallback. An ambiguous configuration fails loudly here rather
-      // than sending from whichever number happened to sort first.
+      // Explicit account: the number the operator picked in the UI, never a
+      // fallback. `remember` is deliberately off — the choice is remembered in
+      // that operator's BROWSER (several employees share one GOS login and
+      // each works from a different number), so the server must not write a
+      // per-user preference that would move everyone else's selection.
       const sender = await resolveForOperator(prisma, {
         userId: req.adminAuth?.userId || null,
         explicit: b.accountId || null,
-        remember: true,
       });
       const out = await sendWhatsAppText(phone, message, {
         accountId: sender.accountId,

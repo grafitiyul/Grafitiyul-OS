@@ -34,6 +34,33 @@ export const SENDER_PREF_KEY = 'whatsapp.senderAccount';
 // screen is not cosmetic; here it caused a real mis-pairing.
 export const ACCOUNT_ORDER_BY = [{ sortOrder: 'asc' }, { id: 'asc' }];
 
+/**
+ * THE selectable-account list every sending surface reads.
+ *
+ * One shape, one order, one definition of "usable": active in the DB, with the
+ * live connection state and whether its bridge is even addressable from this
+ * server. Surfaces used to build this ad-hoc (the staff modal, the composer
+ * picker, the deal panel), which is how three screens disagreed about which
+ * numbers existed and in what order.
+ */
+export async function listSelectableAccounts(db) {
+  const configured = new Set(configuredAccounts());
+  const rows = await db.whatsAppAccount.findMany({
+    where: { active: true },
+    select: { id: true, label: true, status: true, phoneJid: true },
+    orderBy: ACCOUNT_ORDER_BY,
+  });
+  return rows.map((a) => ({
+    id: a.id,
+    label: a.label,
+    connected: a.status === 'connected',
+    // No bridge map configured at all (local/dev) must not read as "every
+    // number is broken" — it means addressing is unconfigured, not wrong.
+    bridgeConfigured: configured.size === 0 || configured.has(a.id),
+    phone: a.phoneJid ? String(a.phoneJid).split(':')[0].split('@')[0] : null,
+  }));
+}
+
 export class AmbiguousSenderError extends Error {
   constructor(candidates) {
     super(
@@ -88,6 +115,16 @@ export function resolveSendAccount({ explicit = null, preferred = null, env = pr
   }
   throw new AmbiguousSenderError(configured);
 }
+
+// NOTE (2026-08-01): the sender preference is NO LONGER a UI concept. Several
+// office employees share one GOS login while each works from a different
+// WhatsApp number, so a per-USER server-side preference synchronised the wrong
+// thing — one employee's choice moved everyone else's. Selection now lives in
+// the browser (client/src/admin/whatsapp/senderAccount.js, localStorage) and
+// every interactive send names its account explicitly.
+//
+// What remains below is the SERVER-side fallback only: nothing writes it any
+// more, and it is consulted only if a caller omits an explicit account.
 
 /** Read one operator's stored sender preference. Never throws. */
 export async function getSenderPreference(db, userId) {

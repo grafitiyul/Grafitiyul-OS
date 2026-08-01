@@ -172,15 +172,16 @@ router.post(
       : all;
 
     // Operator-initiated: the sending number is THIS operator's explicit choice
-    // (remembered globally). Resolved once per request, never per recipient, and
-    // never from a global default — an unresolvable sender is a 409, not a guess.
+    // (remembered in their own browser, never server-side — see
+    // whatsapp/senderAccount.js). Resolved once per request, never per
+    // recipient, and never from a global default — an unresolvable sender is a
+    // 409, not a guess.
     let waAccountId = null;
     if (channels.includes('whatsapp')) {
       try {
         waAccountId = (await resolveForOperator(prisma, {
           userId: req.adminAuth?.userId || null,
           explicit: req.body?.accountId || null,
-          remember: true,
         })).accountId;
       } catch (e) {
         return res.status(e.status || 409).json({ error: e.code || 'whatsapp_sender_unresolved', candidates: e.candidates || [] });

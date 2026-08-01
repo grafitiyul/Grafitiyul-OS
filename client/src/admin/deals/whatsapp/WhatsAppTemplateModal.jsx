@@ -52,15 +52,12 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
     activeContact,
     accounts,
     activeAccountId,
-    activeAccount,
     activeChat: chat,
     chatByAccount,
     unreadByAccount,
-    starting,
-    startError,
     selectContact,
     selectAccount,
-    startConversation,
+    adoptChat,
   } = useSubjectChats('deal', dealId, { enabled: open });
 
   // The resolved copy currently seeded into the composer + the composer's live
@@ -101,7 +98,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
   }, [open]);
 
   const selected = (templates || []).find((t) => t.id === templateId) || null;
-  const accountLabel = activeAccount?.label || activeAccountId || '';
 
   // Combobox options — the search runs locally over the already-loaded active
   // catalog (inactive templates are never fetched, so they can't appear).
@@ -235,7 +231,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   activeId={activeAccountId}
                   chatByAccount={chatByAccount}
                   unreadByAccount={unreadByAccount}
-                  busyId={starting}
                   onSelect={selectAccount}
                 />
                 {resolving && <span className="shrink-0 text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
@@ -316,43 +311,27 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   (canonical path, untouched). The box has a DEFINITE height so
                   the dialog stays content-sized rather than stretching to the
                   viewport; max-h keeps it sane on short screens. */}
+              {/* No conversation yet is NOT a blocked state: the composer is
+                  mounted on a draft target and the template simply becomes the
+                  first outgoing message, which creates the conversation. The
+                  only genuine absences are having nobody to write to, or no
+                  connected number to write from. */}
               {!chat ? (
                 <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
                   <WhatsAppLogo size={26} />
-                  {starting ? (
-                    <p className="text-[13px] text-gray-500">פותח שיחה מ{accountLabel}…</p>
-                  ) : !activeContact ? (
+                  {!activeContact ? (
                     <>
                       <p className="text-sm font-medium text-gray-700">אין אנשי קשר בדיל הזה</p>
                       <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
                         הוסיפו איש קשר לדיל כדי לשלוח לו נוסח.
                       </p>
                     </>
-                  ) : startError ? (
-                    <p className="max-w-md text-[12.5px] leading-relaxed text-red-700">
-                      {startError === 'contact_has_no_phone'
-                        ? 'לאיש הקשר הזה אין מספר טלפון שמור, ולכן אי אפשר לפתוח ממנו שיחה.'
-                        : 'פתיחת השיחה נכשלה — נסו שוב.'}
-                    </p>
-                  ) : activeAccount?.retired ? (
-                    <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
-                      {accountLabel} כבר לא מחובר למערכת — אי אפשר לשלוח ממנו.
-                    </p>
                   ) : (
                     <>
-                      <p className="text-sm font-medium text-gray-700">
-                        עדיין אין שיחה עם {activeContact.name} מ{accountLabel}
-                      </p>
+                      <p className="text-sm font-medium text-gray-700">אין מספר WhatsApp מחובר</p>
                       <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
-                        אפשר לפתוח שיחה חדשה מהמספר הזה ולשלוח בה את הנוסח.
+                        חברו מספר בהגדרות → תקשורת כדי לשלוח נוסחים.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => startConversation(activeAccountId)}
-                        className="mt-1 rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-emerald-700"
-                      >
-                        התחלת שיחה מ{accountLabel}
-                      </button>
                     </>
                   )}
                 </div>
@@ -364,8 +343,12 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     </p>
                   ) : (
                     <ChatComposer
+                      // Deliberately NOT keyed on the conversation: switching the
+                      // sending number must keep the wording the operator already
+                      // edited, not reset it to the template.
                       chat={chat}
                       dealId={dealId}
+                      onMaterialized={adoptChat}
                       fill
                       // This is a message EDITOR, not a chat input: Enter inserts
                       // a newline and the שליחה button is the ONLY way to send.

@@ -6,7 +6,8 @@ import {
   durationLabelHe,
   defaultPaymentLinkMessage,
 } from '../../../../shared/reservationDuration.mjs';
-import SenderAccountSelect from '../whatsapp/SenderAccountSelect.jsx';
+import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
+import { useConnectedAccounts, resolveAccountId } from '../whatsapp/senderAccount.js';
 
 // The three registration-completion modes (pay-now / send-link / no-payment) as a
 // SELF-CONTAINED body (no Dialog wrapper) so it embeds in both the standalone
@@ -21,9 +22,16 @@ const UNIT_LABELS = { minutes: 'דקות', hours: 'שעות', days: 'ימים' }
 const errText = (e) => 'שגיאה: ' + (e.payload?.error || e.message);
 
 export default function CompletionModes({ deal, tourEventId, phone = '', context = {}, onDone }) {
-  // Which WhatsApp number sends the link. null = use the operator's global
-  // preference, which the server resolves (and refuses to guess when ambiguous).
-  const [senderAccountId, setSenderAccountId] = useState(null);
+  // Which WhatsApp number sends the link — the canonical model: this browser's
+  // remembered number, overridable per send. Always resolved to something
+  // explicit before the request, so the server never has to guess.
+  const { accounts, remembered, select } = useConnectedAccounts();
+  const [senderOverride, setSenderOverride] = useState(null);
+  const senderAccountId = resolveAccountId(accounts, { explicit: senderOverride, remembered });
+  const setSenderAccountId = (id) => {
+    setSenderOverride(id);
+    select(id); // choosing here IS choosing this browser's number
+  };
   const [mode, setMode] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -161,9 +169,13 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
                 <span>💬 הודעת וואטסאפ</span>
                 {phone && <span className="text-gray-400" dir="ltr">→ {phone}</span>}
               </span>
-              {/* Which number sends. Renders nothing while only one account is
-                  configured; the choice is remembered globally per operator. */}
-              <SenderAccountSelect value={senderAccountId} onChange={setSenderAccountId} disabled={busy} compact />
+              {/* Which number sends — the canonical picker, same control and
+                  same remembered number as every other WhatsApp surface. */}
+              <AccountBubbles
+                accounts={accounts}
+                activeId={senderAccountId}
+                onSelect={busy ? undefined : setSenderAccountId}
+              />
             </div>
             <textarea
               value={liveMessage}

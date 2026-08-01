@@ -1781,7 +1781,8 @@ export const api = {
     // Part 4: impact requirements + customer notification.
     issueDetail: (id) => request(`/api/control/issues/${id}/detail`),
     notify: (id, body) => request(`/api/control/issues/${id}/notify`, { method: 'POST', body: JSON.stringify(body) }),
-    notifyRetry: (id) => request(`/api/control/issues/${id}/notify/retry`, { method: 'POST' }),
+    notifyRetry: (id, data) =>
+      request(`/api/control/issues/${id}/notify/retry`, { method: 'POST', body: JSON.stringify(data || {}) }),
     resolveRequirement: (id, reqId, body) =>
       request(`/api/control/issues/${id}/requirements/${reqId}/resolve`, { method: 'POST', body: JSON.stringify(body) }),
   },

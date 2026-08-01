@@ -7,8 +7,13 @@
 
 const DRAFTS_KEY = 'gos-whatsapp-drafts';
 
+// A conversation that does not exist yet (draft target — see chatTarget.js) is
+// keyed by its CONTACT instead of a chat id, so text typed before the first
+// message survives a panel close exactly like any other draft, and lands in the
+// right thread once the row is created.
 export function draftKeyFor(chat) {
-  return `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
+  const accountId = chat.accountId || chat.account?.id || '';
+  return chat.id ? `${accountId}:${chat.id}` : `${accountId}:new:${chat.contactId || ''}`;
 }
 
 export function readDrafts() {

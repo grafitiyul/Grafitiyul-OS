@@ -3,11 +3,21 @@ import { api } from '../../../lib/api.js';
 import { PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
+import AccountBubbles from '../../whatsapp/AccountBubbles.jsx';
+import { useSubjectChats } from '../../whatsapp/useSubjectChats.js';
+import { materializeChat, START_ERRORS } from '../../whatsapp/chatTarget.js';
 
 // Task composer — the "משימה" tab of the Deal timeline composer. Renders whatever
 // active TaskTypes exist (never hard-coded). A 'whatsapp' type reveals the
-// message + sender-chat fields and schedules a WhatsApp message on save; the
+// message + sender fields and schedules a WhatsApp message on save; the
 // backend links the two atomically. Owner defaults to the current admin.
+//
+// The sender is chosen through the SAME model as every other WhatsApp surface
+// (useSubjectChats + AccountBubbles + the browser's remembered number). It used
+// to be a dropdown of conversations that already existed, which meant a deal
+// with no WhatsApp history could not have a WhatsApp task at all. Now the
+// conversation is created when the message is scheduled, and the queued message
+// becomes its first message when its time comes.
 
 export default function TaskComposer({ dealId, onCreated }) {
   const [types, setTypes] = useState([]);
@@ -19,9 +29,6 @@ export default function TaskComposer({ dealId, onCreated }) {
   const [dueTime, setDueTime] = useState('');
   const [priority, setPriority] = useState('none');
   const [ownerUserId, setOwnerUserId] = useState('');
-  const [chats, setChats] = useState([]);
-  const [chatsLoaded, setChatsLoaded] = useState(false);
-  const [chatId, setChatId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -30,6 +37,20 @@ export default function TaskComposer({ dealId, onCreated }) {
     [types, selectedTypeId],
   );
   const isWhatsapp = selectedType?.channel === 'whatsapp';
+
+  // The canonical WhatsApp selection — loaded only once a WhatsApp type is
+  // actually picked, so an ordinary task costs no extra requests.
+  const {
+    contacts,
+    activeContact,
+    accounts,
+    activeAccountId,
+    activeAccount,
+    activeChat,
+    chatByAccount,
+    selectContact,
+    selectAccount,
+  } = useSubjectChats('deal', dealId, { enabled: isWhatsapp, pollMs: 0 });
 
   // Load catalog + users once. Preselect the first type and "me" as owner.
   useEffect(() => {
@@ -69,19 +90,6 @@ export default function TaskComposer({ dealId, onCreated }) {
     setText('');
     setDueDate(defaultDueDate(type));
     setDueTime(type.channel === 'whatsapp' ? type.defaultTime || '10:00' : type.defaultTime || '');
-    if (type.channel === 'whatsapp' && !chatsLoaded) loadChats();
-  }
-
-  async function loadChats() {
-    setChatsLoaded(true);
-    try {
-      const data = await api.whatsapp.contextChats('deal', dealId);
-      const list = data?.chats || [];
-      setChats(list);
-      setChatId(list[0]?.id || '');
-    } catch {
-      setChats([]);
-    }
   }
 
   async function submit() {
@@ -89,9 +97,14 @@ export default function TaskComposer({ dealId, onCreated }) {
     setError(null);
     if (!dueDate) return setError('חובה לבחור תאריך');
     if (isWhatsapp && !text.trim()) return setError('חובה לכתוב את תוכן ההודעה');
-    if (isWhatsapp && !chatId) return setError('לא נמצאה שיחת וואטסאפ מקושרת לדיל');
+    if (isWhatsapp && !activeChat) return setError('בחרו איש קשר ומספר שליחה');
     setSaving(true);
     try {
+      // Scheduling to a number with no conversation yet CREATES the
+      // conversation here — the same single ensure path every other WhatsApp
+      // surface uses — so the queued message has a real thread to land in and
+      // simply becomes its first message when its time comes.
+      const chat = isWhatsapp ? await materializeChat(activeChat) : null;
       // For WhatsApp the exact send moment matters — compute it in the USER's
       // timezone (a bare "YYYY-MM-DDTHH:MM" is parsed as local) and send ISO, so
       // the UTC server never reinterprets the wall-clock time.
@@ -104,14 +117,17 @@ export default function TaskComposer({ dealId, onCreated }) {
         dueTime: (isWhatsapp ? waTime : dueTime) || undefined,
         priority,
         ownerUserId: ownerUserId || undefined,
-        ...(isWhatsapp ? { whatsappChatId: chatId, scheduledAt } : {}),
+        ...(isWhatsapp ? { whatsappChatId: chat.id, scheduledAt } : {}),
       };
       await api.dealTasks.create(dealId, payload);
       // Reset text but keep the type/owner for quick successive entry.
       setText('');
       onCreated?.();
     } catch (e) {
-      setError(e.payload?.error || e.message);
+      // A failure to OPEN the conversation is a business problem (the contact
+      // has no phone), not a technical one — say it in those words.
+      const code = e.payload?.error;
+      setError(START_ERRORS[code] || code || e.message);
     } finally {
       setSaving(false);
     }
@@ -150,29 +166,54 @@ export default function TaskComposer({ dealId, onCreated }) {
         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200"
       />
 
-      {/* WhatsApp sender/chat selector */}
+      {/* WhatsApp recipient + sender — the same two axes, the same controls
+          and the same remembered number as the Deal conversation panel. */}
       {isWhatsapp && (
-        <div>
-          {chats.length > 0 ? (
-            <label className="block text-[12px] text-gray-600">
-              נשלח מ / אל
+        <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="text-[12px] font-medium text-gray-600">נשלח אל</span>
+            {contacts.length > 1 ? (
               <select
-                value={chatId}
-                onChange={(e) => setChatId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                value={activeContact?.id || ''}
+                onChange={(e) => selectContact(e.target.value)}
+                aria-label="בחירת איש הקשר"
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[12.5px]"
               >
-                {chats.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.account?.label || c.accountId} ← {c.displayName || c.phoneNumber || 'שיחה'}
-                  </option>
+                {contacts.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-            </label>
-          ) : (
-            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-700">
-              אין שיחת וואטסאפ מקושרת לדיל. פתחו שיחה עם איש הקשר לפני יצירת משימת וואטסאפ.
-            </div>
-          )}
+            ) : (
+              <span className="text-[12.5px] font-medium text-gray-800">
+                {activeContact?.name || '—'}
+              </span>
+            )}
+            {/* Named even when there is only one number and the bubbles below
+                are hidden — the sending number is never left to be guessed. */}
+            {activeAccount?.label && (
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11.5px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                {activeAccount.label}
+              </span>
+            )}
+          </div>
+          <AccountBubbles
+            accounts={accounts}
+            activeId={activeAccountId}
+            chatByAccount={chatByAccount}
+            onSelect={selectAccount}
+          />
+          {!activeContact ? (
+            <p className="text-[12px] text-amber-700">
+              אין אנשי קשר בדיל — הוסיפו איש קשר לפני יצירת משימת וואטסאפ.
+            </p>
+          ) : !activeAccountId ? (
+            <p className="text-[12px] text-amber-700">אין מספר WhatsApp מחובר.</p>
+          ) : !chatByAccount[activeAccountId] ? (
+            <p className="text-[12px] text-gray-500">
+              עדיין אין שיחה עם {activeContact.name}
+              {activeAccount?.label ? ` מ־${activeAccount.label}` : ''} — ההודעה המתוזמנת תהיה הראשונה בשיחה.
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -219,7 +260,7 @@ export default function TaskComposer({ dealId, onCreated }) {
         <button
           type="button"
           onClick={submit}
-          disabled={saving || (isWhatsapp && !chatId)}
+          disabled={saving || (isWhatsapp && !activeChat)}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {saving ? 'שומר…' : isWhatsapp ? 'תזמון משימת וואטסאפ' : 'הוספת משימה'}

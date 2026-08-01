@@ -25,7 +25,7 @@ import {
 import { normalizePhoneIntl } from '../whatsapp/phone.js';
 import { phoneToJid } from '../whatsapp/send.js';
 import { SEND_GAP_MS } from '../whatsapp/sendPace.js';
-import { configuredAccounts, ACCOUNT_ORDER_BY } from '../whatsapp/senderAccount.js';
+import { configuredAccounts, listSelectableAccounts } from '../whatsapp/senderAccount.js';
 import { kickScheduledWorker } from '../whatsapp/scheduledWorker.js';
 import { guidePortalUrl } from '../tours/guidePortal/links.js';
 import { ASSIGNABLE_WHERE } from '../people/eligibility.js';
@@ -129,21 +129,11 @@ function parseRecipientInput(body) {
 router.get(
   '/meta',
   handle(async (_req, res) => {
-    const configured = new Set(configuredAccounts());
-    const accounts = await prisma.whatsAppAccount.findMany({
-      where: { active: true },
-      select: { id: true, label: true, status: true, phoneJid: true },
-      orderBy: ACCOUNT_ORDER_BY,
-    });
     res.set('Cache-Control', 'no-store');
     res.json({
-      accounts: accounts.map((a) => ({
-        id: a.id,
-        label: a.label,
-        connected: a.status === 'connected',
-        bridgeConfigured: configured.size === 0 || configured.has(a.id),
-        phone: a.phoneJid ? String(a.phoneJid).split(':')[0].split('@')[0] : null,
-      })),
+      // Same builder as GET /connected-accounts — one definition of which
+      // numbers exist and which are usable, shared by every sending surface.
+      accounts: await listSelectableAccounts(prisma),
       variables: STAFF_VARIABLES.map((v) => ({
         key: v.key, labelHe: v.labelHe, labelEn: v.labelEn, category: v.category, descriptionHe: v.labelHe,
       })),

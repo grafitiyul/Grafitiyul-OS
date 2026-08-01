@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
+import { isDraftChat, materializeChat, START_ERRORS } from './chatTarget.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 // Emoji DATA bundled locally (content-hashed static asset) — the picker's
 // default is a CDN fetch, which is both against the project's caching rules
@@ -13,8 +14,15 @@ import emojiDataUrl from 'emoji-picker-element-data/en/emojibase/data.json?url';
 // gets a clientKey (UUID); pressing send again after a failure reuses the
 // SAME key, so the server/bridge idempotency replays instead of
 // double-messaging the customer. Editing the text mints a new key.
+//
+// `chat` may be a DRAFT TARGET (chatTarget.js) — a contact × one of our numbers
+// with no conversation row yet. The composer behaves identically; the row is
+// created by the first successful action and handed back via `onMaterialized`.
 
 const SEND_ERRORS = {
+  // Creating the conversation is part of sending the first message, so its
+  // failures are send failures and read in the same voice.
+  ...START_ERRORS,
   whatsapp_not_connected: 'המספר שלנו לא מחובר כרגע — בדקו את חיבור ה-WhatsApp בהגדרות.',
   whatsapp_number_not_found: 'המספר הזה לא רשום ב-WhatsApp.',
   send_timeout: 'השליחה נתקעה — החיבור מתאושש, נסו שוב בעוד רגע.',
@@ -175,7 +183,7 @@ function classifyFile(file) {
 // accidental keystroke must never reach a customer. Defaults keep the normal
 // thread composer behaving exactly as before (Enter sends, WhatsApp muscle
 // memory).
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true, fill = false, enterSends = true }) {
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, onMaterialized = null, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true, fill = false, enterSends = true }) {
   const draftKey = draftKeyFor(chat);
   const [text, setText] = useState(() => (persistDraft ? readDrafts()[draftKey] || '' : seed?.text || ''));
   const [sending, setSending] = useState(false);
@@ -197,6 +205,31 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   const meterRef = useRef({ ctx: null, timer: null });
   const maxLevelRef = useRef(0);
   const fileInputRef = useRef(null);
+
+  // The conversation this composer acts on — CREATING it first when this is a
+  // draft target (a number the contact has never been written to from). This is
+  // the ONE place in the client where a conversation comes into existence, and
+  // it happens at the moment of a real action, never on viewing. `announce`
+  // runs only after the action succeeded, so the surrounding surface swaps to
+  // the real chat with the message already on its way.
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const materializedRef = useRef(null);
+
+  async function liveChat() {
+    const current = chatRef.current;
+    if (!isDraftChat(current)) return current;
+    const real = await materializeChat(current);
+    materializedRef.current = real;
+    return real;
+  }
+
+  function announceMaterialized() {
+    const created = materializedRef.current;
+    if (!created) return;
+    materializedRef.current = null;
+    onMaterialized?.(created);
+  }
 
   // Draft persistence is opt-out (see the props note above).
   const saveDraft = useCallback(
@@ -274,9 +307,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     let firstOut = true;
     let lastMessage = null;
     try {
+      const live = await liveChat();
       for (const item of queue) {
         const mediaBase64 = await blobToBase64(item.file);
-        const resp = await api.whatsapp.sendMedia(chat.id, {
+        const resp = await api.whatsapp.sendMedia(live.id, {
           mediaBase64,
           mimeType: item.file.type || 'application/octet-stream',
           fileName: item.file.name || '',
@@ -291,6 +325,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       setText('');
       saveDraft('');
       onCancelReply?.();
+      announceMaterialized();
       onSent?.(lastMessage);
     } catch (e) {
       setError(
@@ -473,7 +508,8 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     setError(null);
     try {
       const audioBase64 = await blobToBase64(rec.blob);
-      const resp = await api.whatsapp.sendVoice(chat.id, {
+      const live = await liveChat();
+      const resp = await api.whatsapp.sendVoice(live.id, {
         audioBase64,
         mimeType: rec.blob.type,
         seconds: rec.seconds,
@@ -481,6 +517,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       });
       URL.revokeObjectURL(rec.url);
       setRec(null);
+      announceMaterialized();
       onSent?.(resp.message || null);
     } catch (e) {
       setError(SEND_ERRORS[e?.payload?.error] || 'שליחת ההקלטה נכשלה — נסו שוב.');
@@ -501,7 +538,8 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     setSending(true);
     setError(null);
     try {
-      const resp = await api.whatsapp.sendMessage(chat.id, {
+      const live = await liveChat();
+      const resp = await api.whatsapp.sendMessage(live.id, {
         text: body,
         quotedMessageId: replyTo?.id || null,
         clientKey: keyRef.current.key,
@@ -510,6 +548,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       setText('');
       saveDraft('');
       onCancelReply?.();
+      announceMaterialized();
       onSent?.(resp.message || null);
     } catch (e) {
       setError(SEND_ERRORS[e?.payload?.error] || 'השליחה נכשלה — נסו שוב.');
@@ -532,7 +571,12 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       // In a Deal context the backend also creates a linked WhatsApp Task; send
       // the user's LOCAL wall-clock date/time (the picker is local) alongside the
       // tz-correct ISO instant so the task's due fields read correctly.
-      await api.whatsapp.scheduleMessage(chat.id, {
+      // Scheduling to a number with no conversation yet CREATES the
+      // conversation now (pending, empty) so the queued message has a real
+      // thread to land in — when its time comes it simply becomes the first
+      // message, exactly like sending one by hand.
+      const live = await liveChat();
+      await api.whatsapp.scheduleMessage(live.id, {
         text: body,
         scheduledAt: when.toISOString(),
         ...(dealId
@@ -543,6 +587,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       saveDraft('');
       setScheduleOpen(false);
       onCancelReply?.();
+      announceMaterialized();
       onScheduled?.();
       // Deal focus area shows the new open Task immediately (no page refresh).
       if (dealId) emitDealTasksChanged(dealId);
@@ -550,7 +595,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       setError(
         e?.payload?.error === 'scheduled_at_past'
           ? 'המועד שנבחר כבר עבר — בחרו מועד עתידי.'
-          : 'קביעת התזמון נכשלה — נסו שוב.',
+          : SEND_ERRORS[e?.payload?.error] || 'קביעת התזמון נכשלה — נסו שוב.',
       );
     } finally {
       setSending(false);

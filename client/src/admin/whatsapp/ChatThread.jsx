@@ -107,7 +107,12 @@ function ToolButton({ onClick, title, active, children }) {
   );
 }
 
-export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true, fill = false, dealId = null }) {
+export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true, fill = false, dealId = null, onMaterialized = null }) {
+  // A DRAFT target (chatTarget.js): the operator picked one of our numbers that
+  // this contact has never been written to from. There is no row to read, so
+  // every server-backed affordance is simply absent — but the thread and its
+  // composer are the real ones, and the first message creates the conversation.
+  const isDraft = !chat.id;
   const [messages, setMessages] = useState(null); // ascending, null = loading
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(null);
@@ -149,6 +154,10 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   // Initial load + polling — LIVE mode only. Chat switch remounts
   // (key=chat.id in the panel). Hidden tab = skip the fetch, keep the schedule.
   useEffect(() => {
+    if (isDraft) {
+      setMessages([]); // an empty conversation, not a loading one
+      return undefined;
+    }
     if (mode !== 'live') return undefined;
     let cancelled = false;
     let timer = null;
@@ -173,7 +182,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [chat.id, refreshNonce, mode]);
+  }, [chat.id, isDraft, refreshNonce, mode]);
 
   async function loadOlder() {
     if (loadingOlderRef.current || !hasMore || !messages?.length) return;
@@ -364,8 +373,10 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       )}
 
       {/* Thread toolbar — search / jump to date / starred. Shared by every
-          surface because it lives in the thread itself. */}
-      <div className="flex items-center gap-1 border-b border-black/5 bg-[#f0f2f5] px-2 py-1">
+          surface because it lives in the thread itself. Absent on a draft
+          target: there is no history to search, and offering the controls
+          anyway would promise something that cannot work. */}
+      <div className={`flex items-center gap-1 border-b border-black/5 bg-[#f0f2f5] px-2 py-1 ${isDraft ? 'hidden' : ''}`}>
         <ToolButton title="חיפוש בשיחה" active={panel === 'search'} onClick={() => setPanel(panel === 'search' ? null : 'search')}>
           🔍
         </ToolButton>
@@ -455,8 +466,16 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
             טוען הודעות…
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500">
-            אין עדיין הודעות בשיחה הזו.
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
+            <p className="text-sm text-gray-500">
+              {isDraft ? 'עדיין לא התכתבתם עם איש הקשר הזה מהמספר שנבחר.' : 'אין עדיין הודעות בשיחה הזו.'}
+            </p>
+            {isDraft && (
+              <p className="text-[12.5px] text-gray-400">
+                כתבו למטה — ההודעה הראשונה תפתח את השיחה
+                {chat.account?.label ? ` מ־${chat.account.label}` : ''}.
+              </p>
+            )}
           </div>
         ) : (
           <>
@@ -519,11 +538,12 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       )}
       {canSend && (
         <>
-          <ScheduledStrip chat={chat} nonce={scheduledNonce} dealId={dealId} />
+          {!isDraft && <ScheduledStrip chat={chat} nonce={scheduledNonce} dealId={dealId} />}
           <ChatComposer
             chat={chat}
             dealId={dealId}
             replyTo={replyTo}
+            onMaterialized={onMaterialized}
             onCancelReply={() => setReplyTo(null)}
             onSent={(message) => {
               if (mode !== 'live') {

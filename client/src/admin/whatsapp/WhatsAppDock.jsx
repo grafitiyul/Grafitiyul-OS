@@ -4,6 +4,7 @@ import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
 import AccountBubbles from './AccountBubbles.jsx';
 import { useSubjectChats } from './useSubjectChats.js';
+import { chatTargetKey } from './chatTarget.js';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
 import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 
@@ -23,13 +24,10 @@ import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 //              bubble). Conversations are per-contact and never merged.
 //   numbers  — FROM WHICH OF OUR NUMBERS (AccountBubbles). Every connected
 //              number is present, including ones this contact has never been
-//              written to from; picking such a bubble opens that conversation
-//              on the spot.
-// Both live in useSubjectChats, which is also what the Deal's template modal
-// uses — one selection model, one panel, no duplicated send path. Everything
-// below the switchers (thread, composer, scheduling, media, templates) is
-// keyed on the resolved chat, so switching number switches every action with
-// it automatically.
+//              written to from — those open an EMPTY thread whose first
+//              message creates the conversation. There is deliberately no
+//              "no conversation" screen: every selection is a usable thread.
+// Both come from useSubjectChats, the model every WhatsApp surface shares.
 
 const WIDTH_KEY = 'gos-whatsapp-dock'; // { width } — global, not per-deal
 const MIN_W = 380;
@@ -57,11 +55,6 @@ function unreadForClosedBubble(chats, readIds) {
   return chats.reduce((sum, c) => sum + (readIds.has(c.id) ? 0 : c.unreadCount || 0), 0);
 }
 
-const START_ERRORS = {
-  contact_has_no_phone: 'לאיש הקשר הזה אין מספר טלפון שמור, ולכן אי אפשר לפתוח ממנו שיחה. הוסיפו מספר בכרטיס איש הקשר.',
-  unknown_account: 'המספר הזה כבר לא פעיל במערכת.',
-};
-
 export default function WhatsAppDock({ subjectType, subjectId }) {
   const [open, setOpen] = useState(false);
   // Chats this dock has already marked read but whose server count may not have
@@ -81,6 +74,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   const [pendingOpenChatId, setPendingOpenChatId] = useState(null);
 
   const {
+    loading,
     chats,
     contacts,
     primaryContactId,
@@ -89,13 +83,12 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     activeAccountId,
     activeAccount,
     activeChat,
+    existingChat,
     chatByAccount,
     unreadByAccount,
-    starting,
-    startError,
     selectContact,
     selectAccount,
-    startConversation,
+    adoptChat,
     openChat,
     reload,
   } = useSubjectChats(subjectType, subjectId);
@@ -135,12 +128,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   }, [pendingOpenChatId, openChat]);
 
   // Reading the conversation marks it read on the server (SSOT) and pushes a
-  // WhatsApp read receipt. Mark on open/switch and periodically while the popup
-  // stays open on it (a newer inbound message re-marks read). The badge is for
-  // the CLOSED bubble, so clear it optimistically too.
+  // WhatsApp read receipt. Only a REAL conversation can be read — a draft
+  // target has no row and nothing to mark.
   useEffect(() => {
-    if (!open || !activeChat) return undefined;
-    const chatId = activeChat.id;
+    if (!open || !existingChat) return undefined;
+    const chatId = existingChat.id;
     const markRead = () => api.whatsapp.markChatRead(chatId).catch(() => {});
     markRead();
     lastViewedRef.current = chatId;
@@ -152,7 +144,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
       clearInterval(t);
       markRead();
     };
-  }, [open, activeChat?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, existingChat?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Closing hands the badge back to the server. The order matters: mark the
   // last-viewed chat read, THEN re-read the list, THEN drop the optimistic set.
@@ -207,7 +199,6 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   }, []);
 
   const badge = unread > 99 ? '99+' : String(unread);
-  const accountLabel = activeAccount?.label || activeAccountId || '';
 
   const bubble = (positionClass) => (
     <button
@@ -232,64 +223,41 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     </button>
   );
 
-  // What fills the body when the selected number has no conversation with this
-  // contact. Never a dead end: either it is being opened, or there is one
-  // button that opens it, or we say plainly why it cannot be opened.
-  function emptyBody() {
-    if (starting) {
-      return <p className="text-[13px] text-gray-500">פותח שיחה מ{accountLabel}…</p>;
-    }
-    if (!activeContact) {
+  // The body is a thread whenever a contact and a number are both known —
+  // real or draft. The remaining states are genuine absences, stated plainly.
+  function body() {
+    if (activeChat) {
       return (
-        <>
-          <p className="text-sm font-medium text-gray-700">אין אנשי קשר בדיל הזה</p>
-          <p className="text-[12px] leading-relaxed text-gray-500">
-            הוסיפו איש קשר לדיל כדי לנהל איתו שיחת WhatsApp.
-          </p>
-        </>
-      );
-    }
-    if (startError) {
-      return (
-        <>
-          <p className="text-[13px] leading-relaxed text-red-700">
-            {START_ERRORS[startError] || 'פתיחת השיחה נכשלה — נסו שוב.'}
-          </p>
-          {!START_ERRORS[startError] && (
-            <button
-              type="button"
-              onClick={() => startConversation(activeAccountId)}
-              className="rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700"
-            >
-              נסו שוב
-            </button>
-          )}
-        </>
-      );
-    }
-    if (activeAccount?.retired) {
-      return (
-        <p className="text-[12.5px] leading-relaxed text-gray-500">
-          {accountLabel} כבר לא מחובר למערכת — אפשר לקרוא היסטוריה קיימת, אך לא לפתוח ממנו שיחה חדשה.
-        </p>
+        <ChatThread
+          key={chatTargetKey(activeChat)}
+          chat={activeChat}
+          fill
+          dealId={subjectType === 'deal' ? subjectId : null}
+          onMaterialized={adoptChat}
+        />
       );
     }
     return (
-      <>
-        <p className="text-sm font-medium text-gray-700">
-          עדיין אין שיחה עם {activeContact.name} מ{accountLabel}
-        </p>
-        <p className="text-[12px] leading-relaxed text-gray-500">
-          אפשר לפתוח שיחה חדשה מהמספר הזה — ההודעה הראשונה תישלח ממנו.
-        </p>
-        <button
-          type="button"
-          onClick={() => startConversation(activeAccountId)}
-          className="mt-1 rounded-xl bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white transition hover:bg-emerald-700"
-        >
-          התחלת שיחה מ{accountLabel}
-        </button>
-      </>
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+        <WhatsAppLogo size={28} />
+        {loading ? (
+          <p className="text-[13px] text-gray-400">טוען…</p>
+        ) : !activeContact ? (
+          <>
+            <p className="text-sm font-medium text-gray-700">אין אנשי קשר בדיל הזה</p>
+            <p className="text-[12px] leading-relaxed text-gray-500">
+              הוסיפו איש קשר לדיל כדי לנהל איתו שיחת WhatsApp.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium text-gray-700">אין מספר WhatsApp מחובר</p>
+            <p className="text-[12px] leading-relaxed text-gray-500">
+              חברו מספר בהגדרות → תקשורת כדי לשלוח הודעות.
+            </p>
+          </>
+        )}
+      </div>
     );
   }
 
@@ -322,17 +290,17 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
 
           {/* Header — the active NUMBER is a chip, not a footnote: with several
               numbers connected, "which one am I in" must be readable at a
-              glance even when the bubble row is scrolled. */}
+              glance even when the bubble row is scrolled. The chip renders
+              only when a number is actually known; a half-loaded header must
+              never print a dangling preposition. */}
           <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
             <WhatsAppLogo size={18} />
-            {activeContact && (
-              <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900">
-                {activeContact.name}
-              </span>
-            )}
-            {accountLabel && (
+            <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900">
+              {activeContact?.name || 'WhatsApp'}
+            </span>
+            {activeAccount?.label && (
               <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11.5px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
-                {accountLabel}
+                {activeAccount.label}
               </span>
             )}
             <button
@@ -377,27 +345,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
             activeId={activeAccountId}
             chatByAccount={chatByAccount}
             unreadByAccount={unreadByAccount}
-            busyId={starting}
             onSelect={selectAccount}
             className="border-b border-gray-100 px-3 py-1.5"
           />
 
-          {/* Body */}
-          <div className="min-h-0 flex-1">
-            {activeChat ? (
-              <ChatThread
-                key={activeChat.id}
-                chat={activeChat}
-                fill
-                dealId={subjectType === 'deal' ? subjectId : null}
-              />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <WhatsAppLogo size={28} />
-                {emptyBody()}
-              </div>
-            )}
-          </div>
+          <div className="min-h-0 flex-1">{body()}</div>
         </div>
       )}
     </>

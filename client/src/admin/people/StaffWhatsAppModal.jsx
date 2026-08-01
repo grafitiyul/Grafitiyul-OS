@@ -5,6 +5,8 @@ import { DateField, TimeField } from '../common/pickers/DateTimeFields.jsx';
 import { toInstant } from '../email/ScheduleSendDialog.jsx';
 import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
 import { registerDynamicFields } from '../../lib/dynamicFields.js';
+import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
+import { resolveAccountId, readRememberedAccountId, rememberAccountId } from '../whatsapp/senderAccount.js';
 import { htmlToWhatsApp } from '../../../../shared/waMarkup.mjs';
 import { api } from '../../lib/api.js';
 
@@ -124,8 +126,9 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
       .then((m) => {
         setMeta(m);
         registerDynamicFields((m.variables || []).map((v) => ({ key: v.key, label: v.labelHe, description: v.descriptionHe })));
-        const firstConnected = (m.accounts || []).find((a) => a.connected && a.bridgeConfigured);
-        setAccountId((prev) => prev || firstConnected?.id || '');
+        // Same resolution order as every other WhatsApp surface: this
+        // browser's remembered number first, then the first usable one.
+        setAccountId((prev) => prev || resolveAccountId(m.accounts || [], { remembered: readRememberedAccountId() }) || '');
       })
       .catch((e) => setError(e.message));
   }, [open, meta]);
@@ -358,40 +361,29 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
         <div className="space-y-4">
           <section>
             <div className="mb-1.5 text-[13px] font-semibold text-gray-800">מספר שולח</div>
-            <div className="space-y-1.5">
-              {accounts.map((a) => {
-                const usable = a.connected && a.bridgeConfigured;
-                return (
-                  <label
-                    key={a.id}
-                    className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-[13px] ${
-                      accountId === a.id ? 'border-emerald-400 bg-emerald-50/60' : 'border-gray-200 bg-white'
-                    } ${usable ? 'cursor-pointer hover:border-emerald-300' : 'opacity-50'}`}
-                  >
-                    <input
-                      type="radio"
-                      name="staff-wa-sender"
-                      checked={accountId === a.id}
-                      disabled={!usable}
-                      onChange={() => setAccountId(a.id)}
-                      className="accent-emerald-600"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block font-medium text-gray-900">{a.label}</span>
-                      {a.phone && <span className="block text-[11.5px] text-gray-500" dir="ltr">+{a.phone}</span>}
-                    </span>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${usable ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {usable ? 'מחובר' : 'מנותק'}
-                    </span>
-                  </label>
-                );
-              })}
-              {meta && accounts.length === 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
-                  אין מספרי וואטסאפ מחוברים.
-                </div>
-              )}
-            </div>
+            {/* The canonical picker. `alwaysShow` because choosing the sending
+                number is half of what this screen is for — unlike a
+                conversation panel, it must be stated even with one number. */}
+            <AccountBubbles
+              accounts={accounts}
+              activeId={accountId}
+              label={null}
+              alwaysShow
+              onSelect={(id) => {
+                setAccountId(id);
+                rememberAccountId(id);
+              }}
+            />
+            {accountId && accounts.find((a) => a.id === accountId)?.phone && (
+              <p className="mt-1.5 text-[11.5px] text-gray-500" dir="ltr">
+                +{accounts.find((a) => a.id === accountId).phone}
+              </p>
+            )}
+            {meta && accounts.length === 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+                אין מספרי וואטסאפ מחוברים.
+              </div>
+            )}
           </section>
 
           <section>

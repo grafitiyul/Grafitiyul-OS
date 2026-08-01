@@ -13,12 +13,7 @@ import {
 import { emitTasksChanged } from '../tasks/events.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
-import {
-  ACCOUNT_ORDER_BY,
-  getSenderPreference,
-  resolveSendAccount,
-  setSenderPreference,
-} from '../whatsapp/senderAccount.js';
+import { ACCOUNT_ORDER_BY, listSelectableAccounts } from '../whatsapp/senderAccount.js';
 import { stampManualSend } from '../whatsapp/sendPace.js';
 import { phoneToJid } from '../whatsapp/send.js';
 
@@ -1611,55 +1606,21 @@ router.get(
   }),
 );
 
-// ── Sender preference ────────────────────────────────────────────────────────
+// ── Connected numbers ────────────────────────────────────────────────────────
 //
-// GLOBAL per operator, deliberately not per deal or per chat: switching to the
-// office number on one deal must carry to the next deal opened, which is what
-// makes the picker feel like a mode rather than a per-message checkbox.
+// THE list every WhatsApp sending surface reads: which of our numbers exist,
+// in the canonical order, with live connection state.
 //
-// GET returns the selectable accounts plus the operator's current choice, so a
-// client never has to guess a default. When the preference points at an account
-// that no longer exists the resolver ignores it — a retired number must not keep
-// receiving sends.
+// It deliberately carries NO stored preference. Which number an operator sends
+// from is a per-BROWSER choice held in localStorage, because several office
+// employees share one GOS login while each works from a different number — a
+// server-side per-user preference synchronised one employee's choice onto
+// everyone else. (Replaces GET/PUT /sender-preference, removed 2026-08-01.)
 router.get(
-  '/sender-preference',
-  handle(async (req, res) => {
-    const userId = req.adminAuth?.userId || null;
-    const accounts = await prisma.whatsAppAccount.findMany({
-      where: { active: true },
-      select: { id: true, label: true, status: true, phoneJid: true },
-      orderBy: ACCOUNT_ORDER_BY,
-    });
-    const preferred = await getSenderPreference(prisma, userId);
-    let resolved = null;
-    try {
-      resolved = resolveSendAccount({ preferred }).accountId;
-    } catch {
-      resolved = null; // ambiguous: the client must make the operator choose
-    }
-    res.json({
-      accounts: accounts.map((a) => ({
-        id: a.id,
-        label: a.label,
-        connected: a.status === 'connected',
-        phone: a.phoneJid ? String(a.phoneJid).split(':')[0].split('@')[0] : null,
-      })),
-      preferred,
-      resolved,
-      mustChoose: resolved === null,
-    });
-  }),
-);
-
-router.put(
-  '/sender-preference',
-  handle(async (req, res) => {
-    const userId = req.adminAuth?.userId || null;
-    if (!userId) return res.status(401).json({ error: 'no_user' });
-    const accountId = String(req.body?.accountId || '').trim();
-    if (!accountId) return res.status(400).json({ error: 'accountId_required' });
-    const value = await setSenderPreference(prisma, userId, accountId);
-    res.json({ ok: true, preferred: value.accountId });
+  '/connected-accounts',
+  handle(async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ accounts: await listSelectableAccounts(prisma) });
   }),
 );
 
