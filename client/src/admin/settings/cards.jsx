@@ -69,9 +69,13 @@ export function SectionEyebrow({ children }) {
   );
 }
 
+// `action` sits on the far edge of the header row — in RTL that is the LEFT
+// corner, opposite the title. It is the section's own control, not a card in
+// the grid: configuring which modules appear in the navigation belongs to the
+// whole section, not to any one module inside it.
 export function SectionHeader({ title, description, action }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
       <div>
         <h2 className="text-[17px] font-bold tracking-tight text-gray-900">{title}</h2>
         {description && (
@@ -80,6 +84,19 @@ export function SectionHeader({ title, description, action }) {
       </div>
       {action}
     </div>
+  );
+}
+
+// The section-level control in a SectionHeader's `action` slot.
+export function SectionAction({ to, icon, children }) {
+  return (
+    <Link
+      to={to}
+      className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3.5 text-[13px] font-medium text-gray-700 shadow-sm transition hover:border-gray-400 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
+    >
+      {icon && <span className="text-[15px] leading-none">{icon}</span>}
+      <span>{children}</span>
+    </Link>
   );
 }
 
@@ -115,8 +132,8 @@ function EnterArrow() {
   );
 }
 
-// `badge` marks a module the administrator has kept out of the main navigation,
-// so the card explains why it is here rather than in the rail.
+// Every full module has a card here, so `badge` carries its navigation status —
+// which group of the rail it sits in, or that it is currently out of the menu.
 export function ModuleCard({ to, icon, Icon, title, description, badge }) {
   return (
     <Link

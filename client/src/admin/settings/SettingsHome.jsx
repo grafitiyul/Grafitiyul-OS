@@ -5,6 +5,7 @@ import {
   ModuleCard,
   SectionEyebrow,
   SectionHeader,
+  SectionAction,
 } from './cards.jsx';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import { useResolvedNav } from '../../shell/navConfig.jsx';
@@ -17,10 +18,19 @@ import { settingsModules } from '../../shell/navResolve.js';
 //   2. מודולים לניהול — complete modules that live here only because they are
 //      administrative. You go there to work.
 //
-// Section 2 is rendered from the navigation registry (navResolve.js), never
-// hand-listed, which is what guarantees the invariant "rail ∪ this grid = every
-// module": a module the administrator removes from the main navigation grows a
-// card here automatically and can never become unreachable.
+// Section 2 lists EVERY full module, rendered from the navigation registry
+// (navResolve.js) and never hand-listed. It is a permanent second entry point
+// to all modules — including the ones sitting in the nav rail — which is what
+// makes "no module can become unreachable" unconditional rather than a rule
+// about hidden modules.
+//
+// Each card states its navigation status, so this screen answers "where does
+// this module live?" without opening the editor.
+function navBadge(m) {
+  if (!m.inNav) return 'לא בתפריט';
+  return m.railGroup === 'primary' ? 'בתפריט — למעלה' : 'בתפריט — למטה';
+}
+
 export default function SettingsHome() {
   const resolved = useResolvedNav();
   const modules = settingsModules(resolved);
@@ -44,12 +54,6 @@ export default function SettingsHome() {
             icon="🏢"
             title="הגדרות CRM"
             description="סוגי ארגון, תת-סוגים, שלבי עסקה ועוד."
-          />
-          <CategoryCard
-            to="/admin/settings/navigation"
-            icon="🧭"
-            title="ניווט ותפריטים"
-            description="אילו מודולים מופיעים בתפריט הראשי ובאיזה סדר."
           />
           <CategoryCard
             to="/admin/whatsapp"
@@ -81,22 +85,22 @@ export default function SettingsHome() {
             title="סיורים"
             description="הרשאות מדריכים והגדרות תפעול — הכנה למודול הסיורים."
           />
-          <CategoryCard
-            icon="⚙️"
-            title="מערכת"
-            description="הגדרות כלליות, גיבוי וניטור."
-            comingSoon
-          />
         </CategoryGrid>
       </section>
 
       {/* The band below is a different kind of destination — the generous gap
           and the rule above it are the separation, and the card language inside
-          does the rest. */}
+          does the rest. Its header carries the section's own control: managing
+          the main menu belongs to the whole section, not to one module in it. */}
       <section className="mt-14 border-t border-gray-200 pt-9">
         <SectionHeader
           title="מודולים לניהול"
-          description="מודולים מלאים, לא מסכי הגדרות. הם יושבים כאן כי הם ניהוליים — לחיצה פותחת את המודול עצמו."
+          description="כל המודולים המלאים של המערכת — גם אלה שמופיעים בתפריט הראשי. לחיצה פותחת את המודול עצמו."
+          action={
+            <SectionAction to="/admin/settings/navigation" icon="⚙️">
+              ניהול התפריט
+            </SectionAction>
+          }
         />
         <ModuleGrid>
           {modules.map((m) => (
@@ -107,7 +111,7 @@ export default function SettingsHome() {
               Icon={m.Icon}
               title={m.label}
               description={m.description}
-              badge={!m.inNav && !m.management ? 'הוסתר מהתפריט' : null}
+              badge={navBadge(m)}
             />
           ))}
         </ModuleGrid>

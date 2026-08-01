@@ -47,13 +47,21 @@ test('an unconfigured module sorts after every configured one, in registry order
   assert.deepEqual(r.primary.map((m) => m.key), ['c', 'a', 'b']);
 });
 
-test('settings grid = management modules ∪ anything hidden from the rail', () => {
-  const hiddenB = resolveNav(FIXTURE, [{ key: 'b', inNav: false, sortOrder: 0 }]);
+test('settings grid lists EVERY module, management first — not only hidden ones', () => {
+  const r = resolveNav(FIXTURE, null);
   assert.deepEqual(
-    settingsModules(hiddenB).map((m) => m.key),
-    ['c', 'b'],
-    'hiding b from the rail gives it a Settings card, so it stays reachable',
+    settingsModules(r).map((m) => m.key),
+    ['c', 'a', 'b'],
+    'c is the management module and leads; a and b are in the rail and still get cards',
   );
+});
+
+test('settings grid excludes הגדרות — a card linking to the current page is noise', () => {
+  const r = resolveNav(MODULE_REGISTRY, null);
+  const keys = settingsModules(r).map((m) => m.key);
+  assert.ok(!keys.includes('settings'));
+  // …and it stays reachable regardless, because it is pinned into the rail.
+  assert.ok(r.rail.some((m) => m.key === 'settings'));
 });
 
 test('INVARIANT: rail ∪ settings grid covers every module, under any preferences', () => {
@@ -78,8 +86,13 @@ test('the real registry ships the intended default rail', () => {
   assert.deepEqual(r.utility.map((m) => m.key), ['finance', 'settings']);
   assert.deepEqual(
     settingsModules(r).map((m) => m.key),
-    ['users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people'],
-    'the six management modules, in the order the Settings page presents them',
+    [
+      // The six management modules lead — Settings is their home…
+      'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people',
+      // …then every operational module, which also gets a permanent card.
+      'control', 'crm', 'tours', 'whatsapp', 'email', 'finance',
+    ],
+    'every full module has a card, in the order the Settings page presents them',
   );
 });
 

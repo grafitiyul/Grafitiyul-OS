@@ -71,15 +71,19 @@ export function resolveNav(registry, orgPrefs, userPrefs = null) {
 
 // The module cards shown in Settings → "מודולים לניהול".
 //
-// Management modules ALWAYS appear (that is their home). Any other module the
-// administrator has hidden from the rail joins them, which is what makes
-// invariant 4 true: hide WhatsApp from the navigation and its card shows up
-// here, so it never becomes unreachable.
+// EVERY full module appears here, including the ones currently in the nav rail:
+// this section is a permanent second entry point to all modules, not a holding
+// area for hidden ones. That is also what makes invariant 4 unconditional —
+// whatever the administrator hides, its card is already here.
+//
+// הגדרות is the one exclusion: a card linking to the page you are already on is
+// noise, and it is pinned into the rail anyway, so it stays reachable.
+//
+// Management modules lead, because Settings is their home; the operational
+// modules follow.
 export function settingsModules(resolved) {
-  return [
-    ...resolved.all.filter((m) => m.management),
-    ...resolved.all.filter((m) => !m.management && !m.inNav),
-  ];
+  const cards = resolved.all.filter((m) => m.key !== 'settings');
+  return [...cards.filter((m) => m.management), ...cards.filter((m) => !m.management)];
 }
 
 // The payload the settings screen saves: an explicit row per module, so order
