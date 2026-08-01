@@ -463,6 +463,7 @@ export default function QuestionnaireBuilderPage() {
         state={inspecting}
         runtime={runtime}
         authoring={authoring}
+        languages={supportedLanguages}
         isDraft={isDraft}
         versionId={versionId}
         lx={lx}
@@ -665,6 +666,109 @@ function PublishProblems({ problems, warningsOnly, questionLabelByKey, onAcknowl
   );
 }
 
+
+// ── Side-by-side bilingual editing ─────────────────────────────────────────
+// Hebrew and English are ONE decision about a question, not two screens. The
+// old language-tab model made translating a form a matter of remembering what
+// the other tab said; here both are visible and editable at once, and a gap is
+// obvious rather than hidden one click away.
+//
+// The DATA MODEL is unchanged — these are the same localized JSON maps the
+// engine has always stored (shared/questionnaire/localized.mjs). Only the
+// editing surface changed.
+//
+// A single-language template keeps its single field: showing an empty English
+// column on a Hebrew-only form would be noise.
+
+const LANG_LABELS = { he: 'עברית', en: 'English' };
+
+function mergeLang(map, lang, text) {
+  const base = map && typeof map === 'object' ? { ...map } : {};
+  const t = (text ?? '').trim();
+  if (t) base[lang] = t;
+  else delete base[lang];
+  return Object.keys(base).length ? base : null;
+}
+
+const readLang = (map, lang) => {
+  if (typeof map === 'string') return lang === 'he' ? map : '';
+  return map && typeof map === 'object' ? (map[lang] ?? '') : '';
+};
+
+function BilingualField({
+  label, value, languages, defLang, disabled, onSave,
+  multiline = false, placeholderOf = () => '',
+}) {
+  // One language → the original single field, unchanged.
+  if (!languages || languages.length < 2) {
+    const only = languages?.[0] || defLang;
+    return (
+      <div>
+        {label ? <label className="mb-1 block text-[12.5px] font-medium text-gray-600">{label}</label> : null}
+        {multiline ? (
+          <SavedTextarea
+            disabled={disabled}
+            value={readLang(value, only)}
+            placeholder={placeholderOf(only)}
+            onSave={(v) => onSave(mergeLang(value, only, v))}
+          />
+        ) : (
+          <InlineText
+            input
+            disabled={disabled}
+            value={readLang(value, only)}
+            placeholder={placeholderOf(only)}
+            allowEmpty
+            onSave={(v) => onSave(mergeLang(value, only, v))}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {label ? <label className="mb-1 block text-[12.5px] font-medium text-gray-600">{label}</label> : null}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {languages.map((lang) => {
+          const text = readLang(value, lang);
+          const missing = !text;
+          return (
+            <div key={lang}>
+              <div className="mb-0.5 flex items-center gap-1.5">
+                <span className="text-[11px] text-gray-400">{LANG_LABELS[lang] || lang}</span>
+                {/* A gap in a non-default language is visible, never silent. */}
+                {missing && lang !== defLang ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="חסר תרגום" />
+                ) : null}
+              </div>
+              <div dir={lang === 'he' ? 'rtl' : 'ltr'}>
+                {multiline ? (
+                  <SavedTextarea
+                    disabled={disabled}
+                    value={text}
+                    placeholder={placeholderOf(lang)}
+                    onSave={(v) => onSave(mergeLang(value, lang, v))}
+                  />
+                ) : (
+                  <InlineText
+                    input
+                    disabled={disabled}
+                    value={text}
+                    placeholder={placeholderOf(lang)}
+                    allowEmpty
+                    onSave={(v) => onSave(mergeLang(value, lang, v))}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Inline-editable text (saves on blur / Enter). `allowEmpty` lets a translator
 // CLEAR a non-default language entry (the language-merge drops empty values);
 // legacy single-language fields keep the "revert on empty" behavior.
@@ -833,7 +937,7 @@ function earlierQuestions(runtime, { beforeQuestionId, beforeSectionId }) {
   return out;
 }
 
-function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, onClose, onMutate, onDelete }) {
+function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, languages, onClose, onMutate, onDelete }) {
   const question = state?.question || null;
   // Always re-resolve the question from the fresh runtime (post-mutation).
   const live = useMemo(() => {
@@ -860,25 +964,15 @@ function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, 
           <div className="sm:col-span-2">
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">
               {q.type === 'static_text' ? 'תוכן (HTML מותר)' : 'נוסח השאלה'}
-              {lx.editLang !== lx.defLang ? ` · ${languageLabel(lx.editLang)}` : ''}
             </label>
-            {q.type === 'static_text' ? (
-              <SavedTextarea
-                disabled={!isDraft}
-                value={lx.read(q.label)}
-                placeholder={lx.hint(q.label)}
-                onSave={(v) => save({ label: lx.merge(q.label, v) })}
-              />
-            ) : (
-              <InlineText
-                input
-                disabled={!isDraft}
-                value={lx.read(q.label)}
-                placeholder={lx.hint(q.label)}
-                allowEmpty={lx.editLang !== lx.defLang}
-                onSave={(v) => save({ label: lx.merge(q.label, v) })}
-              />
-            )}
+            <BilingualField
+              value={q.label}
+              languages={languages}
+              defLang={lx.defLang}
+              disabled={!isDraft}
+              multiline={q.type === 'static_text'}
+              onSave={(map) => save({ label: map })}
+            />
           </div>
           <div>
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">סוג</label>
@@ -916,26 +1010,24 @@ function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, 
           {q.type !== 'static_text' ? (
             <>
               <div className="sm:col-span-2">
-                <label className="mb-1 block text-[12.5px] font-medium text-gray-600">טקסט עזרה (אופציונלי)</label>
-                <InlineText
-                  input
+                <BilingualField
+                  label="טקסט עזרה (אופציונלי)"
+                  value={q.helpText}
+                  languages={languages}
+                  defLang={lx.defLang}
                   disabled={!isDraft}
-                  value={lx.read(q.helpText)}
-                  placeholder={lx.hint(q.helpText)}
-                  allowEmpty
-                  onSave={(v) => save({ helpText: lx.merge(q.helpText, v) })}
+                  onSave={(map) => save({ helpText: map })}
                 />
               </div>
               {PLACEHOLDER_TYPES.includes(q.type) ? (
                 <div className="sm:col-span-2">
-                  <label className="mb-1 block text-[12.5px] font-medium text-gray-600">טקסט לדוגמה בתוך השדה (אופציונלי)</label>
-                  <InlineText
-                    input
+                  <BilingualField
+                    label="טקסט לדוגמה בתוך השדה (אופציונלי)"
+                    value={q.placeholder}
+                    languages={languages}
+                    defLang={lx.defLang}
                     disabled={!isDraft}
-                    value={lx.read(q.placeholder)}
-                    placeholder={lx.hint(q.placeholder)}
-                    allowEmpty
-                    onSave={(v) => save({ placeholder: lx.merge(q.placeholder, v) })}
+                    onSave={(map) => save({ placeholder: map })}
                   />
                 </div>
               ) : null}
@@ -955,7 +1047,7 @@ function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, 
         <TypeConfigFields q={q} isDraft={isDraft} saveConfig={saveConfig} />
 
         {OPTION_TYPES.includes(q.type) ? (
-          <OptionsEditor q={q} isDraft={isDraft} lx={lx} onMutate={onMutate} saveConfig={saveConfig} />
+          <OptionsEditor q={q} isDraft={isDraft} lx={lx} languages={languages} onMutate={onMutate} saveConfig={saveConfig} />
         ) : null}
 
         <ConditionEditor
@@ -1014,7 +1106,7 @@ function TypeConfigFields({ q, isDraft, saveConfig }) {
   return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{fields}</div>;
 }
 
-function OptionsEditor({ q, isDraft, lx, onMutate, saveConfig }) {
+function OptionsEditor({ q, isDraft, lx, languages, onMutate, saveConfig }) {
   const [newLabel, setNewLabel] = useState('');
   const add = async () => {
     if (!newLabel.trim()) return;
@@ -1031,14 +1123,15 @@ function OptionsEditor({ q, isDraft, lx, onMutate, saveConfig }) {
         renderRow={(o, { handle }) => (
           <div className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-2 py-1.5">
             {isDraft ? handle : null}
-            <InlineText
-              value={lx.read(o.label)}
-              placeholder={lx.hint(o.label)}
-              allowEmpty={lx.editLang !== lx.defLang}
-              className="flex-1 text-[13px]"
-              disabled={!isDraft}
-              onSave={(v) => onMutate(() => api.questionnaires.updateOption(o.id, { label: lx.merge(o.label, v) }))}
-            />
+            <div className="flex-1">
+              <BilingualField
+                value={o.label}
+                languages={languages}
+                defLang={lx.defLang}
+                disabled={!isDraft}
+                onSave={(map) => onMutate(() => api.questionnaires.updateOption(o.id, { label: map }))}
+              />
+            </div>
             {isDraft ? (
               <button
                 type="button"
