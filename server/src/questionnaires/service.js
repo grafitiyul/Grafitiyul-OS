@@ -26,6 +26,7 @@ import {
 import { isKnownType, typeHasOptions } from './types.js';
 import { validateVersionForPublish, blockingProblems } from './publishRules.js';
 import { referencesForTemplate, referencePayloadForTemplate } from '../automations/references.js';
+import { fireQuestionnaireAutomations } from '../automations/sources/questionnaire.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
@@ -1029,6 +1030,13 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
     }
     return frozen;
   });
+
+  // THE automation hook — ONE call site, after the transaction commits, so a
+  // submission can never be rolled back or slowed by an automation. Deliberately
+  // subject-agnostic: both שיחת תיאום (booking) and סיכום סיור (tour_event) are
+  // covered without touching either adapter.
+  fireQuestionnaireAutomations(updated, { firstSubmit: isFirstSubmit });
+
   return updated;
 }
 
