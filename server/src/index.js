@@ -667,6 +667,10 @@ app.listen(port, () => {
   if (registryProblems.length) {
     console.error(`[automations] REGISTRY INCONSISTENT: ${registryProblems.join('; ')}`);
   }
+  // Definition-drift detection: a changed declaration writes its own history
+  // row, so the registry's "updated" date and change log are facts about the
+  // code rather than prose someone maintains. Never fatal.
+  syncAutomationChanges(console);
   // Ingress Platform — report which external lead/order sources are credentialed.
   // Purely informational: an unconfigured source is a pending deployment step,
   // never a boot failure, so a missing key can't take the service down.
