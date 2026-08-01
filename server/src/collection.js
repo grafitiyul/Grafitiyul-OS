@@ -53,11 +53,21 @@ export const EVIDENCE_KIND_LABELS = {
 
 const num = (v) => Number(v ?? 0);
 
-// The money a document actually moved. For a receipt-type document iCount also
-// reports `totalpaid`: a PARTIAL receipt records less than its face value, and
-// the money received is what we must count. Falls back to the gross when the
-// provider gave us no payment figure (older rows, GOS-issued documents).
+// The money a document contributes TO THIS DEAL.
+//
+//   • allocationMinor wins when set. It exists for SHARED HISTORICAL documents
+//     — one consolidated document that settles several deals — where the amount
+//     this deal counts is its own payable total, not the document's face value.
+//     Linking a ₪30,745 receipt to twenty deals must settle twenty deals, not
+//     show ₪30,745 outstanding-and-paid on each of them.
+//   • otherwise `totalpaid`: a PARTIAL receipt records less than its face value,
+//     and the money received is what counts.
+//   • otherwise the gross (older rows, GOS-issued documents).
+//
+// The company-level total is a DIFFERENT question and is answered separately by
+// companyCollectionTotals(), which dedupes by document identity.
 function documentMoneyMinor(d) {
+  if (d.allocationMinor != null) return Math.abs(num(d.allocationMinor));
   if (d.paidMinor != null) {
     const paid = Math.abs(num(d.paidMinor));
     if (paid > 0) return paid;
@@ -88,6 +98,11 @@ function documentRow(d) {
     currency: d.currency || 'ILS',
     clientName: d.clientName || null,
     docUrl: d.docUrl || null,
+    // A shared historical document must SAY so wherever it appears — an
+    // operator seeing "paid" on this deal is entitled to know the same document
+    // also settles others, and that company totals count it once.
+    sharedHistorical: !!d.sharedHistorical,
+    documentAmountMinor: Math.abs(num(d.amountMinor)),
     // The document's REAL accounting date; the row's write time is only a
     // fallback for documents GOS issued itself (where they coincide).
     occurredAt: d.issuedAt || d.createdAt,
@@ -288,6 +303,102 @@ export async function collectionSummariesFor(prisma, deals) {
 // contradictory (review): those are exactly the deals that fall through cracks.
 export function requiresCollection(summary) {
   return summary.status !== 'paid';
+}
+
+// ── Company-level totals ─────────────────────────────────────────────────────
+// The per-deal question ("is this deal settled?") and the company question
+// ("how much money came in?") have DIFFERENT answers whenever one document
+// settles several deals, and conflating them is how a consolidated receipt
+// turns into fictional revenue.
+//
+// Per deal:    a shared document contributes the deal's own payable total.
+// Company-wide: each DOCUMENT contributes its own amount exactly ONCE, no
+//               matter how many deals it is linked to.
+//
+// Manual evidence is per-deal by nature (an operator records money for one
+// deal), so it is summed as-is — but it is reported on its own line, never
+// blended into the provider-verified figure.
+export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {}) {
+  const [docs, evidence, deals] = await Promise.all([
+    prisma.icountDocument.findMany({
+      where: { status: 'issued', doctype: { in: COLLECTION_DOCTYPES }, currency },
+      select: {
+        dealId: true, doctype: true, docnum: true, amountMinor: true,
+        paidMinor: true, sharedHistorical: true, allocationMinor: true,
+      },
+    }),
+    prisma.dealCollectionEvidence.findMany({
+      where: { status: 'active', currency },
+      select: { direction: true, amountMinor: true },
+    }),
+    prisma.deal.findMany({ where: { status: 'won', currency }, select: { valueMinor: true } }),
+  ]);
+
+  // Dedupe by DOCUMENT IDENTITY. A document with no number (should not happen,
+  // but data is data) falls back to its row id so it is never merged with
+  // another document by accident.
+  const seen = new Map();
+  for (const d of docs) {
+    const key = d.docnum ? `${d.doctype}:${d.docnum}` : `row:${d.dealId}:${d.doctype}`;
+    if (seen.has(key)) {
+      seen.get(key).dealIds.add(d.dealId);
+      continue;
+    }
+    seen.set(key, {
+      doctype: d.doctype,
+      // The DOCUMENT's own money, never the per-deal allocation.
+      money: d.paidMinor != null && Math.abs(num(d.paidMinor)) > 0
+        ? Math.abs(num(d.paidMinor))
+        : Math.abs(num(d.amountMinor)),
+      shared: !!d.sharedHistorical,
+      dealIds: new Set([d.dealId]),
+    });
+  }
+
+  let received = 0;
+  let refunded = 0;
+  let sharedDocs = 0;
+  let sharedFaceValue = 0;
+  let sharedLinks = 0;
+  for (const v of seen.values()) {
+    if (v.doctype === REFUND_DOCTYPE) refunded += v.money;
+    else received += v.money;
+    if (v.shared || v.dealIds.size > 1) {
+      sharedDocs += 1;
+      sharedFaceValue += v.money;
+      sharedLinks += v.dealIds.size;
+    }
+  }
+
+  let manualIn = 0;
+  let manualOut = 0;
+  for (const e of evidence) {
+    if (e.direction === 'out') manualOut += Math.abs(num(e.amountMinor));
+    else manualIn += Math.abs(num(e.amountMinor));
+  }
+
+  const wonValue = deals.reduce((s, d) => s + num(d.valueMinor), 0);
+  const collected = received - refunded + manualIn - manualOut;
+  return {
+    currency,
+    wonValueMinor: wonValue,
+    // Provider-verified money, each document counted once.
+    documentsReceivedMinor: received,
+    documentsRefundedMinor: refunded,
+    uniqueDocuments: seen.size,
+    // Operator-attested money, reported separately on purpose.
+    manualReceivedMinor: manualIn,
+    manualRefundedMinor: manualOut,
+    collectedMinor: collected,
+    outstandingMinor: wonValue - collected,
+    sharedDocuments: {
+      documents: sharedDocs,
+      faceValueMinor: sharedFaceValue,
+      dealLinks: sharedLinks,
+      note:
+        'מסמכים משותפים סוגרים כמה עסקאות אך נספרים פעם אחת בלבד בסך הגבייה של החברה.',
+    },
+  };
 }
 
 // The Collection screen's rows: every WON deal that still requires collection.

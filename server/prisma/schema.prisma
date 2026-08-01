@@ -1166,6 +1166,7 @@ model Deal {
   paymentLinks          DealPaymentLink[]
   icountDocuments       IcountDocument[]
   collectionEvidence    DealCollectionEvidence[]
+  collectionCandidates  CollectionMatchCandidate[]
   // Collection needs a HUMAN, not an algorithm. Set when the accounting
   // evidence for this deal is contradictory or ambiguous (the same document
   // claimed by several deals, a currency mismatch, an unresolved credit chain,
@@ -1429,8 +1430,66 @@ model IcountDocument {
   // When iCount last confirmed this row's numbers (census or doc/info read).
   verifiedAt     DateTime?
 
+  // ── Shared historical documents (owner ruling, 2026-08-01) ────────────────
+  // One accounting document that legitimately settles SEVERAL deals — the
+  // consolidated invoices and receipts a bookkeeper issued per customer per
+  // month before GOS existed. The cutover policy is deliberate: link the
+  // document to every deal it covers and let each deal read as settled, rather
+  // than reconstructing five-year-old allocations.
+  //
+  // The invariant that keeps this honest: `allocationMinor` is what THIS deal
+  // counts, while company-level totals dedupe by (doctype, docnum) and count
+  // the document's own amount ONCE. Linking a ₪30,745 receipt to twenty deals
+  // settles twenty deals; it can never report ₪614,900 of revenue.
+  sharedHistorical Boolean @default(false)
+  // What this deal counts from the document. NULL = the ordinary case (the
+  // document's own money). Set for shared historical documents, where it is the
+  // deal's own payable total.
+  allocationMinor  BigInt?
+
   @@index([dealId])
   @@index([doctype, docnum])
+}
+
+// ── Second-stage match candidates (the operator review queue) ────────────────
+// A document the matcher believes MIGHT belong to a deal, but not confidently
+// enough to link on its own. Everything the operator needs to answer the
+// question is stored here — the candidate document's real figures, the
+// competing deals and documents, and why it was suggested — so nobody has to go
+// searching in iCount to make the call.
+//
+// This is a QUEUE, not evidence: resolving an item writes an IcountDocument
+// link or a DealCollectionEvidence row through the canonical services, and the
+// candidate is only marked resolved.
+model CollectionMatchCandidate {
+  id             String   @id @default(cuid())
+  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId         String
+  doctype        String
+  docnum         String
+  // 'B' — the only tier that reaches a human. Tier A links itself, Tier C is
+  // left untouched and never queued (a queue full of hopeless items is noise).
+  tier           String   @default("B")
+  // 0-100. Deterministic, computed from the evidence — never a model's guess.
+  score          Int      @default(0)
+  // [{ code, detail }] — every signal that fired, so the suggestion can be
+  // argued with rather than trusted.
+  basis          Json?
+  // The ONE thing the operator must decide, written as a question.
+  question       String
+  competingDeals Json? // other deals that could claim this document
+  competingDocs  Json? // other documents that could settle this deal
+  status         String   @default("open") // open | linked | rejected | shared | unresolved
+  resolvedAt     DateTime?
+  resolvedBy     String?
+  resolvedByName String?
+  resolutionNote String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([dealId, doctype, docnum])
+  @@index([status, score])
+  @@index([dealId])
 }
 
 // ── iCount account-wide document census (READ-ONLY CACHE) ────────────────────

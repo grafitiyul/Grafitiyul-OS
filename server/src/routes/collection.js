@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { dealCollection, collectionDeals } from '../collection.js';
+import { dealCollection, collectionDeals, companyCollectionTotals } from '../collection.js';
+import { listQueue, queueCounts, resolveQueueItem } from '../collectionReviewQueue.js';
 import {
   recordEvidence,
   reverseEvidence,
@@ -147,5 +148,49 @@ collectionRouter.get(
   '/deals',
   handle(async (_req, res) => {
     res.json({ deals: await collectionDeals(prisma) });
+  }),
+);
+
+// Company-level totals. A DIFFERENT question from the per-deal one: a shared
+// historical document settles several deals but contributes its own amount
+// exactly once here, so linking it can never inflate revenue.
+collectionRouter.get(
+  '/totals',
+  handle(async (req, res) => {
+    res.json(await companyCollectionTotals(prisma, { currency: String(req.query.currency || 'ILS') }));
+  }),
+);
+
+// ── Second-stage review queue ───────────────────────────────────────────────
+collectionRouter.get(
+  '/review',
+  handle(async (req, res) => {
+    const [queue, counts] = await Promise.all([
+      listQueue(prisma, {
+        status: String(req.query.status || 'open'),
+        limit: Number(req.query.limit) || 200,
+        offset: Number(req.query.offset) || 0,
+      }),
+      queueCounts(prisma),
+    ]);
+    res.json({ ...queue, counts });
+  }),
+);
+
+collectionRouter.post(
+  '/review/:itemId/resolve',
+  handle(async (req, res) => {
+    try {
+      const out = await resolveQueueItem(
+        prisma,
+        req.params.itemId,
+        { action: String(req.body?.action || ''), note: req.body?.note },
+        req.adminAuth?.userId || null,
+      );
+      res.json(out);
+    } catch (err) {
+      const code = err?.code || 'resolve_failed';
+      return res.status(code === 'not_found' ? 404 : 400).json({ error: code });
+    }
   }),
 );

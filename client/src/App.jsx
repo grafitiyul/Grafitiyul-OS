@@ -60,6 +60,7 @@ import FinancePlaceholder from './admin/finance/FinancePlaceholder.jsx';
 import PayrollDayPage from './admin/finance/payroll/PayrollDayPage.jsx';
 import PayrollReportPage from './admin/finance/payroll/PayrollReportPage.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
+import CollectionReviewPage from './admin/collection/CollectionReviewPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
 import ControlPage from './admin/control/ControlPage.jsx';
@@ -69,6 +70,8 @@ import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Questionnaire Engine — template list + builder + new-tab preview.
+import AutomationsPage from './admin/automations/AutomationsPage.jsx';
+import AutomationDetailPage from './admin/automations/AutomationDetailPage.jsx';
 import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
 import QuestionnaireBuilderPage from './admin/questionnaires/QuestionnaireBuilderPage.jsx';
 import QuestionnairePreviewPage from './admin/questionnaires/QuestionnairePreviewPage.jsx';
@@ -215,6 +218,7 @@ export default function App() {
         <Route path="finance" element={<FinanceLayout />}>
           <Route index element={<Navigate to="/admin/finance/collection" replace />} />
           <Route path="collection" element={<CollectionPage />} />
+          <Route path="collection/review" element={<CollectionReviewPage />} />
           <Route path="payroll" element={<PayrollDayPage />} />
           <Route path="payroll/reports" element={<PayrollReportPage />} />
           <Route
@@ -244,6 +248,8 @@ export default function App() {
         </Route>
         {/* Questionnaire Engine — generic templates (tour summary /
             coordination / future forms). List + per-template builder. */}
+        <Route path="settings/automations" element={<AutomationsPage />} />
+        <Route path="settings/automations/:autId" element={<AutomationDetailPage />} />
         <Route path="questionnaires" element={<QuestionnairesPage />} />
         <Route path="questionnaires/:id" element={<QuestionnaireBuilderPage />} />
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,

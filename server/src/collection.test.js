@@ -214,3 +214,34 @@ test('a foreign-currency payment forces review and is never added in', () => {
   assert.equal(c.paidMinor, 50_000); // the USD receipt did NOT add to the shekel total
   assert.equal(c.review.code, 'currency_mismatch');
 });
+
+// ── Shared historical documents (owner ruling, 2026-08-01) ──────────────────
+
+test('a shared historical document settles the deal by its OWN payable total', () => {
+  // A ₪30,745 consolidated receipt covering twenty tours. On THIS deal it must
+  // settle THIS deal — not report ₪30,745 received against a ₪1,638 order.
+  const c = computeCollection(deal(163_800), [
+    doc('receipt', 3_074_500, { sharedHistorical: true, allocationMinor: 163_800 }),
+  ]);
+  assert.equal(c.paidMinor, 163_800);
+  assert.equal(c.balanceMinor, 0);
+  assert.equal(c.status, 'paid');
+  assert.equal(c.payments[0].sharedHistorical, true);
+  // The document's real face value stays visible — the operator is entitled to
+  // see that the settling document is much larger than this deal.
+  assert.equal(c.payments[0].documentAmountMinor, 3_074_500);
+});
+
+test('allocation wins over the document total AND over totalpaid', () => {
+  const c = computeCollection(deal(100_000), [
+    doc('invrec', 900_000, { paidMinor: 900_000, sharedHistorical: true, allocationMinor: 100_000 }),
+  ]);
+  assert.equal(c.paidMinor, 100_000);
+  assert.equal(c.status, 'paid');
+});
+
+test('a non-shared document is unaffected by the allocation field', () => {
+  const c = computeCollection(deal(100_000), [doc('receipt', 100_000)]);
+  assert.equal(c.paidMinor, 100_000);
+  assert.equal(c.payments[0].sharedHistorical, false);
+});

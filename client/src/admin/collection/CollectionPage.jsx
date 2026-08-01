@@ -216,6 +216,10 @@ export default function CollectionPage() {
             <p className="text-[12px] text-gray-500">עסקאות WON שטרם נגבו במלואן</p>
           </div>
         </div>
+        <button type="button" onClick={() => navigate('/admin/finance/collection/review')}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-[13px] font-medium text-gray-700 hover:bg-gray-50">
+          התאמות לבדיקה →
+        </button>
       </div>
 
       {/* Summary strip */}

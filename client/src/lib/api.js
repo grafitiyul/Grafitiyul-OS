@@ -770,6 +770,14 @@ export const api = {
   // ── Collection (גבייה) — WON deals that still require collection ──
   collection: {
     deals: () => request('/api/collection/deals'),
+    // Company-level totals. A DIFFERENT question from the per-deal one: a shared
+    // historical document settles several deals but is counted ONCE here, so
+    // linking it can never inflate revenue.
+    totals: (currency) => request(`/api/collection/totals${qs({ currency })}`),
+    // Second-stage match review queue.
+    review: (params) => request(`/api/collection/review${qs(params)}`),
+    resolveReviewItem: (itemId, data) =>
+      request(`/api/collection/review/${itemId}/resolve`, { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── Payroll (שכר צוות) — day screen + activity drawer ─────────────
   // All numbers are server-computed (payroll engine); the client never
@@ -1676,6 +1684,17 @@ export const api = {
 
   // Questionnaire Engine — generic templates/versions/sections/questions +
   // submissions (blueprint: docs/architecture/questionnaire-engine-design.md).
+  // Automation Registry — read-only operational view. Only three mutations
+  // exist (enable/disable/rerun); no definition field is writable.
+  automations: {
+    list: () => request('/api/automations'),
+    get: (autId) => request(`/api/automations/${autId}`),
+    setEnabled: (autId, enabled) =>
+      request(`/api/automations/${autId}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
+    rerun: (autId, submissionId) =>
+      request(`/api/automations/${autId}/rerun`, { method: 'POST', body: JSON.stringify({ submissionId }) }),
+  },
+
   questionnaires: {
     list: (params) => request(`/api/questionnaires${qs(params)}`),
     get: (id) => request(`/api/questionnaires/${id}`),
