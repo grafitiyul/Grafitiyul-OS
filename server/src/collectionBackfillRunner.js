@@ -133,13 +133,20 @@ async function loadLedger(prisma, log) {
   const rows = await prisma.icountLedgerDoc.findMany();
   const byKey = new Map();
   const byNum = new Map();
+  // The smallest document number the account has EVER issued. Anything below it
+  // cannot be a document reference, whatever the note says — which is how
+  // "זיכוי 240" (a credit of ₪240) stops masquerading as document 240. Derived
+  // from the census, so it stays true as the account grows.
+  let minDocnum = null;
   for (const r of rows) {
     byKey.set(`${r.doctype}:${r.docnum}`, r);
     if (!byNum.has(r.docnum)) byNum.set(r.docnum, []);
     byNum.get(r.docnum).push(r);
+    const n = Number(r.docnum);
+    if (Number.isFinite(n) && (minDocnum == null || n < minDocnum)) minDocnum = n;
   }
-  log.log(`[backfill] ledger: ${rows.length} iCount documents indexed`);
-  return { byKey, byNum };
+  log.log(`[backfill] ledger: ${rows.length} iCount documents indexed (lowest document number ${minDocnum ?? '—'})`);
+  return { byKey, byNum, minDocnum };
 }
 
 // Candidate documents for one parsed reference. A stated type that iCount does
@@ -234,17 +241,27 @@ export async function plan(
   const claims = buildClaims(deals, refsByDeal, ledger);
 
   // Documents already attached — what makes the whole run idempotent.
-  const existing = await prisma.icountDocument.findMany({ select: { dealId: true, doctype: true, docnum: true } });
+  const existing = await prisma.icountDocument.findMany({
+    select: { dealId: true, doctype: true, docnum: true, amountMinor: true, paidMinor: true, currency: true, status: true },
+  });
   const linkedByDeal = new Map();
+  const linkedDocsByDeal = new Map();
   for (const e of existing) {
     if (!linkedByDeal.has(e.dealId)) linkedByDeal.set(e.dealId, new Set());
     linkedByDeal.get(e.dealId).add(`${e.doctype}:${e.docnum}`);
+    if (!linkedDocsByDeal.has(e.dealId)) linkedDocsByDeal.set(e.dealId, []);
+    linkedDocsByDeal.get(e.dealId).push(e);
   }
 
   // Active/future operational deals first — the ones an operator is looking at
   // today. Ordering never changes a DECISION, only the order they are made in.
   const today = new Date().toISOString().slice(0, 10);
   const ordered = priorityFirst ? [...deals].sort((a, b) => priorityRank(a, today) - priorityRank(b, today)) : deals;
+
+  // Identity of every deal that could appear in a shared-document review, so
+  // the flag can name the other deals by their order number rather than by an
+  // internal id an operator cannot look up.
+  const claimInfo = new Map(deals.map((d) => [d.id, { orderNo: d.orderNo, valueMinor: d.valueMinor }]));
 
   const decisions = [];
   for (const deal of limit ? ordered.slice(0, limit) : ordered) {
@@ -254,7 +271,9 @@ export async function plan(
         references: refsByDeal.get(deal.id),
         ledger,
         claims,
+        claimInfo,
         alreadyLinked: linkedByDeal.get(deal.id) || new Set(),
+        linkedDocs: linkedDocsByDeal.get(deal.id) || [],
       }),
     );
   }
@@ -276,15 +295,27 @@ function addDaysStr(isoDate, n) {
 export async function apply(prisma, decisions, { log = defaultLog } = {}) {
   const stats = { attached: 0, reused: 0, flagged: 0, cleared: 0, dealsTouched: 0 };
 
+  // Two bulk reads instead of two queries per deal. Over 8,288 deals against a
+  // proxied database, per-row round trips — not the work — are what make a
+  // backfill take an hour.
+  const existingKeys = new Set(
+    (await prisma.icountDocument.findMany({ select: { idempotencyKey: true }, where: { idempotencyKey: { not: null } } }))
+      .map((r) => r.idempotencyKey),
+  );
+  const reviewByDeal = new Map(
+    (await prisma.deal.findMany({ where: { status: 'won' }, select: { id: true, collectionReview: true } }))
+      .map((r) => [r.id, r.collectionReview]),
+  );
+
   for (const d of decisions) {
     const wrote = [];
     for (const a of d.attach) {
       const key = dealDocumentKey(d.dealId, a.doctype, a.docnum);
-      const already = await prisma.icountDocument.findUnique({ where: { idempotencyKey: key } });
-      if (already) {
+      if (existingKeys.has(key)) {
         stats.reused += 1;
         continue;
       }
+      existingKeys.add(key);
       const l = a.ledger;
       wrote.push(
         await prisma.icountDocument.create({
@@ -316,12 +347,12 @@ export async function apply(prisma, decisions, { log = defaultLog } = {}) {
 
     // The review flag. A flag an operator ALREADY CLEARED is never re-raised —
     // a tool that re-asks an answered question stops being trusted.
-    const current = await prisma.deal.findUnique({ where: { id: d.dealId }, select: { collectionReview: true } });
-    const wasCleared = !!current?.collectionReview?.clearedAt;
+    const current = reviewByDeal.get(d.dealId) || null;
+    const wasCleared = !!current?.clearedAt;
     if (d.review && !wasCleared) {
       await prisma.deal.update({ where: { id: d.dealId }, data: { collectionReview: d.review } });
       stats.flagged += 1;
-    } else if (!d.review && current?.collectionReview?.flaggedBy === 'collection_backfill' && !wasCleared) {
+    } else if (!d.review && current?.flaggedBy === 'collection_backfill' && !wasCleared) {
       // The evidence now resolves cleanly — withdraw the machine's own flag.
       await prisma.deal.update({ where: { id: d.dealId }, data: { collectionReview: null } });
       stats.cleared += 1;
@@ -331,10 +362,19 @@ export async function apply(prisma, decisions, { log = defaultLog } = {}) {
       stats.dealsTouched += 1;
       // ONE timeline entry per deal, not one per document: the deal's history
       // should read "collection was reconstructed", not spam.
+      //
+      // DATED TO THE NEWEST DOCUMENT IT DESCRIBES, not to now. emitTimelineEvent
+      // stamps Deal.lastMeaningfulActivityAt from the ENTRY's timestamp, and the
+      // Deals list orders by that: an undated backfill would rocket every one of
+      // these deals — most of them years old — to the top of the CRM. The stamp
+      // is monotonic (GREATEST), so a correctly backdated entry leaves the deal's
+      // real activity ordering exactly where it was.
+      const entryAt = newestIssuedAt(wrote);
       await emitTimelineEvent(prisma, {
         subjectType: 'deal',
         subjectId: d.dealId,
         kind: 'accounting',
+        ...(entryAt ? { createdAt: entryAt } : {}),
         data: {
           event: 'collection_backfill',
           documents: wrote.map((w) => ({
@@ -351,6 +391,17 @@ export async function apply(prisma, decisions, { log = defaultLog } = {}) {
   }
   log.log(`[backfill] applied: ${JSON.stringify(stats)}`);
   return stats;
+}
+
+// The newest real accounting date among the documents just attached — the
+// honest position in history for the entry that describes them.
+export function newestIssuedAt(docs) {
+  let newest = null;
+  for (const d of docs) {
+    if (!d.issuedAt) continue;
+    if (!newest || d.issuedAt > newest) newest = d.issuedAt;
+  }
+  return newest;
 }
 
 // ── 5. Report ────────────────────────────────────────────────────────────────

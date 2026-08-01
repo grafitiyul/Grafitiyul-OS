@@ -149,23 +149,29 @@ export function createPacer({ delayMs = DEFAULT_DELAY_MS, log = console } = {}) 
   return { call, state };
 }
 
-// Persist a batch of ledger rows. Idempotent by (doctype, docnum): re-running
+// Persist a window's ledger rows. Idempotent by (doctype, docnum): re-running
 // the census refreshes the numbers and never duplicates.
+//
+// Sent as ONE batched transaction rather than a row-at-a-time loop. The census
+// writes ~15,000 rows and the database is reached over a proxy — at a round
+// trip each, the writes, not the provider, become the bottleneck.
 async function upsertLedgerRows(prisma, rows) {
-  let written = 0;
-  for (const row of rows) {
-    const { doctype, docnum, ...rest } = row;
-    await prisma.icountLedgerDoc.upsert({
-      where: { doctype_docnum: { doctype, docnum } },
-      // The census must never clobber the lazily-fetched doc/info enrichment
-      // (docUrl / basedOn) that a later step wrote — those fields are absent
-      // here, so they are simply not part of the update.
-      update: { ...rest, syncedAt: new Date() },
-      create: { doctype, docnum, ...rest },
-    });
-    written += 1;
-  }
-  return written;
+  if (!rows.length) return 0;
+  const now = new Date();
+  await prisma.$transaction(
+    rows.map((row) => {
+      const { doctype, docnum, ...rest } = row;
+      return prisma.icountLedgerDoc.upsert({
+        where: { doctype_docnum: { doctype, docnum } },
+        // The census must never clobber the lazily-fetched doc/info enrichment
+        // (docUrl / basedOn) that a later step wrote — those fields are absent
+        // here, so they are simply not part of the update.
+        update: { ...rest, syncedAt: now },
+        create: { doctype, docnum, ...rest },
+      });
+    }),
+  );
+  return rows.length;
 }
 
 /**
@@ -278,15 +284,24 @@ export async function runCensus(
  */
 export async function fetchLedgerDoc(prisma, doctype, docnum, { pacer, log = console } = {}) {
   const num = String(docnum);
+  // A wrong doctype guess comes back as doc_not_found. That is an EMPTY ANSWER,
+  // not a failure — resolving a bare number means probing several types on
+  // purpose, so it must be absorbed INSIDE the paced call. Letting it reach the
+  // pacer would trip the consecutive-failure ceiling after five type probes and
+  // abandon the run (observed on the first production pass).
+  const read = async () => {
+    try {
+      return await docInfo(doctype, num);
+    } catch (err) {
+      if (/doc_not_found|not_found/i.test(String(err?.reason || ''))) return null;
+      throw err;
+    }
+  };
+
   let info;
   try {
-    info = pacer
-      ? await pacer.call(() => docInfo(doctype, num), `info ${doctype}/${num}`)
-      : await docInfo(doctype, num);
+    info = pacer ? await pacer.call(read, `info ${doctype}/${num}`) : await read();
   } catch (err) {
-    // A wrong doctype guess comes back as doc_not_found — an EMPTY answer, not
-    // an error worth stopping for.
-    if (/doc_not_found|not_found/i.test(String(err?.reason || ''))) return null;
     if (err?.code === 'census_stopped') throw err;
     log.error?.(`[census] doc/info ${doctype}/${num} failed: ${err?.reason || err?.message}`);
     return null;

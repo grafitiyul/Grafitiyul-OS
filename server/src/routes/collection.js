@@ -38,42 +38,51 @@ function evidenceErrorStatus(code) {
   return code === 'not_found' || code === 'file_not_found' ? 404 : 400;
 }
 
+// THE response shape of the Collection panel — built in one place and returned
+// by every handler here, including the writes. A write that answered with a
+// thinner payload than the read would silently blank parts of the panel until
+// the next refresh, which is exactly the kind of drift this module exists to
+// prevent.
+async function collectionPayload(deal) {
+  const [summary, evidence] = await Promise.all([
+    dealCollection(prisma, deal),
+    listEvidence(prisma, deal.id),
+  ]);
+  return {
+    ...summary,
+    paymentMethods: PAYMENT_METHODS,
+    // Manual rows INCLUDING reversed ones: a reversal must stay readable, so a
+    // balance that changed is never unexplained.
+    manualHistory: evidence.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      direction: e.direction,
+      amountMinor: Number(e.amountMinor),
+      currency: e.currency,
+      paidAt: e.paidAt,
+      method: e.method,
+      reference: e.reference,
+      note: e.note,
+      status: e.status,
+      reversedAt: e.reversedAt,
+      reversedByName: e.reversedByName,
+      reversalReason: e.reversalReason,
+      createdAt: e.createdAt,
+      createdByName: e.createdByName,
+      origin: e.origin,
+      file: e.file || null,
+    })),
+  };
+}
+
 export const dealCollectionRouter = Router();
 
-// The Deal גבייה panel: the summary + the manual-evidence history (including
-// reversed rows, which stay visible so a balance change is never unexplained).
 dealCollectionRouter.get(
   '/:id/collection',
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    const [summary, evidence] = await Promise.all([
-      dealCollection(prisma, deal),
-      listEvidence(prisma, deal.id),
-    ]);
-    res.json({
-      ...summary,
-      paymentMethods: PAYMENT_METHODS,
-      manualHistory: evidence.map((e) => ({
-        id: e.id,
-        kind: e.kind,
-        direction: e.direction,
-        amountMinor: Number(e.amountMinor),
-        currency: e.currency,
-        paidAt: e.paidAt,
-        method: e.method,
-        reference: e.reference,
-        note: e.note,
-        status: e.status,
-        reversedAt: e.reversedAt,
-        reversedByName: e.reversedByName,
-        reversalReason: e.reversalReason,
-        createdAt: e.createdAt,
-        createdByName: e.createdByName,
-        origin: e.origin,
-        file: e.file || null,
-      })),
-    });
+    res.json(await collectionPayload(deal));
   }),
 );
 
@@ -97,7 +106,7 @@ dealCollectionRouter.post(
     if (!deal) return res.status(404).json({ error: 'not_found' });
     try {
       const row = await recordEvidence(prisma, deal, req.body || {}, req.adminAuth?.userId || null);
-      res.status(201).json({ id: row.id, ...(await dealCollection(prisma, deal)) });
+      res.status(201).json({ id: row.id, ...(await collectionPayload(deal)) });
     } catch (err) {
       const code = err?.code || 'evidence_failed';
       return res.status(evidenceErrorStatus(code)).json({ error: code });
@@ -113,7 +122,7 @@ dealCollectionRouter.post(
     if (!deal) return res.status(404).json({ error: 'not_found' });
     try {
       await reverseEvidence(prisma, deal, req.params.evidenceId, { reason: req.body?.reason }, req.adminAuth?.userId || null);
-      res.json(await dealCollection(prisma, deal));
+      res.json(await collectionPayload(deal));
     } catch (err) {
       const code = err?.code || 'reverse_failed';
       return res.status(evidenceErrorStatus(code)).json({ error: code });
@@ -129,7 +138,7 @@ dealCollectionRouter.post(
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
     await resolveReview(prisma, deal, { note: req.body?.note }, req.adminAuth?.userId || null);
-    res.json(await dealCollection(prisma, { ...deal, collectionReview: null }));
+    res.json(await collectionPayload({ ...deal, collectionReview: null }));
   }),
 );
 

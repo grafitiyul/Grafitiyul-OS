@@ -15,6 +15,7 @@ import {
   COLLECTION_STATUS_LABELS,
   COLLECTION_STATUS_STYLES,
   EVIDENCE_CLASS_BADGE,
+  REVIEW_GUIDANCE,
 } from '../collection/collectionConfig.js';
 
 // גבייה — the Deal's financial DASHBOARD (not a pricing editor) and the single
@@ -482,6 +483,11 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                   <div className="min-w-0">
                     <div className="text-[12px] font-semibold text-purple-900">הגבייה בעסקה זו דורשת בדיקה</div>
                     <p className="mt-0.5 text-[11.5px] leading-relaxed text-purple-800">{summary.review.reason}</p>
+                    {REVIEW_GUIDANCE[summary.review.code] && (
+                      <p className="mt-1.5 text-[11.5px] leading-relaxed text-purple-700">
+                        {REVIEW_GUIDANCE[summary.review.code]}
+                      </p>
+                    )}
                     {summary.review.details?.problems?.length > 1 && (
                       <p className="mt-1 text-[11px] text-purple-700">
                         ועוד {summary.review.details.problems.length - 1} ממצאים נוספים.
