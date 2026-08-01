@@ -126,6 +126,8 @@ import './control/detectors/index.js';
 // fail loudly at boot, never at 3am when the trigger finally fires.
 import './automations/definitions/index.js';
 import { validateRegistry } from './automations/registry.js';
+import { syncAutomationChanges } from './automations/boot.js';
+import automationsRouter from './routes/automations.js';
 import migrationRouter from './routes/migration.js';
 import legacyCardRouter from './routes/legacyCard.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -472,6 +474,7 @@ app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 // subsystem reports problems into OperationalIssue (server/src/control/);
 // this router serves the dashboard + acknowledge/recheck/server actions.
 app.use('/api/control', requireAdminAuth, controlRouter);
+app.use('/api/automations', requireAdminAuth, automationsRouter);
 
 // Legacy Data Migration (Pipedrive + Airtable → GOS) — admin-only. Slice 1 is
 // FOUNDATION ONLY: a read-only status/health endpoint over the migration

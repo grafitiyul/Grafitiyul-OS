@@ -74,6 +74,12 @@ export default function SettingsHome() {
             description="התראות פנימיות אוטומטיות המנוהלות בקוד — תשלום, הצעת מחיר, שינוי מועד."
           />
           <CategoryCard
+            to="/admin/settings/automations"
+            icon="⚡"
+            title="אוטומציות"
+            description="מרשם האוטומציות — מה רץ, מה תקוע ולמה. אוטומציות שאלונים המפעילות כללי תקשורת."
+          />
+          <CategoryCard
             to="/admin/settings/finance"
             icon="💰"
             title="כספים"

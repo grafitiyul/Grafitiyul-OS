@@ -34,6 +34,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/navigation': { label: 'ניהול התפריט', parent: '/admin/settings' },
   '/admin/settings/communication': { label: 'נוסחים למייל + WhatsApp', parent: '/admin/settings' },
   '/admin/settings/admin-reports': { label: 'דיווחי מנהלים', parent: '/admin/settings' },
+  '/admin/settings/automations': { label: 'אוטומציות', parent: '/admin/settings' },
   '/admin/settings/finance': { label: 'הגדרות כספים', parent: '/admin/settings' },
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
   '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },
@@ -59,6 +60,12 @@ export function resolveNode(pathname, dynamicLabel) {
   const variantMatch = pathname.match(/^(\/admin\/settings\/crm\/products\/[^/]+)\/variant\/[^/]+$/);
   if (variantMatch) {
     return { path: pathname, label: dynamicLabel || 'וריאציה', parent: variantMatch[1] };
+  }
+  // Automation detail (…/automations/AUT-001) — the AUT id is the label when
+  // the caller has not resolved the automation's Hebrew name yet.
+  const autMatch = pathname.match(/^\/admin\/settings\/automations\/(AUT-\d{3,})$/);
+  if (autMatch) {
+    return { path: pathname, label: dynamicLabel || autMatch[1], parent: '/admin/settings/automations' };
   }
   // Communication Center event editor (…/communication/events/<id>).
   if (/^\/admin\/settings\/communication\/events\/[^/]+$/.test(pathname)) {
