@@ -1,80 +1,53 @@
-// THE catalog of action kinds — the generic capability library automations
-// compose from. Adding a CAPABILITY is an entry here plus an executor in
-// actions/; adding an AUTOMATION is never new action code.
+// THE catalog of action kinds — the complete, deliberately narrow list of things
+// an automation may do.
 //
-// This is the project's standing rule (capability before template): a new
-// business need extends a generic capability, it never grows a one-off branch
-// inside a definition.
+// ── The scope boundary (approved 2026-08-01) ─────────────────────────────────
+// TWO kinds. That is the whole vocabulary:
 //
-// ── The hard boundary ────────────────────────────────────────────────────────
-// Automations DECIDE. They never compose customer-facing content.
-//   * customer-facing → 'communication' → the Communication Center owns the
-//     text, the channel, the sending window and the operator's edits;
-//   * internal        → 'admin_report'  → the code catalog owns the layout;
-//   * anything else   → 'task'          → a human acts.
-// This keeps the outbound SSOT intact and honours the standing rule that
-// GOS-composed customer email is never sent without operator review.
+//   'communication' — invoke an existing Communication Center rule
+//   'review_item'   — create a card in Management Tasks for a human to review
+//
+// This is not a starting point to grow from. An earlier draft of this module
+// carried six kinds (task / admin_report / control_issue / timeline_note /
+// state_change) whose only purpose was migrating existing GOS behaviour into a
+// general automation engine. That programme was explicitly declined: coordination
+// reports, tour completion, payroll hooks and the background workers stay owned
+// by their current modules. Re-adding an action kind needs a new decision, not a
+// convenient moment.
+//
+// ── The hard rule ────────────────────────────────────────────────────────────
+// Automations DECIDE; they never compose customer-facing content and never send.
+// The Communication Center owns every outbound message — its text, channel,
+// audience, timing, sending window, versioning and delivery log. An automation
+// only says "this happened, fire your rule".
 //
 // ── Retry ────────────────────────────────────────────────────────────────────
-// The automation runner NEVER retries a decision — a failed decision is a bug
-// or a data problem, and silently retrying hides both. Retry belongs to the
-// TRANSPORT, and each kind below declares the transport that owns it, so the
-// registry can show real retry behaviour instead of a guess.
+// The runner NEVER retries a decision: a failed decision is a bug or a data
+// problem, and silently retrying hides both. Retry belongs to the transport, so
+// each kind names the subsystem that actually owns it.
 
 export const ACTION_KINDS = {
-  task: {
-    kind: 'task',
-    labelHe: 'יצירת משימה',
-    // Which subsystem performs it — the registry links straight there.
-    ownerModule: 'tasks',
-    retryHe: 'אין ניסיון חוזר — יצירת משימה היא כתיבה מקומית שמצליחה או נכשלת מיידית.',
-    // Config keys a definition may set for this kind (validated at boot).
-    configKeys: ['taskTypeKey', 'titleHe', 'dueInDays', 'assignTo', 'priority'],
-  },
-
   communication: {
     kind: 'communication',
     labelHe: 'הפעלת כלל תקשורת',
     ownerModule: 'communication',
-    retryHe: 'מרכז התקשורת אחראי על המשלוח וניסיונות חוזרים (CommunicationDelivery).',
-    // A definition declares only the TRIGGER TYPE. Which messages go out is
-    // the Communication Center's decision, resolved live for the registry.
-    configKeys: ['triggerType', 'triggerRef'],
+    ownerLabelHe: 'מרכז התקשורת',
+    ownerLink: '/admin/settings/communication',
+    retryHe: 'מרכז התקשורת אחראי על המשלוח, חלונות השליחה וניסיונות חוזרים (CommunicationDelivery).',
+    // A definition declares ONLY its own automation trigger type. Which messages
+    // go out, to whom, on which channel and when is the Communication Center's
+    // decision — resolved live for the registry, never copied into the definition.
+    configKeys: [],
   },
 
-  admin_report: {
-    kind: 'admin_report',
-    labelHe: 'דיווח מנהלים',
-    ownerModule: 'adminReports',
-    retryHe: 'דיווחי מנהלים נשלחים מיידית ומנוסים שוב בגיבוי נסיגה (AdminReportDelivery).',
-    configKeys: ['number', 'buildData'],
-  },
-
-  control_issue: {
-    kind: 'control_issue',
-    labelHe: 'פתיחת תקלה בבקרה',
-    ownerModule: 'control',
-    retryHe: 'אין ניסיון חוזר — התקלה נשארת פתוחה עד שהתנאי נעלם או שאדם מטפל בה.',
-    configKeys: ['issueType', 'severity', 'titleHe', 'explanationHe', 'dedupeKey'],
-  },
-
-  timeline_note: {
-    kind: 'timeline_note',
-    labelHe: 'רישום ביומן הפעילות',
-    ownerModule: 'timeline',
-    retryHe: 'אין ניסיון חוזר — רישום מקומי בתוך אותה טרנזקציה.',
-    configKeys: ['subjectType', 'bodyHe', 'kind'],
-  },
-
-  state_change: {
-    kind: 'state_change',
-    labelHe: 'שינוי מצב עסקי',
-    ownerModule: 'domain',
-    retryHe: 'אין ניסיון חוזר — השינוי הוא טרנזקציוני ואידמפוטנטי.',
-    // The ONE escape hatch for adopting existing domain transitions
-    // (completeTour, ensureTourPayroll, expireRegistration …). `handler` names
-    // a whitelisted domain operation — never inline business logic.
-    configKeys: ['handler', 'summaryHe'],
+  review_item: {
+    kind: 'review_item',
+    labelHe: 'יצירת כרטיס למשימות הנהלה',
+    ownerModule: 'reviewItems',
+    ownerLabelHe: 'משימות הנהלה',
+    ownerLink: '/admin/management-tasks',
+    retryHe: 'אין ניסיון חוזר — יצירת הכרטיס אידמפוטנטית לפי dedupeKey, וכרטיס קיים לא נוצר פעמיים.',
+    configKeys: ['reviewKind'],
   },
 };
 

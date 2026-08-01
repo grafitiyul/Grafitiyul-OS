@@ -21,7 +21,7 @@ const baseDef = (over = {}) => ({
   defaultEnabled: true,
   trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination' },
   when: null,
-  actions: [{ kind: 'admin_report', number: 4 }],
+  actions: [{ kind: 'communication' }],
   dependsOn: [],
   idempotency: (ev) => `AUT-001:${ev.id}`,
   ...over,
@@ -123,7 +123,7 @@ test('non-option condition values are left alone', () => {
 test('unknown action kinds and dependency kinds are rejected', () => {
   assert.ok(validateDefinition(baseDef({ actions: [{ kind: 'send_sms' }] }))
     .some((p) => p.startsWith('unknown_action_kind')));
-  assert.ok(validateDefinition(baseDef({ dependsOn: [{ kind: 'external_api' }] }))
+  assert.ok(validateDefinition(baseDef({ dependsOn: [{ kind: 'admin_report', number: 4 }] }))
     .some((p) => p.startsWith('unknown_dependency_kind')));
 });
 
@@ -193,14 +193,14 @@ test('the definition hash ignores prose but catches behaviour', () => {
   })));
 
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ when: { q: 'q_9f3a12bd', op: 'answered' } })));
-  assert.notEqual(definitionHash(a), definitionHash(baseDef({ actions: [{ kind: 'admin_report', number: 5 }] })));
+  assert.notEqual(definitionHash(a), definitionHash(baseDef({ actions: [{ kind: 'review_item', reviewKind: 'x' }] })));
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ defaultEnabled: false })));
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ idempotency: (ev) => `AUT-001:${ev.other}` })));
 });
 
 test('the definition hash is stable across key order and reformatting', () => {
-  const a = baseDef({ dependsOn: [{ kind: 'admin_report', number: 4, severity: 'soft' }] });
-  const b = baseDef({ dependsOn: [{ severity: 'soft', number: 4, kind: 'admin_report' }] });
+  const a = baseDef({ dependsOn: [{ kind: 'communication_trigger', triggerType: 'deal_won', severity: 'soft' }] });
+  const b = baseDef({ dependsOn: [{ severity: 'soft', triggerType: 'deal_won', kind: 'communication_trigger' }] });
   assert.equal(definitionHash(a), definitionHash(b));
 
   const spaced = baseDef({ idempotency: (ev) => `AUT-001:${ev.id}` });

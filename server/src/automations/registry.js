@@ -25,11 +25,10 @@ import { referencedKeys } from '../../../shared/questionnaire/conditions.mjs';
 
 const DEFS = new Map();
 
-export const TRIGGER_KINDS = [
-  'questionnaire_submitted', // a questionnaire submission (the primary case)
-  'domain_event',            // an explicit business event fired from a call site
-  'schedule',                // a daily/interval decision riding an existing tick
-];
+// ONE trigger kind, by approved scope. `domain_event` and `schedule` existed
+// only to adopt existing GOS behaviour into a general engine; that programme was
+// declined, and the workers keep owning their own scheduling.
+export const TRIGGER_KINDS = ['questionnaire_submitted'];
 
 export const CATEGORIES = {
   tours: 'סיורים',
@@ -172,14 +171,25 @@ export function automationsForTrigger({ kind, templateKey = null, purpose = null
   return listAutomations().filter((def) => {
     const t = def.trigger;
     if (t.kind !== kind) return false;
-    if (kind === 'questionnaire_submitted') {
-      if (t.templateKey !== templateKey) return false;
-      if (t.purpose && t.purpose !== purpose) return false;
-      return true;
-    }
-    if (kind === 'domain_event') return t.eventType === eventType;
+    if (t.templateKey !== templateKey) return false;
+    if (t.purpose && t.purpose !== purpose) return false;
     return true;
   });
+}
+
+/**
+ * The Communication Center trigger type an automation fires. ONE derivation,
+ * used by the definition, the runtime, the CC trigger catalog and the registry's
+ * "which rules does this invoke" lookup — so all four can never disagree.
+ */
+export function automationTriggerType(autId) {
+  return `automation:${autId}`;
+}
+
+/** The AUT id behind a communication trigger type, or null if it isn't one. */
+export function autIdFromTriggerType(triggerType) {
+  const m = /^automation:(AUT-\d{3,})$/.exec(String(triggerType || ''));
+  return m ? m[1] : null;
 }
 
 // ── definition drift ─────────────────────────────────────────────────────────

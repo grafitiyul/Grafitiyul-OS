@@ -22,8 +22,6 @@
 // while a template that does not exist at all is 'hard'.
 
 import { prisma } from '../db.js';
-import { reportByNumber } from '../adminReports/registry.js';
-import { issueTypeDef } from '../control/registry.js';
 import { triggerByType } from '../communication/triggers.js';
 
 /** A dependency verdict. `link` is an admin path the UI turns into a deep link. */
@@ -145,58 +143,6 @@ const RESOLVERS = {
     return verdict(true, 'soft', label, `${liveMessages} מסרים פעילים`, link);
   },
 
-  // ── Admin Reports ──────────────────────────────────────────────────────────
-
-  admin_report: async (dep, { db }) => {
-    const report = reportByNumber(dep.number);
-    const label = `דיווח מנהלים #${dep.number}`;
-    const link = '/admin/settings/admin-reports';
-    if (!report) {
-      // The catalog is code — a missing number means the definition points at
-      // a report that no longer exists. Only a code change fixes that.
-      return verdict(false, 'hard', label, `דיווח #${dep.number} אינו קיים בקטלוג`, link);
-    }
-    const cfg = await db.adminReportConfig.findUnique({ where: { reportNumber: Number(dep.number) } });
-    const full = `${label} · ${report.nameHe}`;
-    if (!cfg) return verdict(false, 'soft', full, 'הדיווח לא הוגדר עדיין (לא נבחר יעד)', link);
-    if (!cfg.enabled) return verdict(false, 'soft', full, 'הדיווח מושבת', link);
-    // A guide-audience report addresses a person, so only the sending account
-    // matters; office reports need a destination chat too.
-    const needsChat = report.audience !== 'guides';
-    if (!cfg.waAccountId || (needsChat && !cfg.waChatId)) {
-      return verdict(false, 'soft', full, 'לדיווח אין יעד WhatsApp מלא', link);
-    }
-    return verdict(true, 'soft', full, 'מוגדר ופעיל', link);
-  },
-
-  // ── Tasks / בקרה / environment ─────────────────────────────────────────────
-
-  task_type: async (dep, { db }) => {
-    const label = `סוג משימה "${dep.taskTypeKey}"`;
-    const link = '/admin/settings/crm/task-types';
-    const tt = await db.taskType.findUnique({
-      where: { key: dep.taskTypeKey },
-      select: { nameHe: true, isActive: true },
-    });
-    if (!tt) return verdict(false, 'hard', label, `סוג המשימה "${dep.taskTypeKey}" אינו קיים`, link);
-    if (!tt.isActive) return verdict(false, 'soft', `סוג משימה "${tt.nameHe}"`, 'סוג המשימה אינו פעיל', link);
-    return verdict(true, 'hard', `סוג משימה "${tt.nameHe}"`, 'קיים ופעיל', link);
-  },
-
-  control_issue_type: async (dep) => {
-    const label = `סוג תקלה "${dep.issueType}"`;
-    const link = '/admin/control';
-    return issueTypeDef(dep.issueType)
-      ? verdict(true, 'hard', label, 'רשום במרשם התקלות', link)
-      : verdict(false, 'hard', label, `סוג התקלה "${dep.issueType}" אינו רשום במרשם בקרה`, link);
-  },
-
-  env: async (dep) => {
-    const label = `הגדרת סביבה ${dep.name}`;
-    return process.env[dep.name]
-      ? verdict(true, 'soft', label, 'מוגדרת')
-      : verdict(false, 'soft', label, `משתנה הסביבה ${dep.name} אינו מוגדר`);
-  },
 };
 
 export const DEPENDENCY_KINDS = Object.keys(RESOLVERS);

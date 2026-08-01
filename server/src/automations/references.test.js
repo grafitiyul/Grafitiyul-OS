@@ -17,7 +17,7 @@ const def = (over = {}) => ({
   defaultEnabled: true,
   trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination' },
   when: null,
-  actions: [{ kind: 'timeline_note' }],
+  actions: [{ kind: 'communication' }],
   dependsOn: [],
   idempotency: (e) => e.id,
   ...over,
@@ -43,7 +43,7 @@ test('keys come from BOTH the conditions and the declared dependencies', () => {
     dependsOn: [
       { kind: 'questionnaire_question', templateKey: 'tour_coordination', questionKey: 'q_cccccccc' },
       { kind: 'questionnaire_option', templateKey: 'tour_coordination', questionKey: 'q_dddddddd', optionValue: 'o_22222222' },
-      { kind: 'admin_report', number: 4 },
+      { kind: 'communication_trigger', triggerType: 'deal_won' },
     ],
   }));
 

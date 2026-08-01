@@ -168,70 +168,13 @@ test('an unknown communication trigger type is HARD — only code fixes it', asy
   assert.equal(r.severity, 'hard');
 });
 
-// ── admin_report ─────────────────────────────────────────────────────────────
-
-test('an unconfigured admin report is SOFT with the operator-facing reason', async () => {
-  const r = await resolveDependency({ kind: 'admin_report', number: 4 }, { db: stubDb() });
-  assert.equal(r.ok, false);
-  assert.equal(r.severity, 'soft');
-  assert.match(r.detailHe, /לא הוגדר/);
-});
-
-test('a disabled admin report is SOFT', async () => {
-  const r = await resolveDependency(
-    { kind: 'admin_report', number: 4 },
-    { db: stubDb({ reportConfigs: { 4: { enabled: false, waAccountId: 'a', waChatId: 'c' } } }) },
-  );
-  assert.equal(r.ok, false);
-  assert.match(r.detailHe, /מושבת/);
-});
-
-test('a fully configured admin report resolves ok', async () => {
-  const r = await resolveDependency(
-    { kind: 'admin_report', number: 4 },
-    { db: stubDb({ reportConfigs: { 4: { enabled: true, waAccountId: 'a', waChatId: 'c' } } }) },
-  );
-  assert.equal(r.ok, true);
-});
-
-test('a report number outside the code catalog is HARD', async () => {
-  const r = await resolveDependency({ kind: 'admin_report', number: 9999 }, { db: stubDb() });
-  assert.equal(r.severity, 'hard');
-});
-
-// ── task_type / control_issue_type / env ─────────────────────────────────────
-
-test('a missing task type is HARD; an inactive one is SOFT', async () => {
-  const missing = await resolveDependency({ kind: 'task_type', taskTypeKey: 'follow_up' }, { db: stubDb() });
-  assert.equal(missing.severity, 'hard');
-
-  const inactive = await resolveDependency(
-    { kind: 'task_type', taskTypeKey: 'follow_up' },
-    { db: stubDb({ taskTypes: { follow_up: { nameHe: 'מעקב', isActive: false } } }) },
-  );
-  assert.equal(inactive.ok, false);
-  assert.equal(inactive.severity, 'soft');
-});
-
-test('an unregistered control issue type is HARD', async () => {
-  const r = await resolveDependency({ kind: 'control_issue_type', issueType: 'nope' }, { db: stubDb() });
-  assert.equal(r.ok, false);
-  assert.equal(r.severity, 'hard');
-});
-
-test('a missing env var is SOFT', async () => {
-  const r = await resolveDependency({ kind: 'env', name: 'DEFINITELY_NOT_SET_XYZ' }, { db: stubDb() });
-  assert.equal(r.ok, false);
-  assert.equal(r.severity, 'soft');
-});
-
 // ── contract ─────────────────────────────────────────────────────────────────
 
 test('a definition may escalate soft to hard, but never downgrade hard to soft', async () => {
   // Downgrading a structural break to "waiting" would hide a real fault.
   const escalated = await resolveDependency(
-    { kind: 'admin_report', number: 4, severity: 'hard' },
-    { db: stubDb() },
+    { kind: 'communication_trigger', triggerType: 'deal_won', severity: 'hard' },
+    { db: stubDb({ commEvents: [] }) },
   );
   assert.equal(escalated.severity, 'hard');
 
@@ -246,6 +189,14 @@ test('an unknown dependency kind is reported, not thrown', async () => {
   assert.equal(isKnownDependencyKind('made_up'), false);
   const r = await resolveDependency({ kind: 'made_up' }, { db: stubDb() });
   assert.equal(r.ok, false);
+});
+
+test('out-of-scope dependency kinds stay OUT of the vocabulary', () => {
+  // These were removed with the withdrawn platform programme. Re-adding one is a
+  // scope decision, so it must fail loudly rather than quietly start working.
+  for (const kind of ['admin_report', 'task_type', 'control_issue_type', 'env']) {
+    assert.equal(isKnownDependencyKind(kind), false, `${kind} must not be a dependency kind`);
+  }
 });
 
 test('a resolver that throws degrades to a soft report — the screen never goes down', async () => {
@@ -265,15 +216,15 @@ test('resolveDependencies preserves declaration order', async () => {
   const results = await resolveDependencies(
     {
       dependsOn: [
-        { kind: 'env', name: 'DEFINITELY_NOT_SET_XYZ' },
-        { kind: 'admin_report', number: 4 },
+        { kind: 'communication_trigger', triggerType: 'deal_won' },
+        { kind: 'questionnaire_template', templateKey: 'tour_coordination' },
       ],
     },
-    { db: stubDb() },
+    { db: stubDb({ commEvents: [] }) },
   );
   assert.equal(results.length, 2);
-  assert.equal(results[0].dep.kind, 'env');
-  assert.equal(results[1].dep.kind, 'admin_report');
+  assert.equal(results[0].dep.kind, 'communication_trigger');
+  assert.equal(results[1].dep.kind, 'questionnaire_template');
 });
 
 test('a definition with no dependencies resolves to an empty list', async () => {

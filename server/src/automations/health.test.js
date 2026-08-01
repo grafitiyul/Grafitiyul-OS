@@ -16,7 +16,7 @@ const def = (over = {}) => ({
   defaultEnabled: true,
   trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination' },
   when: null,
-  actions: [{ kind: 'timeline_note' }],
+  actions: [{ kind: 'communication' }],
   dependsOn: [],
   idempotency: (e) => e.id,
   ...over,
@@ -102,7 +102,7 @@ test('a hard dependency failure reports BROKEN with the specific reason', async 
 });
 
 test('a soft dependency failure reports WAITING, not broken', async () => {
-  await withDef(def({ dependsOn: [{ kind: 'admin_report', number: 4 }] }), async () => {
+  await withDef(def({ dependsOn: [{ kind: 'communication_trigger', triggerType: 'deal_won' }] }), async () => {
     const h = await resolveHealth('AUT-001', { db: stubDb() });
     assert.equal(h.status, STATUS.waiting_dependency);
     assert.match(h.reasonHe, /לא הוגדר/);
@@ -160,7 +160,7 @@ test('BROKEN outranks waiting and error when several problems coexist', async ()
   await withDef(
     def({
       dependsOn: [
-        { kind: 'admin_report', number: 4 },
+        { kind: 'communication_trigger', triggerType: 'deal_won' },
         { kind: 'questionnaire_question', templateKey: 'tour_coordination', questionKey: 'q_9f3a12bd' },
       ],
     }),
