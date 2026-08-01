@@ -18,6 +18,7 @@ import { createReviewItem } from './service.js';
 import { TOUR_SUMMARY_KIND, buildSummaryDetails, summaryHeadline } from './kinds/tourSummary.js';
 import { LOGISTICS_KIND, buildLogisticsFindings, logisticsHeadline } from './kinds/logisticsReport.js';
 import { staffName } from '../../../shared/staffName.mjs';
+import { fireAdminReport } from '../adminReports/dispatch.js';
 
 /** The published structure's questions + the option keys marked affirmative. */
 async function loadStructure(versionId, db) {
@@ -144,6 +145,28 @@ export async function reviewItemsForTourSummary(
       dealId: ctx.dealId || null,
       autId,
     }, { db });
+  }
+
+  // Manager report #17 — one per submitted summary, WhatsApp, with a deep link
+  // to the CARD rather than the tour. Fire-and-forget AFTER the cards exist, so
+  // the link always resolves; a reporting failure can never affect the review
+  // inbox itself.
+  if (summary?.created) {
+    const overall = details.find((d) => d.role === 'overall');
+    fireAdminReport({
+      number: 17,
+      idempotencyKey: `summary_submitted:${submission.id}`,
+      dealId: ctx.dealId || null,
+      tourEventId: ctx.tourEventId || null,
+      data: {
+        summaryReview: {
+          ...ctx,
+          overall: overall ? String(overall.value) : null,
+          hasLogistics: !!logistics,
+          reviewItemId: summary.item.id,
+        },
+      },
+    }).catch(() => {});
   }
 
   return { summary, logistics, findingCount: findings.length };

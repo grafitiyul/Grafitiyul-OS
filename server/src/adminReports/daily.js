@@ -72,6 +72,23 @@ export async function runScheduledReport(number, { nowMs = Date.now(), client = 
     return { ran: true, items: items.length, sent: true };
   }
 
+  if (number === 18) {
+    // The review-inbox digest. Derived from the OPEN cards, so a card handled
+    // before 07:00 correctly disappears from the morning email.
+    const items = await collectOpenReviewItems(client);
+    if (!items.length) {
+      await recordEmpty(number, key, report.emptyHe, client);
+      return { ran: true, items: 0, sent: false };
+    }
+    const summaryCount = items.length;
+    const logisticsCount = items.filter((i) => i.hasLogistics).length;
+    await fireAdminReport({
+      number, idempotencyKey: key,
+      data: { aggregate: { items, summaryCount, logisticsCount } },
+    }, log);
+    return { ran: true, items: items.length, sent: true };
+  }
+
   if (number === 7) {
     const items = await collectMissingSummaries({ ...last7DayRange(nowMs), nowMs, client });
     if (!items.length) {
@@ -140,6 +157,36 @@ export async function runScheduledReport(number, { nowMs = Date.now(), client = 
 }
 
 /** Called by the admin-reports worker on every tick. */
+/**
+ * Open review cards, one row per TOUR SUMMARY card, flagged when that tour also
+ * has an open logistics card. Grouping by tour is what makes the email read as
+ * a list of situations rather than a list of rows.
+ */
+export async function collectOpenReviewItems(client = prisma) {
+  const open = await client.reviewItem.findMany({
+    where: { status: 'open' },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+  const logisticsTours = new Set(
+    open.filter((i) => i.kind === 'logistics_report').map((i) => i.tourEventId).filter(Boolean),
+  );
+  return open
+    .filter((i) => i.kind === 'tour_summary')
+    .map((i) => {
+      const d = i.data || {};
+      return {
+        reviewItemId: i.id,
+        guideName: d.guideName || null,
+        customerName: d.customerName || null,
+        orgName: d.orgName || null,
+        tourDate: d.tourDate || null,
+        tourTime: d.tourTime || null,
+        hasLogistics: !!(i.tourEventId && logisticsTours.has(i.tourEventId)),
+      };
+    });
+}
+
 export async function runDueScheduledReports({ nowMs = Date.now(), client = prisma, log = console } = {}) {
   const out = [];
   for (const r of scheduledReports()) {

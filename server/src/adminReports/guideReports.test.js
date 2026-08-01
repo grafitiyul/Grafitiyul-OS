@@ -182,7 +182,7 @@ test('each workflow owns only its own guide notifications', () => {
     assert.ok(r.triggerHe?.length > 10);
   }
   // The office reports stay where they are.
-  assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 17, 18]);
   assert.equal(reportByNumber(1).audience, undefined, 'office reports keep the group destination');
 });
 

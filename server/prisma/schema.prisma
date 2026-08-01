@@ -5800,6 +5800,19 @@ model AdminReportConfig {
   // The report's stable catalog number (registry.js owns the definition).
   reportNumber Int       @id
   enabled      Boolean   @default(true)
+  // whatsapp | email — reports were WhatsApp-only until the manager digest.
+  // Defaulting to whatsapp leaves every existing configured report unchanged.
+  channel      String    @default("whatsapp")
+  // Email destination (channel='email'): the connected Gmail account that
+  // sends, plus the recipient list. `useDefaultRecipient` lets the office switch
+  // the house address off without losing it.
+  emailAccountId      String?
+  emailRecipients     String[] @default([])
+  useDefaultRecipient Boolean  @default(true)
+  // "שלח בשפת המדריך" — when on, a report addressed to a guide renders in that
+  // guide's preferred language, falling back to Hebrew when the report has no
+  // English version. Opt-in per report, so nothing changes until switched on.
+  sendInGuideLanguage Boolean  @default(false)
   // When this report was last switched ON. Per-tour notifications never report
   // an event whose due moment precedes it, so enabling a notification can never
   // back-fire a backlog of messages about tours that already happened.
@@ -5839,6 +5852,12 @@ model AdminReportDelivery {
   recipientPersonRefId String?
   recipientPhone       String?
   recipientName        String?
+  // Which channel actually carried this delivery — the log and the queue stay
+  // honest once reports can go out by email as well as WhatsApp.
+  channel              String  @default("whatsapp")
+  emailAccountId       String?
+  recipientEmail       String?
+  renderedSubject      String?
   destinationLabel     String?
   providerMessageId    String?
   attemptCount         Int       @default(0)

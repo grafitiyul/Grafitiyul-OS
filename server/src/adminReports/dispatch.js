@@ -10,7 +10,8 @@ import { loadTriggerContext } from '../communication/context.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { phoneToJid } from '../whatsapp/send.js';
 import { reserveSendSlot } from '../whatsapp/sendPace.js';
-import { reportByNumber, renderReport } from './registry.js';
+import { reportByNumber, renderReport, renderReportSubject, reportChannel } from './registry.js';
+import { deliverReportEmail, resolveEmailRecipients } from './emailDelivery.js';
 import { checkSendAllowed, audienceKindFromReport } from '../communication/sendingPolicy.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
@@ -59,7 +60,14 @@ export async function fireAdminReport(
     const ctx = await loadTriggerContext({ dealId, sessionId, tourEventId });
     Object.assign(ctx, data || {});
     if (recipient) ctx.recipient = recipient;
-    const renderedText = renderReport(number, ctx);
+    // Language. Guide-audience reports may follow the guide's own preferred
+    // language when the office enables it; manager reports stay Hebrew unless
+    // the same switch is turned on for them. Falls back to Hebrew whenever the
+    // report has no English version, so an untranslated report still arrives.
+    const lang = config?.sendInGuideLanguage
+      ? (recipient?.preferredLanguage || 'he')
+      : 'he';
+    const renderedText = renderReport(number, ctx, lang);
 
     const base = {
       reportNumber: Number(number),
@@ -74,7 +82,10 @@ export async function fireAdminReport(
 
     // Not configured / disabled → an auditable skipped row (the operator can
     // see the report WOULD have fired and what it would have said).
-    const destinationMissing = toPerson ? !config?.waAccountId : !(config?.waAccountId && config?.waChatId);
+    const isEmail = reportChannel(report) === 'email';
+    const destinationMissing = isEmail
+      ? resolveEmailRecipients(config).length === 0
+      : (toPerson ? !config?.waAccountId : !(config?.waAccountId && config?.waChatId));
     if (!config || !config.enabled || destinationMissing) {
       await createDelivery({
         ...base,
@@ -83,7 +94,7 @@ export async function fireAdminReport(
           ? 'הדיווח לא הוגדר עדיין (לא נבחר יעד)'
           : !config.enabled
             ? 'הדיווח מושבת'
-            : toPerson ? 'לא נבחר חשבון שולח' : 'לא הוגדר יעד WhatsApp מלא',
+            : isEmail ? 'לא הוגדרו נמעני אימייל' : toPerson ? 'לא נבחר חשבון שולח' : 'לא הוגדר יעד WhatsApp מלא',
       }, log);
       return { ok: false, reason: 'not_configured' };
     }
@@ -97,6 +108,8 @@ export async function fireAdminReport(
       }, log);
       return { ok: false, reason: 'recipient_unreachable' };
     }
+
+    if (reportChannel(report) === 'email') return fireEmailReport({ report, config, base, ctx }, log);
 
     const row = await createDelivery({
       ...base,
@@ -115,6 +128,34 @@ export async function fireAdminReport(
   }
 }
 
+/**
+ * Email reports fan out to ONE delivery row per recipient, so every address has
+ * its own auditable outcome and its own retry — a bounced manager address must
+ * not hide a successful send to the others.
+ */
+async function fireEmailReport({ report, config, base, ctx }, log) {
+  const recipients = resolveEmailRecipients(config);
+  const subject = renderReportSubject(report.number, ctx);
+  let created = 0;
+  for (const email of recipients) {
+    const row = await createDelivery({
+      ...base,
+      channel: 'email',
+      status: 'pending',
+      emailAccountId: config.emailAccountId || null,
+      recipientEmail: email,
+      renderedSubject: subject,
+      destinationLabel: email,
+      // One row per (business event × recipient).
+      idempotencyKey: `${base.idempotencyKey}:${email}`,
+    }, log);
+    if (!row) continue; // idempotency hit — already sent to this address
+    created++;
+    await sendDelivery(row, log);
+  }
+  return { ok: created > 0, reason: created ? undefined : 'duplicate' };
+}
+
 async function createDelivery(data, log) {
   try {
     return await prisma.adminReportDelivery.create({ data });
@@ -130,6 +171,10 @@ async function createDelivery(data, log) {
  * the FROZEN renderedText — a retry re-sends exactly what was reported.
  */
 export async function sendDelivery(row, log = console) {
+  // Email deliveries have their own transport; everything else goes to the
+  // WhatsApp bridge exactly as before.
+  if (row.channel === 'email') return deliverReportEmail(row, log);
+
   // Per-person delivery (guide-audience report): the destination is the frozen
   // phone, normalised by the canonical phoneToJid. No chat row is involved.
   if (!row.waChatId && row.recipientPhone) {

@@ -46,6 +46,15 @@ export const GUIDE_ASSIGNMENT_SELECT = {
   personRef: {
     select: {
       id: true, displayName: true, phone: true, portalToken: true, portalEnabled: true,
+      // GOS-owned name + language. Carried on every guide read so a report or a
+      // form can address this person correctly without a second query.
+      profile: {
+        select: {
+          firstNameHe: true, lastNameHe: true,
+          firstNameEn: true, lastNameEn: true,
+          preferredLanguage: true,
+        },
+      },
     },
   },
 };

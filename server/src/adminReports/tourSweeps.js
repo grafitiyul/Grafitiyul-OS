@@ -22,6 +22,7 @@ import { guideTourUrl } from '../tours/guidePortal/links.js';
 import { COORDINATION_LEAD_DAYS, DONE_STATUSES } from './coordination.js';
 import { fireAdminReport } from './dispatch.js';
 import { openTourParticipants, tourNotificationFacts } from './tourFacts.js';
+import { staffLanguage } from '../../../shared/staffName.mjs';
 
 /** The hour guide notifications go out on their chosen calendar date. */
 export const GUIDE_SEND_HOUR = 8;
@@ -94,6 +95,11 @@ const recipientOf = (a) => ({
   phone: a.personRef?.phone || null,
   name: guideFullName(a),
   firstName: guideFirstName(a),
+  // Carried so a report configured with "send in guide language" can render in
+  // this guide's own language. Hebrew unless the person explicitly chose
+  // otherwise, and the renderer falls back to Hebrew anyway when a report has
+  // no English version.
+  preferredLanguage: staffLanguage(a.personRef),
 });
 
 // ── Notification #12/#13: the coordination call ──────────────────────────────

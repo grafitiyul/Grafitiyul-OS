@@ -21,6 +21,7 @@ import { contactFullName } from '../communication/context.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 import { GUIDE_REPORTS } from './guideReports.js';
+import { REVIEW_REPORTS } from './reviewReports.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -459,6 +460,10 @@ REPORTS.push(
 // Reports screen. `group` is what routes them; 'office' is the default.
 REPORTS.push(...GUIDE_REPORTS);
 
+// Review-inbox reports (#17 per summary, #18 the daily digest email). Same
+// catalog, same renderer contract — the email one simply also renders a subject.
+REPORTS.push(...REVIEW_REPORTS);
+
 export function reportByNumber(number) {
   return REPORTS.find((r) => r.number === Number(number)) || null;
 }
@@ -481,10 +486,29 @@ export function scheduledReports() {
   return REPORTS.filter((r) => r.schedule);
 }
 
+/** The channel a report goes out on. WhatsApp unless the report says otherwise. */
+export function reportChannel(report) {
+  return report?.channel === 'email' ? 'email' : 'whatsapp';
+}
+
+/** Rendered subject for email reports (null for WhatsApp ones). */
+export function renderReportSubject(number, ctx, lang = 'he') {
+  const report = reportByNumber(number);
+  if (lang === 'en' && typeof report?.renderSubjectEn === 'function') return report.renderSubjectEn(ctx || {});
+  if (!report?.renderSubject) return null;
+  return report.renderSubject(ctx || {});
+}
+
 /** Render a report from a context — the ONE renderer, used everywhere. */
-export function renderReport(number, ctx) {
+export function renderReport(number, ctx, lang = 'he') {
   const report = reportByNumber(number);
   if (!report) return null;
+  // BILINGUAL: a report may declare renderEn beside render. Reports stay
+  // CODE-DEFINED (the deliberate exception documented at the top of this file);
+  // English is a second render function, not a second definition and not
+  // editable database content. A report with no English falls back to Hebrew
+  // rather than sending a blank — an untranslated report must still arrive.
+  if (lang === 'en' && typeof report.renderEn === 'function') return report.renderEn(ctx || {});
   return report.render(ctx || {});
 }
 
@@ -493,4 +517,26 @@ export function renderReportSample(number) {
   const report = reportByNumber(number);
   if (!report) return null;
   return report.render(report.sample());
+}
+
+/** Does this report have an English version? (drives the settings screen.) */
+export function hasEnglish(report) {
+  return typeof report?.renderEn === 'function';
+}
+
+/**
+ * Both languages of a report's preview, for the side-by-side settings view.
+ * Rendered through the SAME functions production uses, from the report's own
+ * realistic sample — so what an author reviews is what will actually go out.
+ */
+export function renderReportBoth(number) {
+  const report = reportByNumber(number);
+  if (!report) return null;
+  const ctx = report.sample();
+  return {
+    he: report.render(ctx),
+    en: hasEnglish(report) ? report.renderEn(ctx) : null,
+    subjectHe: report.renderSubject ? report.renderSubject(ctx) : null,
+    subjectEn: report.renderSubjectEn ? report.renderSubjectEn(ctx) : null,
+  };
 }
