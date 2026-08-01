@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import { ALLOCATED, RETIRED, AUT_ID_PATTERN, isAllocated, isRetired } from './ledger.js';
 import { isKnownActionKind } from './actionKinds.js';
 import { isKnownDependencyKind } from './dependencies.js';
+import { registerDerivedTrigger, AUTOMATION_CATEGORY } from '../communication/triggerCatalog.js';
 import { referencedKeys } from '../../../shared/questionnaire/conditions.mjs';
 
 const DEFS = new Map();
@@ -51,6 +52,23 @@ export function registerAutomation(def) {
   }
   if (DEFS.has(def.id)) throw new Error(`automation already registered: ${def.id}`);
   DEFS.set(def.id, Object.freeze({ ...def }));
+
+  // The bridge: this automation is now a trigger the Communication Center can be
+  // configured against. Contexts are the existing business branches, so
+  // variables, documents and recipient resolution work unchanged — an automation
+  // trigger is not a special case anywhere downstream.
+  registerDerivedTrigger({
+    type: automationTriggerType(def.id),
+    labelHe: `${def.id} · ${def.nameHe}`,
+    category: AUTOMATION_CATEGORY,
+    kind: 'event',
+    hintHe: def.descriptionHe,
+    contexts: def.trigger?.contexts || ['deal', 'contact', 'org', 'tour'],
+    // A questionnaire submission is a past-tense fact: "3 days before the tour"
+    // is meaningless for it, so trigger_time is the only sane anchor.
+    anchors: ['trigger_time'],
+    autId: def.id,
+  });
   return def;
 }
 

@@ -45,10 +45,15 @@ import { sendWhatsAppText, phoneToJid } from '../whatsapp/send.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { sendCrmEmail } from '../email/simpleSend.js';
 import {
-  TRIGGERS, TRIGGER_TYPES, TIMING_UNITS, TIMING_MODES, ANCHOR_TYPES,
-  EVENT_STATUSES, CHANNELS, AUDIENCE_TYPES, triggerByType,
-  CATEGORY_LABELS, KIND_LABELS,
+  TIMING_UNITS, TIMING_MODES, ANCHOR_TYPES,
+  EVENT_STATUSES, CHANNELS, AUDIENCE_TYPES,
 } from '../communication/triggers.js';
+// The COMPOSED catalog — built-in triggers plus one per registered automation.
+// Reading the static list here would hide automation triggers from the picker
+// and reject them as invalid on save.
+import {
+  allTriggers, allTriggerTypes, triggerByType, CATEGORY_LABELS, KIND_LABELS,
+} from '../communication/triggerCatalog.js';
 import { processTrigger } from '../communication/engine.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { requireAdminUser } from '../auth.js';
@@ -98,8 +103,8 @@ router.get('/meta', handle(async (_req, res) => {
     }
   }
   res.json({
-    triggers: TRIGGERS.map(({ type, labelHe, contexts, anchors, category, kind, hintHe }) => ({
-      type, labelHe, contexts, anchors, category, kind, hintHe,
+    triggers: allTriggers().map(({ type, labelHe, contexts, anchors, category, kind, hintHe, autId }) => ({
+      type, labelHe, contexts, anchors, category, kind, hintHe, autId: autId || null,
     })),
     triggerCategories: CATEGORY_LABELS,
     triggerKinds: KIND_LABELS,
@@ -218,7 +223,7 @@ const EVENT_FIELDS = (b) => ({
 });
 
 function validateEventInput(b) {
-  if (b.triggerType !== undefined && !TRIGGER_TYPES.includes(b.triggerType)) return 'invalid_trigger';
+  if (b.triggerType !== undefined && !allTriggerTypes().includes(b.triggerType)) return 'invalid_trigger';
   if (b.anchorType !== undefined && !ANCHOR_TYPES.includes(b.anchorType)) return 'invalid_anchor';
   if (b.timingMode !== undefined && !TIMING_MODES.includes(b.timingMode)) return 'invalid_timing_mode';
   if (b.timingUnit !== undefined && b.timingUnit != null && !TIMING_UNITS.includes(b.timingUnit)) return 'invalid_timing_unit';
@@ -229,7 +234,7 @@ function validateEventInput(b) {
 router.post('/events', handle(async (req, res) => {
   const b = req.body || {};
   if (!String(b.internalName || '').trim()) return res.status(400).json({ error: 'name_required' });
-  if (!TRIGGER_TYPES.includes(b.triggerType)) return res.status(400).json({ error: 'invalid_trigger' });
+  if (!allTriggerTypes().includes(b.triggerType)) return res.status(400).json({ error: 'invalid_trigger' });
   const err = validateEventInput(b);
   if (err) return res.status(400).json({ error: err });
   const event = await prisma.communicationEvent.create({

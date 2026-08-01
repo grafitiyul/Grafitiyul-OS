@@ -5,7 +5,11 @@
 
 import { prisma } from '../db.js';
 import { bridgeUrlMap } from '../whatsapp/bridgeClient.js';
-import { triggerByType, CHANNELS, AUDIENCE_TYPES } from './triggers.js';
+import { CHANNELS, AUDIENCE_TYPES } from './triggers.js';
+// Composed catalog: built-in triggers PLUS automation-derived ones. Importing
+// triggerByType from triggers.js here would make every automation trigger look
+// invalid at publish/activation time.
+import { triggerByType } from './triggerCatalog.js';
 import { variableByKey, extractTokens } from './variables.js';
 import { documentKind } from './documents.js';
 

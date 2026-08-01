@@ -22,7 +22,7 @@
 // while a template that does not exist at all is 'hard'.
 
 import { prisma } from '../db.js';
-import { triggerByType } from '../communication/triggers.js';
+import { triggerByType } from '../communication/triggerCatalog.js';
 
 /** A dependency verdict. `link` is an admin path the UI turns into a deep link. */
 const verdict = (ok, severity, labelHe, detailHe, link = null) =>
