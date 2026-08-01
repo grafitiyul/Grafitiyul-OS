@@ -755,6 +755,15 @@ app.listen(port, () => {
     .then(({ startDedupeRacedTourSlots }) => startDedupeRacedTourSlots(prisma, console))
     .catch((e) => console.warn('[maintenance] raced-slot dedupe failed:', e?.message));
 
+  // One-time VAT repair of Deal #26354: the migration stored the agreed
+  // ₪300-including-VAT as ₪300 EXCLUDING VAT, so the Builder showed ₪354
+  // against a ₪300 deal. Fixed through the canonical order-level vatMode;
+  // refuses to write unless the result lands exactly on Deal.valueMinor, and
+  // reports 'already_repaired' on every subsequent boot.
+  import('./maintenance/repairDeal26354Vat.js')
+    .then(({ repairDeal26354Vat }) => repairDeal26354Vat(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] deal 26354 VAT repair failed:', e?.message));
+
   // Durable one-time backfill: legacy org finance scalars → canonical finance
   // Contacts (phone/email identity matching, membership link, designation,
   // timeline). Idempotent; summary lands on the MaintenanceJob row.
