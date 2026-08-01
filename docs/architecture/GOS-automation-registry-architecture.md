@@ -1,11 +1,16 @@
 # GOS Automation Registry — Architecture Proposal
 
 **Date:** 2026-08-01
-**Status:** APPROVED 2026-08-01 with owner amendments (§12). Implementation proceeding
-by slice.
-**Scope:** canonical AutomationDefinition architecture, stable AUT ids, question/option
-key management, one-source-of-truth runtime + registry, live operational health,
-adoption plan for existing behaviour, implementation slices.
+**Status:** SCOPE REDUCED 2026-08-01 by the owner (§13). Slices 0–1 shipped (`8c3678d`).
+The platform-wide adoption programme in §6.1 and slices 4–5 are **WITHDRAWN** —
+not deferred, not approved.
+**Scope (current):** questionnaire-answer-triggered messages via the existing
+Communication Center, stable key protection, and a small read-only registry with
+permanent AUT ids. Nothing else.
+
+> **Read §13 first.** Sections 6.1 and 9 below describe a larger programme that was
+> explicitly rejected. They are kept only as a record of what was considered and
+> declined, so the decision is not silently re-litigated later. §13 is the live plan.
 
 ---
 
@@ -442,7 +447,13 @@ Three verdicts: **NATIVE** (becomes an AutomationDefinition, adopted from existi
 **PROJECTED** (stays owned by its subsystem; the registry shows it live via a read-only
 provider), **INFRASTRUCTURE** (not an automation — stays out).
 
-### 6.1 NATIVE — adopt as AutomationDefinitions
+### 6.1 NATIVE — adopt as AutomationDefinitions  ⛔ WITHDRAWN 2026-08-01
+
+> **This table is not a plan.** The owner declined to migrate existing coordination
+> reports, tour completion, payroll hooks or background workers into a new engine.
+> Those behaviours stay exactly where they are, owned by their current modules.
+> The list survives only so the decision is on record. Adopting any row requires a
+> new, explicit approval.
 
 | Proposed | Behaviour | Today | Why native |
 |---|---|---|---|
@@ -676,9 +687,10 @@ No definition field is editable from the UI — that is what keeps §7.2 true.
 
 ---
 
-## 9. Implementation slices
+## 9. Implementation slices  ⚠ SUPERSEDED BY §13
 
-Each slice is independently shippable and independently valuable.
+> Slices 0–1 shipped as written. Slices 2 and 3 are **replaced** by the smaller
+> §13 plan; slices 4–5 are **withdrawn**. Kept for the record only.
 
 | Slice | Scope | Deploy risk |
 |---|---|---|
@@ -751,3 +763,137 @@ Recorded verbatim in effect; the sections above are already updated.
    documentation layer that can drift from the executing implementation.
 
 **Approved for implementation by slice.**
+
+---
+
+## 13. Scope reduction — 2026-08-01 (THE LIVE PLAN)
+
+The architecture above was correct but the *programme* around it was not. It grew
+into a platform-wide automation runtime and a migration of existing behaviour, which
+is not what was asked for. That is withdrawn.
+
+### 13.1 The actual requirement
+
+Certain questions in **שיחת תיאום** and **סיכום סיור** should trigger a specific
+email or WhatsApp message. That is the whole thing.
+
+- The trigger uses the stable `Question.key` / `Option.key`, never visible text.
+- Renaming, rewording or reordering a question must never break an automation.
+- The outbound message stays in the **Communication Center**. No second messaging system.
+- A small read-only registry in Settings gives each automation a permanent id, so
+  "change AUT-001" is a complete instruction later.
+
+### 13.2 Explicitly out of scope
+
+Not deferred — **out**, until separately approved:
+
+- moving coordination reports (#4/#5), tour completion, payroll hooks, held-expiry,
+  open-tour generation, WON fan-out or any other existing behaviour into this engine;
+- `domain_event` and `schedule` trigger kinds (they exist only to adopt workers);
+- action kinds beyond invoking a Communication Center rule;
+- projections of Communication Center / Admin Reports / בקרה into the registry;
+- a בקרה detector for automation health;
+- any automation composing message content itself.
+
+### 13.3 What shipped in 0–1, kept or trimmed
+
+Kept — each is directly required by the small use case:
+
+| Kept | Why it is required |
+|---|---|
+| `automationFlag` + publish/delete guards | requirements 7 and 8 — **already done** |
+| `ledger.js` (append-only AUT ids) | requirement 6 |
+| `registry.js` (definition + boot validation, key-only conditions) | requirements 1, 2, 6 |
+| `references.js` | powers the guards + the builder panel |
+| `dependencies.js` — the questionnaire and communication resolvers only | requirement 8 + dependency visibility |
+| `health.js` | requirement 5 (visible error state) |
+| `AutomationState` / `AutomationRun` / `AutomationChange` | requirements 4, 5, 6 |
+| Builder key panel + AUT links | requirements 7, 8 |
+
+**To trim (slice 2a)** — surface that exists only to serve the withdrawn programme,
+and whose presence would quietly invite it back:
+
+- `actionKinds.js` → keep **`communication`** only. Delete `task`, `admin_report`,
+  `control_issue`, `timeline_note`, and especially **`state_change`**, whose
+  `handler` field was the adoption vehicle for existing domain logic.
+- `dependencies.js` → keep `questionnaire_template`, `questionnaire_question`,
+  `questionnaire_option`, `communication_trigger`. Delete `admin_report`,
+  `task_type`, `control_issue_type`, `env` (and their tests).
+- `registry.js` → `TRIGGER_KINDS` becomes `['questionnaire_submitted']` only.
+
+This is a deletion-only change: nothing executes today, so it cannot regress
+behaviour. It takes the codebase from "a platform waiting for consumers" to "the
+one thing that was asked for".
+
+### 13.4 The smallest next slice (proposed)
+
+Requirements 7 and 8 are already live. What remains:
+
+**2a — Trim** (above). Deletion only.
+
+**2b — The trigger bridge.** One idea, and it is what keeps this small:
+
+> A registered automation appears in the Communication Center's trigger picker.
+
+`communication/triggers.js` today exports a static `TRIGGERS` array consumed by
+exactly three places: the meta endpoint that feeds the picker, `triggerByType`
+validation, and `TRIGGER_TYPES.includes()` in the routes. Appending one derived
+entry per registered automation — type `automation:AUT-001`, label
+`אוטומציה · AUT-001 · <name>`, its own category — means:
+
+- the operator builds the message in the Communication Center **exactly as today**:
+  channel, audience, timing, sending window, variables, versioning, delivery log;
+- the automation's only action is *"fire trigger `automation:AUT-001`"*;
+- the registry's "which communication rules does this invoke" resolves by querying
+  `CommunicationEvent WHERE triggerType = 'automation:AUT-001'` — live, no drift.
+
+No new messaging machinery, no second engine, no new delivery/retry path.
+Contexts declared as `['deal','contact','org','tour']` — all existing branches, so
+variables and documents work unchanged.
+
+**2c — The minimal runtime.** `runtime.js`, roughly 120 lines:
+
+```
+submitSubmission()  →  after the transaction commits, fire-and-forget
+      ↓
+automationsForTrigger({ kind:'questionnaire_submitted', templateKey, purpose })
+      ↓ per matching definition
+  1. enabled?                     → no ⇒ nothing (no run row)
+  2. AutomationRun.create({ idempotencyKey: `AUT-001:${submissionId}` })
+                                  → P2002 ⇒ stop. THIS is requirement 4.
+  3. evaluate `when` against the FROZEN answers, by key
+                                  → no match ⇒ status 'skipped' + Hebrew reason
+  4. fireCommunicationTrigger({ type:'automation:AUT-001', dealId, tourEventId,
+                                triggerRef: submissionId })
+  5. finalise the run row
+```
+
+ONE hook, in `submitSubmission` after the transaction — subject-agnostic, so both
+adapters (booking / tour_event) are covered without touching either. Failures are
+recorded and never propagate into the submission.
+
+`firstSubmitOnly` defaults true: an edited answer is not a new event. Because the
+idempotency key is the submission id, re-submitting the same form can never send twice.
+
+**2d — Read-only registry screen.** `הגדרות → אוטומציות`. List (id, name, status,
+questionnaire, communication rules invoked, last run, run count, errors) and a detail
+page: dependencies with live status, the answer condition in plain Hebrew, the
+communication rules it invokes with their `#N` numbers, and the last 50 runs with
+skip/failure reasons. Enable/disable and copy-id are the only controls.
+
+**2e — The first real automation.** You name the question, the answer, and which
+message. I allocate `AUT-001`, write one definition file, and wire nothing else.
+
+Slices 2a–2d are the foundation for *any* such automation; 2e is one per request
+afterwards, with no new infrastructure.
+
+### 13.5 What this deliberately does not give you
+
+- No way for an automation to create a task, raise a בקרה issue, or change business
+  state. Only "send through the Communication Center".
+- No scheduled or domain-event automations — questionnaire submissions only.
+- Existing behaviours keep working exactly as they do now, untouched and unregistered.
+  The registry will therefore **not** be a complete picture of every automated
+  behaviour in GOS, and the screen must say so rather than imply otherwise.
+
+Each of those is a deliberate no, reversible by an explicit decision later.
