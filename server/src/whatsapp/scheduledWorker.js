@@ -31,6 +31,7 @@ import { callBridge, bridgeUrlMap } from './bridgeClient.js';
 import { markTaskSentByScheduled } from '../tasks/taskService.js';
 import { reserveSendSlot } from './sendPace.js';
 import { getObjectStream } from '../r2.js';
+import { checkSendAllowed, audienceKindFromScheduledMessage } from '../communication/sendingPolicy.js';
 
 const TICK_MS = 60_000;
 // Pacing is no longer this worker's business — whatsapp/sendPace.js owns the
@@ -136,6 +137,51 @@ async function deliverRow(row, jid) {
   return externalMessageId;
 }
 
+/**
+ * Expire only rows that are overdue for NO legitimate reason.
+ *
+ * The old rule flipped every pending row older than 2h to 'skipped'. That was
+ * defensible when nothing could legitimately hold a message back, but a sending
+ * window can — and a provider outage plus a window would silently delete work.
+ *
+ * A row whose window is currently closed is stamped with its wait reason and
+ * next opening and LEFT PENDING. Only rows the window would allow right now,
+ * yet are still sitting unsent past the cutoff, are genuinely stale.
+ */
+export async function expireTrulyStale(now, staleCutoff, log = console, { db = prisma } = {}) {
+  const overdue = await db.whatsAppScheduledMessage.findMany({
+    where: { status: 'pending', scheduledAt: { lt: staleCutoff } },
+    select: { id: true, personRefId: true },
+  });
+  let expired = 0;
+  for (const row of overdue) {
+    const check = await checkSendAllowed({
+      audienceKind: audienceKindFromScheduledMessage(row),
+      channel: 'whatsapp',
+      atMs: now.getTime(),
+    }, { db });
+
+    if (check.allowed) {
+      await db.whatsAppScheduledMessage.updateMany({
+        where: { id: row.id, status: 'pending' },
+        data: { status: 'skipped', failureReason: STALE_REASON, waitReason: null, effectiveAt: null },
+      });
+      expired++;
+      continue;
+    }
+    // Held by a window — keep it queued and say so.
+    await db.whatsAppScheduledMessage.updateMany({
+      where: { id: row.id, status: 'pending' },
+      data: {
+        waitReason: check.reason,
+        effectiveAt: check.nextAt ? new Date(check.nextAt) : null,
+      },
+    });
+  }
+  if (expired) log.warn?.(`[whatsapp-scheduled] expired ${expired} genuinely stale row(s)`);
+  return { expired, held: overdue.length - expired };
+}
+
 async function tick(log) {
   const now = new Date();
   const claimCutoff = new Date(now.getTime() - CLAIM_TTL_MS);
@@ -159,28 +205,46 @@ async function tick(log) {
     });
   }
 
-  // 0b. stale expiry — honesty over late surprises.
-  await prisma.whatsAppScheduledMessage.updateMany({
-    where: { status: 'pending', scheduledAt: { lt: staleCutoff } },
-    data: { status: 'skipped', failureReason: STALE_REASON },
-  });
+  // 0b. Overdue rows. A message is only STALE if nothing legitimate was holding
+  // it back. If a sending window is what is holding it, it WAITS: an overnight
+  // provider outage must never silently delete a backlog, and that backlog must
+  // release at the next legitimate opening rather than at 03:00.
+  await expireTrulyStale(now, staleCutoff, log);
 
-  // 1. due candidates.
+  // 1. due candidates. No lower bound on scheduledAt any more: a row held by a
+  // window may legitimately be far past its original time, and excluding it
+  // here is what used to make an outage backlog unrecoverable.
   const candidates = await prisma.whatsAppScheduledMessage.findMany({
     where: {
       status: 'pending',
-      scheduledAt: { lte: now, gte: staleCutoff },
+      scheduledAt: { lte: now },
       OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
       AND: [{ OR: [{ claimedAt: null }, { claimedAt: { lt: claimCutoff } }] }],
     },
     orderBy: { scheduledAt: 'asc' },
     take: TICK_BATCH,
-    select: { id: true },
+    select: { id: true, personRefId: true },
   });
 
   let sent = 0;
   for (let i = 0; i < candidates.length; i++) {
     const { id } = candidates[i];
+
+    // 1b. Sending window. Checked BEFORE claiming so a held message is never
+    // marked 'sending', and re-checked every tick so a window edit made while a
+    // message waits is honoured. The row stays pending with a visible reason.
+    const gate = await checkSendAllowed({
+      audienceKind: audienceKindFromScheduledMessage(candidates[i]),
+      channel: 'whatsapp',
+      atMs: now.getTime(),
+    });
+    if (!gate.allowed) {
+      await prisma.whatsAppScheduledMessage.updateMany({
+        where: { id, status: 'pending' },
+        data: { waitReason: gate.reason, effectiveAt: gate.nextAt ? new Date(gate.nextAt) : null },
+      });
+      continue;
+    }
 
     // 2. atomic claim — losers see count 0.
     const claimed = await prisma.whatsAppScheduledMessage.updateMany({
@@ -227,6 +291,9 @@ async function tick(log) {
           sentAt: new Date(),
           externalMessageId,
           failureReason: null,
+          // A sent row is no longer waiting for anything.
+          waitReason: null,
+          effectiveAt: null,
           claimedAt: null,
           claimedBy: null,
         },

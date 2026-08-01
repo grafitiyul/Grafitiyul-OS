@@ -11,6 +11,7 @@ import { callBridge } from '../whatsapp/bridgeClient.js';
 import { phoneToJid } from '../whatsapp/send.js';
 import { reserveSendSlot } from '../whatsapp/sendPace.js';
 import { reportByNumber, renderReport } from './registry.js';
+import { checkSendAllowed, audienceKindFromReport } from '../communication/sendingPolicy.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
 export async function reportConfig(number) {
@@ -165,8 +166,40 @@ export async function sendDelivery(row, log = console) {
   return deliverText(row, chat.externalChatId, log);
 }
 
+// Bridge/connection problems are NOT the report's fault. Deferring on these
+// preserves the row without burning a real attempt — the same contract the
+// WhatsApp and email schedulers already had. Before this, a day-long outage
+// could exhaust the 6-attempt ladder and lose internal reports permanently.
+const CONNECTION_CODES = new Set([
+  'whatsapp_not_connected', 'bridge_not_configured', 'bridge_unreachable',
+  'send_timeout', 'bridge_auth_failed',
+]);
+const CONNECTION_DEFER_MS = 60_000;
+
 /** Send the FROZEN text to a resolved JID and record the outcome. */
 async function deliverText(row, jid, log = console) {
+  // Sending window. Internal reports follow the manager policy unless the
+  // report addresses a guide. A held report WAITS with a visible reason — an
+  // overnight backlog must not land at 03:00.
+  const report = reportByNumber(row.reportNumber);
+  const gate = await checkSendAllowed({
+    audienceKind: audienceKindFromReport(report),
+    channel: 'whatsapp',
+    atMs: Date.now(),
+  });
+  if (!gate.allowed) {
+    await prisma.adminReportDelivery.update({
+      where: { id: row.id },
+      data: {
+        status: 'pending',
+        waitReason: gate.reason,
+        effectiveAt: gate.nextAt ? new Date(gate.nextAt) : null,
+        nextRetryAt: gate.nextAt ? new Date(gate.nextAt) : new Date(Date.now() + 15 * 60_000),
+      },
+    });
+    return { ok: false, held: true };
+  }
+
   try {
     // Central anti-burst pacing. Manager reports used to be the worst offender:
     // this loop had no spacing at all and fired every due delivery back to back.
@@ -190,12 +223,32 @@ async function deliverText(row, jid, log = console) {
         providerMessageId: data?.externalMessageId ?? null,
         lastError: null,
         nextRetryAt: null,
+        waitReason: null,
+        effectiveAt: null,
       },
     });
     log.info?.(`[admin-reports] sent #${row.reportNumber} delivery=${row.id}`);
     return { ok: true };
   } catch (err) {
     const code = err?.data?.error || err?.code || 'send_failed';
+
+    // Provider unreachable → defer WITHOUT consuming an attempt. The message is
+    // preserved and retried; only real send failures walk the ladder.
+    if (CONNECTION_CODES.has(code)) {
+      await prisma.adminReportDelivery.update({
+        where: { id: row.id },
+        data: {
+          status: 'pending',
+          connectionDeferredCount: { increment: 1 },
+          lastError: String(code).slice(0, 200),
+          waitReason: 'החיבור ל-WhatsApp אינו זמין — הדיווח ממתין וישלח אוטומטית עם חזרת החיבור',
+          nextRetryAt: new Date(Date.now() + CONNECTION_DEFER_MS),
+        },
+      });
+      log.warn?.(`[admin-reports] deferred #${row.reportNumber} (${code}) — connection unavailable`);
+      return { ok: false, deferred: true };
+    }
+
     const attempts = row.attemptCount + 1;
     const terminal = attempts >= 6;
     await prisma.adminReportDelivery.update({

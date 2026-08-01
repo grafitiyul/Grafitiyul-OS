@@ -1921,6 +1921,10 @@ model WhatsAppScheduledMessage {
   lastAttemptAt           DateTime?
   nextRetryAt             DateTime?
   connectionDeferredCount Int             @default(0)
+  // Held for a sending window: WAITING, not failing. waitReason is shown
+  // verbatim in the queue; effectiveAt is the next allowed moment.
+  waitReason              String?
+  effectiveAt             DateTime?
   claimedAt               DateTime?
   claimedBy               String?
   sentAt                  DateTime?
@@ -3483,6 +3487,9 @@ model ScheduledEmail {
   // Gmail connection unhealthy at send time: the row is PRESERVED and retried
   // without burning a real attempt (mirrors the WhatsApp connection-deferral).
   connectionDeferredCount Int       @default(0)
+  // Held for a sending window (same contract as the WhatsApp queue).
+  waitReason              String?
+  effectiveAt             DateTime?
   // Claim guard — exactly-once delivery across overlapping ticks.
   claimedAt               DateTime?
   claimedBy               String?
@@ -5734,6 +5741,7 @@ model CommunicationSendingWindow {
 
   messages   CommunicationMessage[]
   exceptions CommunicationWindowException[]
+  policies   SendingWindowPolicy[]
 }
 
 // Date exceptions. windowId null = GLOBAL: a global 'block' applies to EVERY
@@ -5818,6 +5826,12 @@ model AdminReportDelivery {
   destinationLabel     String?
   providerMessageId    String?
   attemptCount         Int       @default(0)
+  // Provider unreachable: the row is PRESERVED and retried WITHOUT burning a
+  // real attempt (mirrors the WhatsApp/email workers). Before this, a long
+  // outage could exhaust the 6-attempt ladder and lose internal reports.
+  connectionDeferredCount Int    @default(0)
+  waitReason           String?
+  effectiveAt          DateTime?
   nextRetryAt          DateTime?
   lastError            String?
   sentAt               DateTime?
@@ -6192,4 +6206,41 @@ model AutomationChange {
   createdAt DateTime @default(now())
 
   @@index([autId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SENDING WINDOW POLICY  ("זמני שליחה")
+// ─────────────────────────────────────────────────────────────────────────────
+// The Communication Center already had sending windows, but keyed PER MESSAGE
+// (CommunicationMessage.windowEnabled + sendingWindowId) and honoured by exactly
+// one sender. This table re-keys the same windows by (audience × channel) so
+// EVERY outgoing message in GOS — Communication Center, scheduled WhatsApp,
+// scheduled email, admin reports — obeys one policy.
+//
+// The evaluator is UNCHANGED: communication/windows.js stays the single
+// DST-correct implementation. This only decides WHICH window applies.
+//
+// Precedence (see sendingPolicy.js): an explicit per-message window beats the
+// matrix — an operator who deliberately chose a window for one message must not
+// have it silently overridden by a global default.
+model SendingWindowPolicy {
+  id           String  @id @default(cuid())
+  // customer | guide | manager — who is on the receiving end.
+  audienceKind String
+  // whatsapp | email
+  channel      String
+  // When false, this audience/channel pair sends at any hour (global block
+  // exceptions still apply — safety always wins, see windows.js).
+  enabled      Boolean @default(false)
+  // The weekly rules to obey. Null with enabled=true is a configuration error
+  // and fails CLOSED (nothing sends) with a visible reason, never silently.
+  window       CommunicationSendingWindow? @relation(fields: [windowId], references: [id], onDelete: SetNull)
+  windowId     String?
+
+  updatedBy     String?
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([audienceKind, channel])
 }

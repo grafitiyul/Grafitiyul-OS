@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { emailIntegrationConfigured, isInvalidGrant } from './googleClient.js';
 import { sendComposedEmail } from './composedSend.js';
+// The ONE window evaluator, shared with every other sender.
+import { checkSendAllowed } from '../communication/sendingPolicy.js';
 
 // Scheduled-email delivery worker. Same conventions as the WhatsApp scheduled
 // worker: 60s tick, claim-based so overlapping runs can never double-send,
@@ -74,7 +76,7 @@ export async function deliverScheduledEmail(db, row, deps = {}) {
   if (row.gmailMessageId) {
     await db.scheduledEmail.update({
       where: { id: row.id },
-      data: { status: 'sent', claimedAt: null, claimedBy: null },
+      data: { status: 'sent', claimedAt: null, claimedBy: null, waitReason: null, effectiveAt: null },
     });
     return 'already_sent';
   }
@@ -158,17 +160,32 @@ export async function runScheduledEmailTick(db = prisma, logger = console, deps 
   let sent = 0;
   let deferred = 0;
   let failed = 0;
+  let held = 0;
   for (const row of rows) {
+    // Sending window, checked BEFORE the claim so a held row is never marked in
+    // flight, and re-checked every tick so a window edit is honoured while a
+    // message waits. A scheduled CRM email addresses a customer.
+    const gate = await checkSendAllowed({
+      audienceKind: 'customer', channel: 'email', atMs: Date.now(),
+    }, { db });
+    if (!gate.allowed) {
+      await db.scheduledEmail.updateMany({
+        where: { id: row.id, status: 'pending' },
+        data: { waitReason: gate.reason, effectiveAt: gate.nextAt ? new Date(gate.nextAt) : null },
+      });
+      held += 1;
+      continue;
+    }
     if (!(await claim(db, row))) continue; // another runner won it
     const outcome = await deliverScheduledEmail(db, row, deps);
     if (outcome === 'sent') sent += 1;
     else if (outcome === 'deferred') deferred += 1;
     else if (outcome === 'failed' || outcome === 'retry') failed += 1;
   }
-  if (sent || deferred || failed) {
-    logger?.log?.(`[email-scheduled] sent ${sent}, deferred ${deferred}, failed/retry ${failed}`);
+  if (sent || deferred || failed || held) {
+    logger?.log?.(`[email-scheduled] sent ${sent}, deferred ${deferred}, failed/retry ${failed}, held-for-window ${held}`);
   }
-  return { sent, deferred, failed };
+  return { sent, deferred, failed, held };
 }
 
 let timer = null;
