@@ -6,6 +6,8 @@ import { toInstant } from '../email/ScheduleSendDialog.jsx';
 import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
 import { registerDynamicFields } from '../../lib/dynamicFields.js';
 import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
+import { WhatsAppPreviewBubble } from '../whatsapp/waPreview.jsx';
+import StaffMessageHistory from './StaffMessageHistory.jsx';
 import { resolveAccountId, readRememberedAccountId, rememberAccountId } from '../whatsapp/senderAccount.js';
 import { htmlToWhatsApp } from '../../../../shared/waMarkup.mjs';
 import { api } from '../../lib/api.js';
@@ -91,6 +93,10 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false); // two-step confirm for large sends
   const [result, setResult] = useState(null); // batch summary after submit
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // Loading a previous message must REPLACE the editor's document. TipTap only
+  // accepts an external value while unfocused, so remount it deliberately.
+  const [editorNonce, setEditorNonce] = useState(0);
   const idemKeyRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -155,18 +161,23 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
     [review],
   );
 
-  // Per-recipient resolved preview.
+  // Resolution for the ONE preview. The server renders it with the same
+  // resolver the send uses, so the preview is the message — not an imitation.
+  // `sourceText` stamps WHICH text it was rendered from, so a result that
+  // arrives after the operator kept typing is recognised as stale instead of
+  // being shown as if it were current.
   useEffect(() => {
     if (!open) return undefined;
     const target = previewPersonId && validRecipients.some((r) => r.personRefId === previewPersonId)
       ? previewPersonId
       : validRecipients[0]?.personRefId;
-    if (!target || !htmlToWhatsApp(bodyHtml).trim()) { setPreview(null); return undefined; }
+    const sourceText = htmlToWhatsApp(bodyHtml).trim();
+    if (!target || !sourceText) { setPreview(null); return undefined; }
     const t = setTimeout(() => {
       api.whatsapp.staffSend.preview({ bodyHtml, personRefId: target })
-        .then((p) => setPreview({ ...p, personRefId: target }))
+        .then((p) => setPreview({ ...p, personRefId: target, sourceText }))
         .catch(() => setPreview(null));
-    }, 500);
+    }, 400);
     return () => clearTimeout(t);
   }, [open, bodyHtml, previewPersonId, validRecipients]);
 
@@ -272,9 +283,19 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
         ? (n === 1 ? 'שלח עכשיו לאיש צוות אחד' : `שלח עכשיו ל־${n} אנשי צוות`)
         : (n === 1 ? 'תזמן לאיש צוות אחד' : `תזמן ל־${n} אנשי צוות`);
 
-  const previewTarget = preview?.personRefId
-    ? validRecipients.find((r) => r.personRefId === preview.personRefId)
-    : null;
+  // ── The ONE preview's inputs ──────────────────────────────────────────────
+  // Which recipient it is resolved for: the operator's pick while it is still
+  // a valid recipient, else the first valid one.
+  const previewTargetId = previewPersonId && validRecipients.some((r) => r.personRefId === previewPersonId)
+    ? previewPersonId
+    : validRecipients[0]?.personRefId || '';
+  // The resolved copy is only usable when it belongs to THAT recipient AND was
+  // rendered from the CURRENT text — otherwise the preview would confidently
+  // show a stale message, which is worse than showing the template.
+  const resolvedForTarget =
+    preview && preview.personRefId === previewTargetId && preview.sourceText === bodyText ? preview : null;
+  const previewMarkup = resolvedForTarget ? resolvedForTarget.text : bodyText;
+  const previewPending = !!previewTargetId && !resolvedForTarget && !!bodyText;
 
   // ── Result view — the honest batch summary ────────────────────────────────
   if (result) {
@@ -475,50 +496,76 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
         {/* ── Left column: message + attachments + timing + submit ── */}
         <div className="space-y-4">
           <section>
-            <div className="mb-1.5 text-[13px] font-semibold text-gray-800">הודעה</div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-gray-800">הודעה</span>
+              {/* Start from something already sent, rather than from a blank
+                  page — the record of real sends IS the history. */}
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50"
+              >
+                🕘 היסטוריית הודעות
+              </button>
+            </div>
             <WhatsAppBodyEditor
+              key={editorNonce}
               value={bodyHtml}
               onChange={(html) => { setBodyHtml(html); setArmed(false); }}
               variables={meta?.variables || []}
               categories={meta?.categories || {}}
               showVariableKeys={false}
+              // ONE preview on this screen, and it lives below with the
+              // recipient selector — the editor's own would be a second one
+              // showing the same message with variables unresolved.
+              showPreview={false}
             />
             <div className="mt-1 text-[11.5px] text-gray-400">
               המשתנים מוחלפים בנפרד עבור כל נמען — כל איש צוות מקבל הודעה אישית משלו.
             </div>
           </section>
 
-          {/* Per-recipient resolved preview */}
-          {validRecipients.length > 0 && bodyText && (
-            <section className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="text-[12.5px] font-semibold text-gray-700">תצוגה מקדימה לנמען:</span>
-                <select
-                  value={previewTarget?.personRefId || validRecipients[0]?.personRefId || ''}
-                  onChange={(e) => setPreviewPersonId(e.target.value)}
-                  className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[12.5px]"
-                >
-                  {validRecipients.map((r) => (
-                    <option key={r.personRefId} value={r.personRefId}>{r.name}</option>
-                  ))}
-                </select>
+          {/* THE preview — one, canonical, and exactly what WhatsApp will send.
+              It renders the RESOLVED markup for a chosen recipient through the
+              shared bubble, so it is simultaneously visually accurate (bold,
+              lists, links, emojis, spacing) and factually accurate (real
+              values). Until a recipient is chosen it shows the same message in
+              its template state, with variables as chips — the same renderer,
+              never a second preview disagreeing with this one. */}
+          <section className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-[12.5px] font-semibold text-gray-700">כך תיראה ההודעה אצל</span>
+              <select
+                value={previewTargetId}
+                onChange={(e) => setPreviewPersonId(e.target.value)}
+                aria-label="נמען לתצוגה מקדימה"
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[12.5px]"
+              >
+                {validRecipients.length === 0 && <option value="">— בחרו נמען —</option>}
+                {validRecipients.map((r) => (
+                  <option key={r.personRefId} value={r.personRefId}>{r.name}</option>
+                ))}
+              </select>
+              {previewPending && <span className="text-[11.5px] text-gray-400">מרכיב…</span>}
+            </div>
+            <WhatsAppPreviewBubble
+              markup={previewMarkup}
+              attachments={attachments}
+              emptyText="כתבו הודעה כדי לראות אותה כאן…"
+            />
+            {!resolvedForTarget && bodyText && (
+              <div className="mt-1.5 text-[12px] text-gray-500">
+                {validRecipients.length === 0
+                  ? 'בחרו נמענים כדי לראות את ההודעה עם הערכים האמיתיים — בינתיים המשתנים מוצגים כשמות.'
+                  : 'מרכיב את הנוסח עבור הנמען שנבחר…'}
               </div>
-              {preview ? (
-                <>
-                  <div className="whitespace-pre-wrap rounded-lg border border-emerald-100 bg-[#d9fdd3] px-3 py-2 text-[13px] leading-relaxed text-gray-900">
-                    {preview.text}
-                  </div>
-                  {preview.missingVariables?.length > 0 && (
-                    <div className="mt-1.5 text-[12px] text-amber-700">
-                      חסר ערך אצל נמען זה: {preview.missingVariables.join(', ')} — נמען זה ידולג.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="text-[12.5px] text-gray-400">טוען תצוגה…</div>
-              )}
-            </section>
-          )}
+            )}
+            {resolvedForTarget?.missingVariables?.length > 0 && (
+              <div className="mt-1.5 text-[12px] text-amber-700">
+                חסר ערך אצל נמען זה: {resolvedForTarget.missingVariables.join(', ')} — נמען זה ידולג.
+              </div>
+            )}
+          </section>
 
           <section>
             <div className="mb-1.5 flex items-center justify-between">
@@ -621,6 +668,24 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
           </section>
         </div>
       </div>
+
+      {/* Start from a previous message. It lands in the editor as an ordinary
+          draft — chips intact, fully editable — and nothing is sent until the
+          operator sends it. Attachments are deliberately NOT carried over:
+          their R2 objects belong to that send, and silently re-attaching files
+          the operator did not choose is not "start from". */}
+      <StaffMessageHistory
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        accounts={accounts}
+        onPick={(batch) => {
+          setBodyHtml(batch.templateHtml || '');
+          setEditorNonce((n) => n + 1);
+          setArmed(false);
+          setPreview(null);
+          setHistoryOpen(false);
+        }}
+      />
     </Dialog>
   );
 }

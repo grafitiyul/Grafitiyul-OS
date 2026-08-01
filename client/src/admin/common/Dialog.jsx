@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
 
+// Open dialogs, oldest first. Escape belongs to the TOP one only: every open
+// dialog used to listen on document, so one keystroke inside a dialog opened
+// from within another (message history over the composer, a confirm over an
+// editor) closed BOTH — taking the operator's unsent work with it.
+const escStack = [];
+
 // Modal shell: fixed overlay, backdrop click + Esc to close, RTL, Hebrew.
 // Caller passes the content and the footer buttons. We don't make assumptions
 // about the shape — this is just the chrome.
@@ -26,18 +32,30 @@ export default function Dialog({
   panelClassName = '',
 }) {
   const panelRef = useRef(null);
+  // Stable per INSTANCE, and routed through a ref, so an ordinary re-render of
+  // the dialog underneath (typing in it) cannot re-push it above the dialog on
+  // top and steal Escape.
+  const escTokenRef = useRef({});
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
+    const token = escTokenRef.current;
+    escStack.push(token);
     function onKey(e) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose?.();
-      }
+      if (e.key !== 'Escape') return;
+      if (escStack[escStack.length - 1] !== token) return; // a dialog is open above this one
+      e.preventDefault();
+      onCloseRef.current?.();
     }
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      const i = escStack.lastIndexOf(token);
+      if (i >= 0) escStack.splice(i, 1);
+    };
+  }, [open]);
 
   // Focus management: on open, move focus into the panel (unless an element
   // inside already grabbed it via autoFocus). Trap Tab so keyboard focus can't

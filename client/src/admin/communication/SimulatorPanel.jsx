@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import SearchSelect from './SearchSelect.jsx';
-import { waPreviewHtml } from './WhatsAppBodyEditor.jsx';
+import { waPreviewHtml } from '../whatsapp/waPreview.jsx';
 import { ACTIVITY_LABELS, STATUS_LABELS } from './commLabels.jsx';
 import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
 

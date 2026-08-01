@@ -467,13 +467,26 @@ router.post(
   }),
 );
 
-// ── Batch visibility ─────────────────────────────────────────────────────────
+// ── Batch visibility / message history ───────────────────────────────────────
+//
+// This list IS the "היסטוריית הודעות" source. No separate history model exists
+// on purpose: every send already freezes what was authored — templateHtml (the
+// editor HTML with variable chips intact) and templateText (its WhatsApp
+// markup) — so the batch row is already a faithful record of the message. A
+// parallel store would be a second copy that could disagree with what was
+// actually sent, and a template library, which this deliberately is not.
+//
+// ?search= matches the authored TEXT (the markup form), because that is what an
+// operator remembers writing — not the HTML around it.
 router.get(
   '/batches',
-  handle(async (_req, res) => {
+  handle(async (req, res) => {
+    const search = String(req.query.search || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
     const batches = await prisma.whatsAppSendBatch.findMany({
+      where: search ? { templateText: { contains: search, mode: 'insensitive' } } : {},
       orderBy: { createdAt: 'desc' },
-      take: 20,
+      take: limit,
     });
     const rows = await prisma.whatsAppScheduledMessage.findMany({
       where: { batchId: { in: batches.map((b) => b.id) } },
@@ -495,6 +508,12 @@ router.get(
       skippedCount: Array.isArray(b.skipped) ? b.skipped.length : 0,
       counts: countsByBatch.get(b.id) || {},
       createdAt: b.createdAt,
+      // The message itself, exactly as authored: the HTML restores the editor
+      // (variable CHIPS intact — reloading must never flatten {{x}} into a
+      // literal), the markup drives the preview and the search snippet.
+      templateHtml: b.templateHtml,
+      templateText: b.templateText,
+      attachments: Array.isArray(b.attachments) ? b.attachments : [],
     })));
   }),
 );

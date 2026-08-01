@@ -902,7 +902,9 @@ export const api = {
         request('/api/whatsapp/staff-send/attachments', { method: 'POST', body: JSON.stringify(data) }),
       createBatch: (data) =>
         request('/api/whatsapp/staff-send/batches', { method: 'POST', body: JSON.stringify(data) }),
-      batches: () => request('/api/whatsapp/staff-send/batches'),
+      // Also the "היסטוריית הודעות" source — every batch froze what was
+      // authored, so previous messages need no separate store.
+      batches: (params) => request(`/api/whatsapp/staff-send/batches${qs(params)}`),
       batch: (id) => request(`/api/whatsapp/staff-send/batches/${id}`),
     },
   },

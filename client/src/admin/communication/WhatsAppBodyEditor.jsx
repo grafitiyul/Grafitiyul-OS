@@ -7,6 +7,7 @@ import EmojiButton from '../../editor/EmojiButton.jsx';
 import { htmlToWhatsApp, whatsAppTextPreview } from '../../../../shared/waMarkup.mjs';
 import { normalizeTokensToChips } from '../../../../shared/variableTokens.mjs';
 import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
+import { WhatsAppPreviewBubble } from '../whatsapp/waPreview.jsx';
 
 // Hydration normalization — stored/AI/legacy content may carry recognized raw
 // {{tokens}} as plain text; TipTap's input/paste rules only fire on typing, so
@@ -24,32 +25,12 @@ import '../../editor/editor.css';
 // AND the server's send-time conversion, so what the author sees is what
 // WhatsApp receives — no invented syntax, no drift.
 
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// WhatsApp markup → styled preview HTML (bubble). Tokens render as chips.
-//
-// ORDER MATTERS: tokens are substituted BEFORE the italic rule. A key like
-// customer_first_name contains `_first_`, which the italic rule would otherwise
-// consume — leaving a mangled "{{customerfirstname}}" in the preview and hiding
-// the fact that the variable is recognised at all.
-export function waPreviewHtml(markup) {
-  let out = esc(markup);
-  out = out.replace(/```([\s\S]+?)```/g, '<code class="rounded bg-black/10 px-1">$1</code>');
-  out = out.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (m, key) => {
-    const f = getDynamicFieldByKey(key);
-    return `<span class="mx-0.5 inline-flex items-center rounded bg-blue-100 px-1 text-[0.85em] font-medium text-blue-800">${esc(f?.label || key)}</span>`;
-  });
-  out = out.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
-  out = out.replace(/_([^_\n]+)_/g, '<em>$1</em>');
-  out = out.replace(/~([^~\n]+)~/g, '<s>$1</s>');
-  out = out.replace(/(https?:\/\/[^\s<]+)/g, '<span class="text-sky-700 underline">$1</span>');
-  return out.replace(/\n/g, '<br>');
-}
-
+// `showPreview={false}` leaves the editor as an editor only — for surfaces that
+// own ONE canonical preview of their own (the Team composer previews the
+// message as RESOLVED for a chosen recipient, and a second, unresolved preview
+// beside it is exactly the confusion this prop removes).
 export default function WhatsAppBodyEditor({
-  value, onChange, variables, categories, onInsertDocument, documents, showVariableKeys = true,
+  value, onChange, variables, categories, onInsertDocument, documents, showVariableKeys = true, showPreview = true,
 }) {
   const editorRef = useRef(null);
   const editor = useEditor({
@@ -101,7 +82,7 @@ export default function WhatsAppBodyEditor({
   );
 
   return (
-    <div dir="rtl" className="grid gap-4 lg:grid-cols-2">
+    <div dir="rtl" className={`grid gap-4 ${showPreview ? 'lg:grid-cols-2' : ''}`}>
       {/* editor */}
       <div className="rounded-xl border border-gray-300 bg-white focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100">
         <div className="flex flex-wrap items-center gap-1 border-b border-gray-200 bg-gray-50 px-2 py-1.5 rounded-t-xl">
@@ -132,34 +113,18 @@ export default function WhatsAppBodyEditor({
         </div>
       </div>
 
-      {/* WhatsApp-style live preview — the same serializer the server sends with */}
-      <div className="flex flex-col rounded-xl border border-gray-200 bg-[#efe7dd] p-3"
-        style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.035) 1px, transparent 0)', backgroundSize: '14px 14px' }}>
-        <div className="mb-2 text-center text-[10.5px] font-medium text-gray-500">תצוגה מקדימה — כפי שיישלח ב-WhatsApp</div>
-        <div className="flex-1">
-          <div className="mr-auto max-w-[92%] rounded-xl rounded-tr-sm bg-[#d9fdd3] px-3 py-2 shadow-sm">
-            {(documents || []).filter((d) => d.mode !== 'link').map((d) => (
-              <div key={d.kind} className="mb-2 flex items-center gap-2 rounded-lg bg-white/70 px-2.5 py-2 text-[12px] text-gray-700">
-                <span className="text-[17px]">📄</span>
-                <span className="min-w-0 flex-1 truncate font-medium">{d.labelHe}</span>
-                <span className="text-[10px] text-gray-400">PDF</span>
-              </div>
-            ))}
-            {markup ? (
-              <div
-                className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-gray-900"
-                // eslint-disable-next-line react/no-danger
-                dangerouslySetInnerHTML={{ __html: waPreviewHtml(markup) }}
-              />
-            ) : (
-              <div className="text-[13px] text-gray-400">ההודעה תוצג כאן…</div>
-            )}
-            <div className="mt-1 text-left text-[10px] text-gray-400">
-              {new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓✓
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* WhatsApp-style live preview — the shared bubble, the same serializer
+          the server sends with, and the same renderer every other preview in
+          the system uses. */}
+      {showPreview && (
+        <WhatsAppPreviewBubble
+          markup={markup}
+          title="תצוגה מקדימה — כפי שיישלח ב-WhatsApp"
+          attachments={(documents || [])
+            .filter((d) => d.mode !== 'link')
+            .map((d) => ({ key: d.kind, fileName: d.labelHe, kind: 'document', badge: 'PDF' }))}
+        />
+      )}
     </div>
   );
 }
