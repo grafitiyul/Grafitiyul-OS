@@ -539,6 +539,27 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
   return { dealSync: null };
 }
 
+// ── Deal context fields: PROPOSE, NEVER DISPOSE ──────────────────────────────
+// product / variant / city are the tour's STRUCTURAL IDENTITY: the calendar
+// derives its title and duration from them, payroll its guide rates, the gallery
+// and Woo their sellable identity. On the deal side those same fields can simply
+// be ABSENT — every deal migrated at cutover arrived without them, while its
+// imported TourEvent had them resolved (match-tour-products.mjs). Reading that
+// absence as "the operator wants the tour's product cleared" produced two bugs
+// at once: a false pending update on 63 future deals, and — had anyone pressed
+// "עדכון סיור" — a silent wipe of the tour's product/variant/city.
+//
+// So a NULL deal context field means "no opinion", not "clear it". A deal that
+// HOLDS a value still governs: a different product still pends and still
+// applies. Only the null→value direction is refused, and only when the tour
+// already carries a value. Date/time/language/participants are unaffected —
+// clearing a date is a real business action (postpone), clearing a product is
+// not.
+const contextDiffers = (dealValue, tourValue) => {
+  const d = dealValue || null;
+  return d !== null && d !== (tourValue || null);
+};
+
 // ── Pending Tour Update (the ONE concept) ────────────────────────────────────
 // After a private/business tour exists, the Deal's planning fields are the
 // DESIRED state and the TourEvent/Booking are the APPLIED state. The pending
@@ -575,11 +596,11 @@ export function pendingTourUpdate(deal, booking) {
   }
   if ((deal.tourLanguage || null) !== (tour.tourLanguage || null))
     push('tourLanguage', deal.tourLanguage || null, tour.tourLanguage || null);
-  if ((deal.productId || null) !== (tour.productId || null))
+  if (contextDiffers(deal.productId, tour.productId))
     push('productId', deal.productId || null, tour.productId || null);
-  if ((deal.productVariantId || null) !== (tour.productVariantId || null))
+  if (contextDiffers(deal.productVariantId, tour.productVariantId))
     push('productVariantId', deal.productVariantId || null, tour.productVariantId || null);
-  if ((deal.locationId || null) !== (tour.locationId || null))
+  if (contextDiffers(deal.locationId, tour.locationId))
     push('locationId', deal.locationId || null, tour.locationId || null);
   const seats = Number(deal.participants);
   if (Number.isInteger(seats) && seats >= 1 && seats !== booking.seats)
@@ -643,10 +664,13 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
     if (deal.tourTime && deal.tourTime !== tour.startTime) patch.startTime = deal.tourTime;
   }
   if ((deal.tourLanguage || null) !== tour.tourLanguage) patch.tourLanguage = deal.tourLanguage || null;
-  if ((deal.productId || null) !== tour.productId) patch.productId = deal.productId || null;
-  if ((deal.productVariantId || null) !== tour.productVariantId)
-    patch.productVariantId = deal.productVariantId || null;
-  if ((deal.locationId || null) !== tour.locationId) patch.locationId = deal.locationId || null;
+  // Context fields mirror pendingTourUpdate exactly (applying must always empty
+  // that list): a deal value overwrites the tour's, a deal NULL never disposes
+  // of one — see "PROPOSE, NEVER DISPOSE" above.
+  if (contextDiffers(deal.productId, tour.productId)) patch.productId = deal.productId;
+  if (contextDiffers(deal.productVariantId, tour.productVariantId))
+    patch.productVariantId = deal.productVariantId;
+  if (contextDiffers(deal.locationId, tour.locationId)) patch.locationId = deal.locationId;
 
   const effectiveVariantId = Object.prototype.hasOwnProperty.call(patch, 'productVariantId')
     ? patch.productVariantId

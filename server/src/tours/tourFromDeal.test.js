@@ -135,6 +135,44 @@ test('pending: group slots never pend (slot-owned planning, fields locked on the
   assert.deepEqual(pendingTourUpdate(FULL_PRIVATE, booking), []);
 });
 
+// ── context fields: propose, never dispose ──────────────────────────────────
+// A migrated deal carries no product/variant/city while its imported tour does.
+// That absence is missing context, NOT an instruction to clear the tour — it
+// must not pend (and applying must not wipe the tour's structural identity).
+
+test('pending: a deal with NO context against a tour that HAS context never pends', () => {
+  const migrated = { ...FULL_PRIVATE, productId: null, productVariantId: null, locationId: null };
+  assert.deepEqual(pendingTourUpdate(migrated, APPLIED_BOOKING), []);
+});
+
+test('pending: each context field independently — null pends nothing, a value still pends', () => {
+  for (const field of ['productId', 'productVariantId', 'locationId']) {
+    assert.deepEqual(
+      pendingTourUpdate({ ...FULL_PRIVATE, [field]: null }, APPLIED_BOOKING),
+      [],
+      `${field}: a cleared deal field must not pend`,
+    );
+    assert.deepEqual(
+      pendingTourUpdate({ ...FULL_PRIVATE, [field]: 'other' }, APPLIED_BOOKING).map((d) => d.field),
+      [field],
+      `${field}: a DIFFERENT deal value must still pend`,
+    );
+  }
+});
+
+test('pending: missing context never masks a real drift on another field', () => {
+  const deal = { ...FULL_PRIVATE, productId: null, productVariantId: null, locationId: null, tourTime: '18:30' };
+  assert.deepEqual(pendingTourUpdate(deal, APPLIED_BOOKING).map((d) => d.field), ['tourTime']);
+});
+
+test('pending: a tour without context still adopts the deal context (null→value pends)', () => {
+  const bareTour = { ...APPLIED_TOUR, productId: null, productVariantId: null, locationId: null };
+  assert.deepEqual(
+    pendingTourUpdate(FULL_PRIVATE, { ...APPLIED_BOOKING, tourEvent: bareTour }).map((d) => d.field).sort(),
+    ['locationId', 'productId', 'productVariantId'],
+  );
+});
+
 test('pending: cancelled/completed tours and non-active bookings never pend', () => {
   const changed = { ...FULL_PRIVATE, tourDate: '2026-08-02' };
   for (const status of ['cancelled', 'completed']) {
