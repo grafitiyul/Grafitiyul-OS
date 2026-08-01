@@ -49,6 +49,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "יצירת סיורים פתוחים נכשלה",
+  purposeHe: "תהליך יצירת המופעים העתידיים נכשל מספר פעמים ברצף — ייתכן שסיורים עתידיים לא נוצרו ולא פורסמו באתר.",
+  fixHe: "נסגר אוטומטית ברגע שתהליך היצירה חוזר לפעול בהצלחה.",
+  sourceModule: "tours",
   sourceModule: 'tours',
   // No in-app fix action — a persistent generation failure is an infrastructure
   // problem (DB/service) that needs a human, not a one-click retry.

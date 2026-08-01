@@ -16,11 +16,42 @@
 // 'api' actions are executed by the client against EXISTING endpoints (reuse,
 // never duplicate); 'server' actions POST to /api/control/issues/:id/actions/:key.
 
+// Every registered type MUST document itself. "There are bubbles here whose
+// purpose is unclear" is a product failure, not a UI one: the meaning of a
+// detector belongs next to the code that raises it, or it drifts.
+//
+//   labelHe   — the family's name, for the detector catalogue
+//   purposeHe — what condition raises it, in one plain sentence
+//   fixHe     — what makes it go away (usually "it auto-resolves when …")
 const TYPES = new Map();
 
 export function registerIssueType(type, def) {
   if (TYPES.has(type)) throw new Error(`issue type already registered: ${type}`);
   TYPES.set(type, def);
+}
+
+/**
+ * The detector catalogue the בקרה screen renders under "מה המערכת בודקת".
+ * Generated from the registered types themselves, so a detector can never exist
+ * without an explanation and an explanation can never outlive its detector.
+ */
+export function detectorCatalogue() {
+  return [...TYPES.entries()]
+    .map(([type, def]) => ({
+      type,
+      labelHe: def.labelHe || type,
+      purposeHe: def.purposeHe || null,
+      fixHe: def.fixHe || null,
+      sourceModule: def.sourceModule || null,
+    }))
+    .sort((a, b) => a.labelHe.localeCompare(b.labelHe, 'he'));
+}
+
+/** Types registered without documentation — asserted empty by a guard test. */
+export function undocumentedIssueTypes() {
+  return [...TYPES.entries()]
+    .filter(([, def]) => !def.labelHe || !def.purposeHe)
+    .map(([type]) => type);
 }
 
 export function issueTypeDef(type) {

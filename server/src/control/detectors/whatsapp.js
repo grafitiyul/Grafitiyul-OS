@@ -117,6 +117,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "הודעת WhatsApp מתוזמנת נתקעה",
+  purposeHe: "הודעה מתוזמנת שהמערכת ויתרה עליה — מספר לא נמצא, ניסיונות מוצו או פג תוקף המועד.",
+  fixHe: "נסגר כשקובעים מועד חדש, שולחים מיידית או מבטלים את ההודעה.",
+  sourceModule: "whatsapp",
   sourceModule: 'whatsapp',
 
   buildActions(issue) {

@@ -111,6 +111,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "הזמנה מבוטלת שעדיין תופסת מקומות",
+  purposeHe: "הזמנה סומנה כמבוטלת אך עדיין מחזיקה רישומי כרטיסים שתופסים תפוסה — הסיור מציג פחות משתתפים ממה שבאמת תפוס.",
+  fixHe: "נסגר אוטומטית כשהרישומים מבוטלים או שההזמנה מוחזרת לפעילה.",
+  sourceModule: "tours",
   sourceModule: 'tours',
   buildActions(issue) {
     return [

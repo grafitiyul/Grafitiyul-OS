@@ -114,6 +114,9 @@ export async function emitTourChangeImpact(client, { tourEventId, impactType, be
 // with the full "עדכן לקוחות" flow + requirement-driven resolution. Event-emitted
 // (no detector) → never auto-resolved by the sweep.
 registerIssueType(IMPACT_TYPE, {
+  labelHe: 'שינוי בסיור עם רשומים',
+  purposeHe: 'שינוי תפעולי (עריכת כלל, חריגה, הזזה, ביטול או צמצום תפוסה) השפיע על מופע שכבר יש בו רשומים — הלקוחות עדיין לא עודכנו.',
+  fixHe: 'נסגר כשמשלימים את הדרישות של השינוי — בעיקר עדכון הלקוחות המושפעים.',
   sourceModule: 'tours',
   buildActions(issue) {
     return [{ key: 'open_tour', label: 'פתח סיור', kind: 'link', target: { type: 'tour_event', id: issue.data?.tourEventId } }];

@@ -89,6 +89,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "שריון מקומות פג ללא תשלום",
+  purposeHe: "רישום כרטיסים מותנה פג ושוחררה התפוסה — הלקוח לא שילם בזמן.",
+  fixHe: "נסגר כשהדיל נסגר WON (תשלום מאוחר) או כשהלקוח מטופל אחרת.",
+  sourceModule: "tours",
   sourceModule: 'tours',
   buildActions(issue) {
     return [

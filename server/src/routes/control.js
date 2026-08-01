@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { ACTIVE_STATUSES, resolveIssue } from '../control/issueService.js';
-import { buildIssueActions, issueTypeDef } from '../control/registry.js';
+import { buildIssueActions, issueTypeDef, detectorCatalogue } from '../control/registry.js';
 import { setRequirementState, refreshIssueClosure } from '../control/issueRequirements.js';
 import { sendNotification, evaluateCustomerNotification, recipientsFor, defaultMessage } from '../control/issueNotifications.js';
 import { resolveForOperator } from '../whatsapp/senderAccount.js';
@@ -53,6 +53,14 @@ async function actingAdmin(req) {
 }
 
 // The dashboard read: active issues (open + acknowledged) sorted by severity
+// What the system actually checks. Generated from the registered issue types
+// themselves, so a detector can never exist without an explanation and an
+// explanation can never outlive its detector — the answer to 'what is this
+// bubble and why is it here?'.
+router.get('/detectors', handle(async (_req, res) => {
+  res.json({ detectors: detectorCatalogue() });
+}));
+
 // then recency, per-severity counts, and the most recently resolved rows so
 // the operator can see what was just taken care of.
 router.get(

@@ -1816,6 +1816,7 @@ export const api = {
   // deals.applyTourUpdate…) are called directly by the dashboard's action
   // runner, followed by recheck() so the card resolves immediately.
   control: {
+    detectors: () => request('/api/control/detectors'),
     issues: () => request('/api/control/issues'),
     acknowledge: (id) => request(`/api/control/issues/${id}/acknowledge`, { method: 'POST' }),
     unacknowledge: (id) => request(`/api/control/issues/${id}/unacknowledge`, { method: 'POST' }),

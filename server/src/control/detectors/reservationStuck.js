@@ -78,6 +78,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "הזמנת סוכן תקועה בעיבוד",
+  purposeHe: "הזמנה שהוגשה לא הושלמה בעיבוד בזמן סביר. הסוכן כבר קיבל אישור קליטה, ולכן כשל כאן אינו נראה בשום מקום אחר.",
+  fixHe: "נסגר אוטומטית כשההזמנה מעובדת במלואה או מבוטלת.",
+  sourceModule: "reservations",
   sourceModule: 'reservations',
   buildActions(issue) {
     return [

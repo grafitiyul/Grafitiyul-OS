@@ -197,19 +197,24 @@ test('a retired automation stays visible with its history and its reason', async
 });
 
 test('stats expose last run, last success and last failure separately', async () => {
+  // Timestamps are computed ONCE — recomputing daysAgo() for the assertion
+  // races the clock and makes this flaky by a millisecond.
+  const failedAt = daysAgo(1);
+  const succeededAt = daysAgo(5);
   await withDef(def(), async () => {
     const h = await resolveHealth('AUT-001', {
       db: stubDb({
         runs: [
-          { autId: 'AUT-001', status: 'failed', startedAt: daysAgo(1), reasonHe: 'x' },
-          { autId: 'AUT-001', status: 'ran', startedAt: daysAgo(5) },
+          { autId: 'AUT-001', status: 'failed', startedAt: failedAt, reasonHe: 'x' },
+          { autId: 'AUT-001', status: 'ran', startedAt: succeededAt },
           { autId: 'AUT-001', status: 'skipped', startedAt: daysAgo(6) },
         ],
       }),
     });
     assert.equal(h.stats.totalRuns, 3);
     assert.equal(h.stats.lastRunStatus, 'failed');
-    assert.equal(h.stats.lastSuccessAt, daysAgo(5));
+    assert.equal(h.stats.lastSuccessAt, succeededAt);
+    assert.equal(h.stats.lastFailureAt, failedAt);
     assert.equal(h.stats.lastError, 'x');
   });
 });

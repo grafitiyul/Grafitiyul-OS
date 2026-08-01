@@ -160,6 +160,10 @@ async function stillOutOfSync(client, dealId) {
 }
 
 registerIssueType(TYPE, {
+  labelHe: "דיל וסיור אינם מסונכרנים",
+  purposeHe: "פרטי הדיל עודכנו אך הסיור המקושר לא עודכן בהתאם — המדריכים, היומן והלקוח עלולים לראות פרטים ישנים.",
+  fixHe: "נסגר אוטומטית כשמעדכנים את הסיור לפי הדיל או מבטלים את שינויי הדיל.",
+  sourceModule: "deals",
   sourceModule: 'deals',
 
   buildActions(issue) {

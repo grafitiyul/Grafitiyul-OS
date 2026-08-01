@@ -61,6 +61,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "חריגה בשימוש בלינק הזמנות",
+  purposeHe: "נפח הגשות חריג מלינק סוכן אחד ב-24 שעות — ייתכן שימוש לרעה בלינק.",
+  fixHe: "נסגר אוטומטית כשנפח ההגשות חוזר לנורמה. הטיפול הוא החלפה או השבתה של הלינק.",
+  sourceModule: "reservations",
   sourceModule: 'reservations',
   buildActions(issue) {
     return [

@@ -65,6 +65,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "סנכרון לאתר נכשל",
+  purposeHe: "סיור למכירה לא הצליח להסתנכרן ל-WooCommerce אחרי כל הניסיונות — האתר עלול להחסיר את המופע או להציג מחיר ומלאי ישנים.",
+  fixHe: "נסגר אוטומטית אחרי סנכרון מוצלח (אפשר להריץ שוב ידנית מדף הסיור).",
+  sourceModule: "tours",
   sourceModule: 'tours',
 
   buildActions(issue) {

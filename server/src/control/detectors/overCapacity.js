@@ -60,6 +60,10 @@ registerDetector({
 });
 
 registerIssueType(TYPE, {
+  labelHe: "סיור מעל התפוסה",
+  purposeHe: "מספר המקומות הרשומים בסיור פתוח עולה על התפוסה שהוגדרה. הזמנת יתר מותרת — אך חייבת להיות גלויה.",
+  fixHe: "נסגר אוטומטית כשמספר המקומות יורד חזרה לתפוסה או שהתפוסה מוגדלת.",
+  sourceModule: "tours",
   sourceModule: 'tours',
   buildActions(issue) {
     return [

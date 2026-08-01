@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { SEVERITIES, SEVERITY_BY_KEY, fmtDetected, MODULE_LABELS } from './config.js';
 import IssueCard from './IssueCard.jsx';
 import RescheduleDialog from './RescheduleDialog.jsx';
+import DetectorCatalogue from './DetectorCatalogue.jsx';
 import { apiActionHandler } from './issueActions.js';
 
 const POLL_MS = 60_000;
@@ -210,6 +211,9 @@ export default function ControlPage() {
       )}
 
       {!data && !error && <div className="py-16 text-center text-sm text-gray-400">טוען…</div>}
+
+      {/* Reference: what every bubble on this screen means and what closes it. */}
+      {data ? <DetectorCatalogue /> : null}
 
       <RescheduleDialog
         open={Boolean(needsInput)}

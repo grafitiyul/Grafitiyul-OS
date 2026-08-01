@@ -112,6 +112,10 @@ async function loadTask(client, issue) {
 }
 
 registerIssueType(TYPE, {
+  labelHe: "גלריה ממתינה לאישור מחיקה",
+  purposeHe: "סיור בוטל או נמחק אך הגלריה שלו עדיין מכילה מדיה. שום דבר לא נמחק עד לאישור מפורש.",
+  fixHe: "נסגר כשמאשרים את המחיקה הסופית או כשהמדיה מוסרת ידנית.",
+  sourceModule: "tours",
   sourceModule: 'gallery',
 
   buildActions(issue) {
