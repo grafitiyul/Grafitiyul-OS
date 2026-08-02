@@ -787,6 +787,21 @@ app.listen(port, () => {
     .then(({ repairDealTourContext }) => repairDealTourContext(prisma, { log: console }))
     .catch((e) => console.warn('[maintenance] deal tour-context repair failed:', e?.message));
 
+  // Imported versions that claim 'excluded' while their stored amount IS the
+  // agreed gross — the Builder read them 18% high. Fires only where the line sum
+  // already equals Deal.valueMinor, which is the proof the mode is wrong; a
+  // correct net × 1.18 version is left alone.
+  import('./maintenance/repairImportedVatMode.js')
+    .then(({ repairImportedVatMode }) => repairImportedVatMode(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] imported VAT-mode repair failed:', e?.message));
+
+  // Priced migrated deals with NO quote version at all get ONE locked,
+  // read-only aggregated line carrying the agreed total, so a deal with a known
+  // amount never shows an empty Builder.
+  import('./maintenance/buildHistoricalFallbackQuotes.js')
+    .then(({ buildHistoricalFallbackQuotes }) => buildHistoricalFallbackQuotes(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] historical fallback builders failed:', e?.message));
+
   // Durable one-time backfill: legacy org finance scalars → canonical finance
   // Contacts (phone/email identity matching, membership link, designation,
   // timeline). Idempotent; summary lands on the MaintenanceJob row.
