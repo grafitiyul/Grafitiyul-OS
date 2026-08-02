@@ -76,6 +76,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
   const [issued, setIssued] = useState(null); // successful document
+  const [copyState, setCopyState] = useState(null); // null | 'ok' | 'fail'
   // One idempotency key per issue-scope: minted on open, renewed only after a
   // SUCCESSFUL issue — so a double-click / retry after a network hiccup can
   // never produce two documents.
@@ -86,6 +87,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
     idemKey.current = crypto.randomUUID();
     setIssued(null);
     setIssueError(null);
+    setCopyState(null);
     setLoading(true);
     setLoadError(null);
     (async () => {
@@ -275,6 +277,22 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
     await selectBase({ doctype: document.doctype, docnum: document.docnum }, { forDoctype: nextType });
   }
 
+  // Copy the SAME canonical iCount document URL "פתיחת המסמך" opens
+  // (issued.docUrl — returned by doc/create). Pure clipboard action: no API
+  // call, nothing regenerated or resent. Clipboard API first (desktop +
+  // mobile https); a blocked clipboard degrades to an honest error + a
+  // selectable field below the buttons.
+  async function copyDocUrl() {
+    const url = issued?.docUrl;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyState('ok');
+    } catch {
+      setCopyState('fail');
+    }
+  }
+
   const setRow = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const setPayment = (i, patch) => setPayments((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
@@ -366,10 +384,27 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             {issued.clientName} · {fmtIls(Number(issued.amountMinor) / 100)}
           </p>
           {issued.docUrl && (
-            <a href={issued.docUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-block rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
-              פתיחת המסמך
-            </a>
+            <>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <a href={issued.docUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-block rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
+                  פתיחת המסמך
+                </a>
+                <button type="button" onClick={copyDocUrl}
+                  className="rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
+                  {copyState === 'ok' ? '✓ הקישור הועתק' : 'העתקת קישור למסמך'}
+                </button>
+              </div>
+              {copyState === 'fail' && (
+                <div className="mx-auto max-w-md space-y-1 text-right">
+                  <p className="text-[12.5px] text-amber-700">
+                    ההעתקה נחסמה על ידי הדפדפן — ניתן לסמן ולהעתיק ידנית:
+                  </p>
+                  <input readOnly value={issued.docUrl} dir="ltr" onFocus={(e) => e.target.select()}
+                    className="w-full rounded-lg border border-gray-300 bg-gray-50 px-2 py-1.5 text-[12.5px]" />
+                </div>
+              )}
+            </>
           )}
           <p className="text-[12px] text-gray-500">נוצר פתק מוצמד בציר הזמן של הדיל.</p>
         </div>
