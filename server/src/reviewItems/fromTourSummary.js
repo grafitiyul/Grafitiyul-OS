@@ -171,6 +171,20 @@ export async function reviewItemsForTourSummary(
     }).catch(() => {});
   }
 
+  // Manager report #20 — the logistics owner hears about a problem now, not at
+  // the next digest. Fired only when the logistics CARD was created, so the
+  // alert and the detail it links to can never disagree about whether there is
+  // a problem at all.
+  if (logistics?.created) {
+    fireAdminReport({
+      number: 20,
+      idempotencyKey: `logistics_alert:${submission.id}`,
+      dealId: ctx.dealId || null,
+      tourEventId: ctx.tourEventId || null,
+      data: { logisticsAlert: { ...ctx, findings, reviewItemId: logistics.item.id } },
+    }).catch(() => {});
+  }
+
   // ── Manager report #19 — a payment was left after the tour ──
   // Same submit event, separate business signal from #17. Bound to the
   // canonical ROLE, so the question's wording is free to change. Fired only on

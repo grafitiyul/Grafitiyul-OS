@@ -23,17 +23,17 @@ import { registerReviewKind } from '../registry.js';
 export const LOGISTICS_KIND = 'logistics_report';
 
 export const LOGISTICS_ROLES = [
-  { role: 'studio_dirty', labelHe: 'הסטודיו הושאר מלוכלך', rule: 'affirmative' },
-  { role: 'stencil_discarded', labelHe: 'נזרק סטנסיל', rule: 'affirmative' },
-  { role: 'vinyl_low', labelHe: 'מלאי ויניל נמוך', rule: 'affirmative' },
+  { role: 'studio_dirty', labelHe: 'הסטודיו הושאר מלוכלך', labelEn: 'The studio was left dirty', rule: 'affirmative' },
+  { role: 'stencil_discarded', labelHe: 'נזרק סטנסיל', labelEn: 'A stencil was thrown away', rule: 'affirmative' },
+  { role: 'vinyl_low', labelHe: 'מלאי ויניל נמוך', labelEn: 'Vinyl stock is running low', rule: 'affirmative' },
   // Free TEXT in the live form ('איזה ספריי הוצאת') — 'there is an answer' is
   // the signal, exactly like the equipment slot.
-  { role: 'new_spray_can', labelHe: 'נפתחה פחית ספריי חדשה', rule: 'nonEmpty' },
+  { role: 'new_spray_can', labelHe: 'נפתחה פחית ספריי חדשה', labelEn: 'A new spray can was opened', rule: 'nonEmpty' },
   // The live form asks about equipment shortages and technical problems in ONE
   // question, so technical_issue stays registered but unmapped — a future form
   // may split them, and an unmapped role is simply absent from the card.
-  { role: 'equipment_shortage', labelHe: 'חוסרים בציוד או תקלה טכנית', rule: 'nonEmpty' },
-  { role: 'technical_issue', labelHe: 'תקלה טכנית', rule: 'nonEmpty' },
+  { role: 'equipment_shortage', labelHe: 'חוסרים בציוד או תקלה טכנית', labelEn: 'Missing equipment or a technical fault', rule: 'nonEmpty' },
+  { role: 'technical_issue', labelHe: 'תקלה טכנית', labelEn: 'A technical fault', rule: 'nonEmpty' },
 ];
 
 registerReviewKind(LOGISTICS_KIND, {
@@ -92,12 +92,12 @@ export function buildLogisticsFindings({ questions = [], answers = {}, affirmati
     } else {
       flagged = isNonEmpty(value);
     }
-    if (flagged) findings.push({ role: slot.role, labelHe: slot.labelHe, questionKey: q.key, value });
+    if (flagged) findings.push({ role: slot.role, labelHe: slot.labelHe, labelEn: slot.labelEn, questionKey: q.key, value });
   }
   return findings;
 }
 
 /** One line for the collapsed card and the digest email. */
-export function logisticsHeadline(findings) {
-  return findings.map((f) => f.labelHe).join(' · ');
+export function logisticsHeadline(findings, lang = 'he') {
+  return findings.map((f) => (lang === 'en' ? f.labelEn || f.labelHe : f.labelHe)).join(' · ');
 }

@@ -64,9 +64,31 @@ export function cityChip(item) {
 }
 
 const guideFirst = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'מדריך';
+const guideFirstEn = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'guide';
 // The DIRECT link to this one form. Never a portal link — see staffLinks.js.
 const formLink = (ctx) => ctx.guideNotice?.formUrl || '—';
+// Day/month/year is read the same way in both languages, so the date itself
+// needs no translation — only the words around it do.
 const dateTimeLine = (f) => `${formatDateHe(f.tourDate) || '—'} | ${f.tourTime || '—'}`;
+
+// ── English display rules ────────────────────────────────────────────────────
+// A guide whose preferred language is English gets the SAME facts in the same
+// order — the icons, the structure and the link are identical, so a manager
+// comparing the two messages sees one report, not two.
+
+const EN_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export function englishWeekday(dateStr) {
+  const d = Date.parse(`${dateStr}T00:00:00Z`);
+  return Number.isNaN(d) ? null : EN_WEEKDAYS[new Date(d).getUTCDay()];
+}
+
+/** The English twin of dayLabel — same buckets, same order. */
+export function dayLabelEn(daysAway, dateStr) {
+  if (daysAway === 0) return 'Today';
+  if (daysAway === 1) return 'Tomorrow';
+  return englishWeekday(dateStr) || formatDateHe(dateStr) || '—';
+}
 
 // ── the catalog entries ──────────────────────────────────────────────────────
 
@@ -75,6 +97,7 @@ export const GUIDE_REPORTS = [
     number: 11,
     key: 'guide_daily_coordination',
     nameHe: 'סטטוס שיחות תיאום יומי (למדריך)',
+    nameEn: 'Daily coordination-call status (to the guide)',
     group: 'coordination',
     audience: 'guides',
     schedule: { hour: 8, minute: 0 },
@@ -109,6 +132,28 @@ export const GUIDE_REPORTS = [
       }
       return lines(out);
     },
+    renderEn: (ctx) => {
+      const g = ctx.guideDigest || {};
+      const items = g.coordination || [];
+      const missing = g.missingSummaries || [];
+      const out = ['☎️ Coordination-call status for the days ahead', ''];
+      if (!items.length) out.push('No coordination calls in the days ahead.');
+      out.push(...items.map((i) => [
+        `${statusIcon(i.done, i.daysAway)} ${dayLabelEn(i.daysAway, i.tourDate)}`,
+        `${i.customerName || '—'} (${i.participants ?? '—'})`,
+        cityChip(i),
+        i.productName || '—',
+      ].filter(Boolean).join(' | ')));
+      if (missing.length) {
+        out.push('', '────────────────', '', '📝 Tour summaries still missing', '');
+        out.push(...missing.map((m) => [
+          formatDateHe(m.tourDate) || '—',
+          m.customerName || '—',
+          m.productName || '—',
+        ].join(' | ')));
+      }
+      return lines(out);
+    },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideDigest: {
@@ -130,6 +175,7 @@ export const GUIDE_REPORTS = [
     number: 12,
     key: 'guide_coordination_call_due',
     nameHe: 'זמן לשיחת תיאום (למדריך)',
+    nameEn: 'Time for the coordination call (to the guide)',
     group: 'coordination',
     audience: 'guides',
     triggerHe:
@@ -179,6 +225,45 @@ export const GUIDE_REPORTS = [
         formLink(ctx),
       ]);
     },
+    renderEn: (ctx) => {
+      const f = ctx.guideNotice || {};
+      if (f.openTour) {
+        const p = f.participants || {};
+        return lines([
+          '☎️ Time for the coordination call!',
+          '',
+          '🎫 Open tour',
+          '',
+          `📅 ${dateTimeLine(f)}`,
+          '',
+          `🎨 ${f.productName || '—'}`,
+          '',
+          '👥 Participants:',
+          ...((p.customers || []).length
+            ? p.customers.map((c) => `• ${c.label} (${c.count})`)
+            : ['• No registrations yet']),
+          '',
+          'Open the tour:',
+          '',
+          formLink(ctx),
+        ]);
+      }
+      return lines([
+        '☎️ Time for the coordination call!',
+        '',
+        `👤 ${f.contactName || f.customerName || '—'}`,
+        '',
+        `🏢 ${f.orgName || '—'}`,
+        '',
+        `🎨 ${f.productName || '—'}`,
+        '',
+        `👥 ${f.participants ?? '—'}`,
+        '',
+        'Open the tour:',
+        '',
+        formLink(ctx),
+      ]);
+    },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
@@ -194,6 +279,7 @@ export const GUIDE_REPORTS = [
     number: 13,
     key: 'guide_open_tour_new_participant',
     nameHe: 'הצטרף משתתף חדש לסיור פתוח (למדריך)',
+    nameEn: 'A new participant joined an open tour (to the guide)',
     group: 'coordination',
     audience: 'guides',
     triggerHe:
@@ -213,6 +299,20 @@ export const GUIDE_REPORTS = [
         formLink(ctx),
       ]);
     },
+    renderEn: (ctx) => {
+      const f = ctx.guideNotice || {};
+      return lines([
+        '➕ A new participant joined the open tour',
+        '',
+        `👤 ${f.newCustomerName || '—'} (${f.newCustomerCount ?? '—'})`,
+        '',
+        `📅 ${dateTimeLine(f)}`,
+        '',
+        'Open the tour:',
+        '',
+        formLink(ctx),
+      ]);
+    },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
@@ -227,6 +327,7 @@ export const GUIDE_REPORTS = [
     number: 14,
     key: 'guide_summary_due',
     nameHe: 'הגיע הזמן למלא סיכום סיור (למדריך)',
+    nameEn: 'Time to fill in the tour summary (to the guide)',
     group: 'tour_summary',
     audience: 'guides',
     triggerHe:
@@ -248,6 +349,22 @@ export const GUIDE_REPORTS = [
         formLink(ctx),
       ]);
     },
+    renderEn: (ctx) => {
+      const f = ctx.guideNotice || {};
+      return lines([
+        '📝 Time to fill in the tour summary',
+        '',
+        `Hi ${guideFirstEn(ctx)},`,
+        '',
+        `We hope the tour with ${f.customerName || '—'} went well.`,
+        '',
+        `📅 ${dateTimeLine(f)}`,
+        '',
+        'Here is the tour summary form:',
+        '',
+        formLink(ctx),
+      ]);
+    },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
@@ -261,6 +378,7 @@ export const GUIDE_REPORTS = [
     number: 15,
     key: 'guide_summary_reminder_1',
     nameHe: 'תזכורת ראשונה לסיכום סיור (למדריך)',
+    nameEn: 'First tour-summary reminder (to the guide)',
     group: 'tour_summary',
     audience: 'guides',
     triggerHe: '3 שעות אחרי סיום הסיור, ורק אם עדיין לא הוגש סיכום.',
@@ -281,6 +399,22 @@ export const GUIDE_REPORTS = [
         formLink(ctx),
       ]);
     },
+    renderEn: (ctx) => {
+      const f = ctx.guideNotice || {};
+      return lines([
+        '📝 Reminder: the tour summary',
+        '',
+        `Hi ${guideFirstEn(ctx)},`,
+        '',
+        `📅 ${dateTimeLine(f)}`,
+        '',
+        `We have not received your summary for ${f.customerName || '—'} yet.`,
+        '',
+        'Best to do it now, while it is still fresh 😊',
+        '',
+        formLink(ctx),
+      ]);
+    },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
@@ -294,6 +428,7 @@ export const GUIDE_REPORTS = [
     number: 16,
     key: 'guide_summary_reminder_2',
     nameHe: 'תזכורת שנייה לסיכום סיור (למדריך)',
+    nameEn: 'Second tour-summary reminder (to the guide)',
     group: 'tour_summary',
     audience: 'guides',
     triggerHe: '6 שעות אחרי סיום הסיור, ורק אם הסיכום עדיין חסר.',
@@ -310,6 +445,22 @@ export const GUIDE_REPORTS = [
         `עדיין לא קיבלנו את סיכום הסיור של ${f.customerName || '—'}.`,
         '',
         'בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏',
+        '',
+        formLink(ctx),
+      ]);
+    },
+    renderEn: (ctx) => {
+      const f = ctx.guideNotice || {};
+      return lines([
+        '🔔 The tour summary is still waiting',
+        '',
+        `Hi ${guideFirstEn(ctx)},`,
+        '',
+        `📅 ${dateTimeLine(f)}`,
+        '',
+        `We have not received your summary for ${f.customerName || '—'} yet.`,
+        '',
+        'Without the summary, the tour is not really finished 🙏',
         '',
         formLink(ctx),
       ]);

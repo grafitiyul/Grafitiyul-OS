@@ -464,6 +464,30 @@ REPORTS.push(...GUIDE_REPORTS);
 // catalog, same renderer contract — the email one simply also renders a subject.
 REPORTS.push(...REVIEW_REPORTS);
 
+// ── Bilingual integrity, enforced at load ────────────────────────────────────
+// A report that CLAIMS to be bilingual (it carries an English name) must
+// actually be able to render in English — including the subject line, for email
+// reports. Half a translation is worse than none: it sends an English subject
+// over a Hebrew body, or silently falls back with no one noticing.
+//
+// This throws at import time, so a half-translated report cannot reach
+// production — the server refuses to boot rather than sending something wrong.
+// It is deliberately a claim-based rule: a report with no `nameEn` is honestly
+// Hebrew-only and keeps working untouched.
+export function assertBilingualIntegrity(reports) {
+  for (const r of reports) {
+    if (!r.nameEn) continue;
+    if (typeof r.renderEn !== 'function') {
+      throw new Error(`report #${r.number} declares nameEn but has no renderEn — a bilingual report must render in both languages`);
+    }
+    if (typeof r.renderSubject === 'function' && typeof r.renderSubjectEn !== 'function') {
+      throw new Error(`report #${r.number} has an English body but no English subject — an English mail would carry a Hebrew subject`);
+    }
+  }
+}
+
+assertBilingualIntegrity(REPORTS);
+
 export function reportByNumber(number) {
   return REPORTS.find((r) => r.number === Number(number)) || null;
 }

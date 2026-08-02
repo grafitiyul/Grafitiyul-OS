@@ -41,17 +41,17 @@ const definition = {
 
   when: null, // every summary is reviewed
 
-  // TWO actions, in order: create the card a manager reads, THEN tell them it
-  // exists. The notification carries a deep link to the card, so the card must
-  // exist first — action order is what guarantees the link resolves.
+  // ONE action: create the cards. The manager NOTIFICATIONS that follow (#17
+  // summary submitted, #19 payment left, #20 logistics) are code-defined
+  // reports fired from the card builder itself — internal operational signals
+  // do not belong in the Communication Center, which owns customer-facing
+  // content. They fire after the cards exist, so their deep links resolve.
   actions: [
     { kind: 'review_item', reviewKind: 'tour_summary' },
-    { kind: 'communication' },
   ],
 
   dependsOn: [
     { kind: 'questionnaire_template', templateKey: TEMPLATE_KEY, severity: 'hard' },
-    { kind: 'communication_trigger', triggerType: 'automation:AUT-002' },
   ],
 
   idempotency: (ev) => `AUT-002:${ev.submissionId}`,
@@ -60,7 +60,9 @@ const definition = {
     'התוכן מוקפא על הכרטיס ברגע היצירה — מדריך, לקוח, ארגון, מוצר, וריאציה, מועד '
     + 'והתשובות עצמן — כך שעריכה מאוחרת של השאלון, הדיל או הסיור לא משכתבת את מה '
     + 'שההנהלה כבר קראה. השאלות מזוהות לפי תפקיד (config.summaryRole / '
-    + 'config.logisticsRole) ולא לפי מפתח קשיח, כדי שניסוח וסדר יישארו חופשיים.',
+    + 'config.logisticsRole) ולא לפי מפתח קשיח, כדי שניסוח וסדר יישארו חופשיים. '
+    + 'ההתראות עצמן הן דיווחי מנהלים המוגדרים בקוד (#17, #19, #20) ולא הודעות '
+    + 'ממרכז התקשורת.',
 };
 
 registerAutomation(definition);

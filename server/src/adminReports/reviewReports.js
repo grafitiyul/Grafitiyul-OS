@@ -22,6 +22,7 @@ export const REVIEW_REPORTS = [
     number: 17,
     key: 'tour_summary_submitted',
     nameHe: 'סיכום סיור הוגש',
+    nameEn: 'A tour summary was submitted',
     triggerHe:
       'נורה פעם אחת לכל סיכום סיור שמוגש. עריכה מאוחרת של הסיכום אינה מפעילה דיווח נוסף.',
     dataHe:
@@ -45,6 +46,26 @@ export const REVIEW_REPORTS = [
         r.hasLogistics ? '⚠ נוצר גם דו״ח לוגיסטי' : null,
         '',
         'לקריאה ואישור:',
+        reviewLink(ctx, r.reviewItemId),
+      ]);
+    },
+    renderEn: (ctx) => {
+      const r = ctx.summaryReview || {};
+      const party = [r.customerName, r.orgName].filter(Boolean).join(' - ') || '—';
+      const product = [r.productName, r.variantName].filter(Boolean).join(' · ') || '—';
+      return lines([
+        '📝 A new tour summary 📝',
+        '',
+        `Guide: ${r.guideName || '—'}`,
+        `Customer: ${party}`,
+        `Product: ${product}`,
+        `Tour: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
+        '',
+        `How the tour went overall: ${r.overall || '—'}`,
+        r.hasLogistics ? '' : null,
+        r.hasLogistics ? '⚠ A logistics report was created as well' : null,
+        '',
+        'Read and approve:',
         reviewLink(ctx, r.reviewItemId),
       ]);
     },
@@ -218,6 +239,82 @@ REVIEW_REPORTS.push({
       balanceText: '₪1,250.00',
       dealOrderNo: 27184,
       reviewItemId: 'ri_sample',
+    },
+  }),
+});
+
+// ── #20 logistics report from a tour summary ─────────────────────────────────
+// Replaces AUT-003 (Communication Center). The logistics owner needs to hear
+// about a dirty studio or a low stock immediately, and that is an internal
+// operational signal — so it is code-defined, on the shared queue, like every
+// other manager report.
+//
+// The ALERT says there is a problem; the DETAIL lives on the logistics card in
+// משימות הנהלה, which is why the message ends with a link to that card rather
+// than repeating every answer.
+//
+// Findings arrive already resolved by role (never by question wording), each
+// carrying both labels — so the two languages can never drift apart into
+// different sets of facts.
+
+const findingLines = (findings, lang) =>
+  (findings || []).map((f) => `• ${(lang === 'en' ? f.labelEn : f.labelHe) || f.labelHe}`);
+
+REVIEW_REPORTS.push({
+  number: 20,
+  key: 'logistics_alert',
+  nameHe: 'דו״ח לוגיסטי מסיכום סיור',
+  nameEn: 'Logistics report from a tour summary',
+  triggerHe:
+    'נורה כשסיכום סיור מדווח על בעיה לוגיסטית — ניקיון, מלאי, ציוד או תקלה טכנית. '
+    + 'פעם אחת לכל הגשה; סיכום ללא ממצא לוגיסטי אינו מפעיל דיווח.',
+  dataHe:
+    'הממצאים נגזרים לפי תפקיד (config.logisticsRole) ולא לפי ניסוח או מפתח קשיח, '
+    + 'ולכן הם זהים למה שמופיע בכרטיס הלוגיסטי. הפירוט המלא נמצא בכרטיס.',
+
+  render: (ctx) => {
+    const r = ctx.logisticsAlert || {};
+    return lines([
+      '🧹 דו״ח לוגיסטי מסיור 🧹',
+      '',
+      `מדריך: ${r.guideName || '—'}`,
+      `מועד הסיור: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
+      '',
+      'מה דווח:',
+      ...findingLines(r.findings, 'he'),
+      '',
+      'לפירוט המלא:',
+      reviewLink(ctx, r.reviewItemId),
+    ]);
+  },
+
+  renderEn: (ctx) => {
+    const r = ctx.logisticsAlert || {};
+    return lines([
+      '🧹 Logistics report from a tour 🧹',
+      '',
+      `Guide: ${r.guideName || '—'}`,
+      `Tour: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
+      '',
+      'Reported:',
+      ...findingLines(r.findings, 'en'),
+      '',
+      'Full detail:',
+      reviewLink(ctx, r.reviewItemId),
+    ]);
+  },
+
+  sample: () => ({
+    links: { origin: 'https://app.grafitiyul.co.il' },
+    logisticsAlert: {
+      guideName: 'מיכל ברק',
+      tourDate: '2026-09-16',
+      tourTime: '17:00',
+      findings: [
+        { role: 'studio_dirty', labelHe: 'הסטודיו הושאר מלוכלך', labelEn: 'The studio was left dirty' },
+        { role: 'vinyl_low', labelHe: 'מלאי ויניל נמוך', labelEn: 'Vinyl stock is running low' },
+      ],
+      reviewItemId: 'ri_sample_logistics',
     },
   }),
 });
