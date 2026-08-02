@@ -418,6 +418,31 @@ export async function sweepUnsyncedWooTours(db, { today = israelToday() } = {}) 
   return res.count;
 }
 
+// Expiry: a synced occurrence whose date has PASSED must not stay published on
+// the storefront — a published past variation pollutes the public date list and
+// keeps its price inside Woo's "starting from" range forever. Re-pend each such
+// tour ONCE (origin 'expiry'); normal convergence then drafts every variation via
+// the disabled derivation (completed/cancelled status or a passed registration
+// cutoff). Only already-linked tours qualify, so the first-publication gate never
+// fires and this can only ever HIDE, never publish. Idempotent: convergence
+// leaves origin 'expiry' on the row, which excludes it from the next sweep.
+export async function sweepExpiredWooTours(db, { today = israelToday() } = {}) {
+  const templateIds = await mappedTemplateIds(db);
+  if (!templateIds.length) return 0;
+  const res = await db.tourEvent.updateMany({
+    where: {
+      wooSyncStatus: 'synced',
+      OR: [{ wooSyncOrigin: null }, { wooSyncOrigin: { not: 'expiry' } }],
+      kind: 'group_slot',
+      date: { lt: today },
+      openTourTemplateId: { in: templateIds },
+      wooVariationLinks: { some: {} },
+    },
+    data: { wooSyncStatus: 'pending', wooSyncOrigin: 'expiry' },
+  });
+  return res.count;
+}
+
 // ── Worker loop (mirrors the calendar worker) ────────────────────────────────
 
 let started = false;
@@ -458,6 +483,11 @@ export function startWooSyncWorker(log = console) {
         const swept = await sweepUnsyncedWooTours(prisma);
         if (swept) log?.log?.(`[woo-sync] backfill: marked ${swept} tours pending`);
       }
+
+      // Not bulk-gated: expiry only converges ALREADY-linked occurrences (it
+      // drafts them), which plain WOO_SYNC_ENABLED already permits.
+      const expired = await sweepExpiredWooTours(prisma);
+      if (expired) log?.log?.(`[woo-sync] expiry: marked ${expired} past tours pending (draft on storefront)`);
 
       const due = {
         wooSyncStatus: 'pending',

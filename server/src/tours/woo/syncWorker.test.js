@@ -629,6 +629,43 @@ test('a successful sync records the revision it synced (wooSyncedRevision)', asy
   assert.equal(done.wooSyncedRevision, 7); // stamps the desired revision it synced
 });
 
+// ── Expiry sweep ─────────────────────────────────────────────────────────────
+import { sweepExpiredWooTours } from './syncWorker.js';
+
+function expiryDb({ mappings = [{ cardGroupId: 'cardA', active: true }], templateProducts = [{ templateId: 'tpl1' }] } = {}) {
+  const updates = [];
+  return {
+    updates,
+    wooProductMapping: { findMany: async () => mappings.filter((m) => m.active) },
+    openTourTemplateProduct: { findMany: async () => templateProducts },
+    tourEvent: {
+      updateMany: async ({ where, data }) => {
+        updates.push({ where, data });
+        return { count: 3 };
+      },
+    },
+  };
+}
+
+test('sweepExpiredWooTours re-pends synced PAST linked tours once, origin expiry', async () => {
+  const db = expiryDb();
+  const n = await sweepExpiredWooTours(db, { today: '2026-08-02' });
+  assert.equal(n, 3);
+  const { where, data } = db.updates[0];
+  assert.equal(where.wooSyncStatus, 'synced'); // never touches pending/failed/null
+  assert.deepEqual(where.date, { lt: '2026-08-02' }); // strictly past days only
+  assert.deepEqual(where.wooVariationLinks, { some: {} }); // linked only — can never trigger first publication
+  // origin 'expiry' rows are excluded → one-shot per tour, no permanent churn
+  assert.deepEqual(where.OR, [{ wooSyncOrigin: null }, { wooSyncOrigin: { not: 'expiry' } }]);
+  assert.deepEqual(data, { wooSyncStatus: 'pending', wooSyncOrigin: 'expiry' });
+});
+
+test('sweepExpiredWooTours is a no-op with no active mapping', async () => {
+  const db = expiryDb({ mappings: [] });
+  assert.equal(await sweepExpiredWooTours(db, { today: '2026-08-02' }), 0);
+  assert.equal(db.updates.length, 0);
+});
+
 // ── Cutoff helper ────────────────────────────────────────────────────────────
 
 test('occurrenceClosed respects the close cutoff', () => {
