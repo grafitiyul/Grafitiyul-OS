@@ -26,8 +26,13 @@ export const LOGISTICS_ROLES = [
   { role: 'studio_dirty', labelHe: 'הסטודיו הושאר מלוכלך', rule: 'affirmative' },
   { role: 'stencil_discarded', labelHe: 'נזרק סטנסיל', rule: 'affirmative' },
   { role: 'vinyl_low', labelHe: 'מלאי ויניל נמוך', rule: 'affirmative' },
-  { role: 'new_spray_can', labelHe: 'נפתחה פחית ספריי חדשה', rule: 'affirmative' },
-  { role: 'equipment_shortage', labelHe: 'חוסרים בציוד', rule: 'nonEmpty' },
+  // Free TEXT in the live form ('איזה ספריי הוצאת') — 'there is an answer' is
+  // the signal, exactly like the equipment slot.
+  { role: 'new_spray_can', labelHe: 'נפתחה פחית ספריי חדשה', rule: 'nonEmpty' },
+  // The live form asks about equipment shortages and technical problems in ONE
+  // question, so technical_issue stays registered but unmapped — a future form
+  // may split them, and an unmapped role is simply absent from the card.
+  { role: 'equipment_shortage', labelHe: 'חוסרים בציוד או תקלה טכנית', rule: 'nonEmpty' },
   { role: 'technical_issue', labelHe: 'תקלה טכנית', rule: 'nonEmpty' },
 ];
 

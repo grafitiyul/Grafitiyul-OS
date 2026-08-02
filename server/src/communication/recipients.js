@@ -16,6 +16,7 @@
 // send time (the worker re-resolves before sending).
 
 import { prisma } from '../db.js';
+import { staffName, staffLanguage } from '../../../shared/staffName.mjs';
 import { contactPhone, contactEmail, contactFullName } from './context.js';
 
 function contactRecipient(contact, channel) {
@@ -38,10 +39,16 @@ function personRecipient(person, channel) {
   return {
     key: `person:${person.id}`,
     personRefId: person.id,
-    name: person.displayName,
+    // The GOS-owned name in the person's own language, falling back to the
+    // legacy recruitment-synced displayName.
+    name: staffName(person, staffLanguage(person)) || person.displayName,
     phone: person.phone || null,
     email: person.email || null,
-    language: 'he', // staff communications are Hebrew-canonical
+    // Staff communications used to be hardcoded Hebrew-canonical. Now that a
+    // staff member HAS a preferred language, it decides. The message's own
+    // languagePolicy still overrides (he_only / en_only), so an operator can
+    // still force a language for a specific message.
+    language: staffLanguage(person),
     missing: channel === 'whatsapp' ? !person.phone : !person.email,
   };
 }
@@ -75,6 +82,8 @@ export async function resolveRecipients(message, ctx) {
         groupChatId: chat.id,
         groupJid: chat.externalChatId,
         name: chat.groupSubject || 'קבוצת WhatsApp',
+        // A group has no personal preference — the office group is Hebrew. A
+        // message can still force a language via its own languagePolicy.
         language: 'he',
         missing: false,
       }],
@@ -112,7 +121,11 @@ export async function resolveRecipients(message, ctx) {
     }
     case 'explicit_staff': {
       if (!message.audiencePersonRefId) return { recipients: [], group: null, error: 'לא נבחר איש צוות' };
-      const person = await prisma.personRef.findUnique({ where: { id: message.audiencePersonRefId } });
+      const person = await prisma.personRef.findUnique({
+        where: { id: message.audiencePersonRefId },
+        // The profile carries the GOS-owned name + preferred language.
+        include: { profile: true },
+      });
       const r = personRecipient(person, message.channel);
       return { recipients: r ? [r] : [], group: null, error: person ? undefined : 'איש הצוות שנבחר אינו קיים עוד' };
     }

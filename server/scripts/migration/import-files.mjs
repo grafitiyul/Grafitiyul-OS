@@ -109,7 +109,8 @@ console.log(`metadata-only crosswalks: closed ${closedN} · remote ${remoteN}`);
 async function download(fileId) {
   for (let attempt = 1; ; attempt += 1) {
     if (++used > CEILING) throw Object.assign(new Error(`download ceiling ${CEILING} reached`), { code: 'CEILING' });
-    const res = await fetch(`https://${domain}.pipedrive.com/api/v1/files/${fileId}/download?api_token=${encodeURIComponent(token)}`, { redirect: 'follow' });
+    // A hung connection must fail, not freeze the whole run — 60s cap per file.
+    const res = await fetch(`https://${domain}.pipedrive.com/api/v1/files/${fileId}/download?api_token=${encodeURIComponent(token)}`, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
     if (res.status === 429) {
       if (attempt > 6) throw new Error(`file ${fileId} → 429 after ${attempt} attempts`);
       await sleep(Number(res.headers.get('retry-after')) * 1000 || 15_000 * attempt);

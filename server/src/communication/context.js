@@ -40,7 +40,7 @@ const DEAL_INCLUDE = {
     include: {
       tourEvent: {
         include: {
-          assignments: { include: { personRef: true } },
+          assignments: { include: { personRef: { include: { profile: true } } } },
           location: true,
           productVariant: true,
           product: true,
@@ -163,7 +163,7 @@ export async function loadTriggerContext(
     tour = await prisma.tourEvent.findUnique({
       where: { id: tourEventId },
       include: {
-        assignments: { include: { personRef: true } },
+        assignments: { include: { personRef: { include: { profile: true } } } },
         location: true,
         productVariant: true,
         product: true,

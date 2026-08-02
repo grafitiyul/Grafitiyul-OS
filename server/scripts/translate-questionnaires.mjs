@@ -23,6 +23,7 @@
 
 import { prisma } from '../src/db.js';
 import { translateContent, translationConfigured } from '../src/communication/translate.js';
+import { createNextDraft } from '../src/questionnaires/service.js';
 
 const args = process.argv.slice(2);
 const EXECUTE = args.includes('--execute');
@@ -82,7 +83,7 @@ async function run() {
 
     // Only DRAFT versions are writable. A published version is frozen by
     // design; translating it would mean editing a live form's structure.
-    const drafts = await prisma.questionnaireVersion.findMany({
+    let drafts = await prisma.questionnaireVersion.findMany({
       where: { templateId: t.id, status: 'draft' },
       include: {
         sections: { include: { questions: { include: { options: true } } } },
@@ -90,8 +91,22 @@ async function run() {
     });
 
     if (!drafts.length) {
-      console.log('   no draft version — skipped (published versions are immutable)');
-      continue;
+      // A questionnaire with only a published version would otherwise be
+      // untranslatable without manual work. Create the next draft through the
+      // CANONICAL versioning path (createNextDraft), which clones the published
+      // structure — keys, options and config included — and leaves the
+      // published version completely untouched.
+      if (!EXECUTE) {
+        console.log('   no draft version — would create one (dry run)');
+        continue;
+      }
+      const created = await createNextDraft(t.id);
+      console.log(`   + draft version ${created.existed ? '(existing)' : 'created'} for translation — published version untouched`);
+      drafts = await prisma.questionnaireVersion.findMany({
+        where: { id: created.id },
+        include: { sections: { include: { questions: { include: { options: true } } } } },
+      });
+      if (!drafts.length) { console.log('   could not load the new draft — skipped'); continue; }
     }
 
     // English must be a supported language or the runtime will never serve it.

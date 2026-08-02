@@ -358,6 +358,12 @@ export async function createNextDraft(templateId) {
     select: { versionNo: true },
   });
 
+  // Cloning is BATCHED, three levels deep, because a row-at-a-time clone is a
+  // round-trip per question AND per option. On a real questionnaire (16
+  // questions, ~50 options) that exceeded Prisma's 5s interactive-transaction
+  // budget and the whole clone failed — an operator pressing "גרסה חדשה" would
+  // just see an error. Batching turns ~70 round-trips into ~6, and keeps the
+  // whole clone atomic.
   const created = await prisma.$transaction(async (tx) => {
     const v = await tx.questionnaireVersion.create({
       data: {
@@ -369,23 +375,40 @@ export async function createNextDraft(templateId) {
         outro: current.outro,
       },
     });
-    for (const s of clonedSections) {
-      const { questions, ...sectionData } = s;
-      const sec = await tx.questionnaireSection.create({ data: { ...sectionData, versionId: v.id } });
-      for (const q of questions) {
-        const { options, ...qData } = q;
-        await tx.questionnaireQuestion.create({
-          data: {
-            ...qData,
-            versionId: v.id,
-            sectionId: sec.id,
-            options: { create: options },
-          },
-        });
-      }
-    }
+
+    // 1. Sections. `key` is stable across versions, so it is what we re-read by.
+    await tx.questionnaireSection.createMany({
+      data: clonedSections.map(({ questions, ...s }) => ({ ...s, versionId: v.id })),
+    });
+    const newSections = await tx.questionnaireSection.findMany({
+      where: { versionId: v.id },
+      select: { id: true, key: true },
+    });
+    const sectionIdByKey = new Map(newSections.map((s) => [s.key, s.id]));
+
+    // 2. Questions, all sections at once.
+    const questionRows = clonedSections.flatMap((s) =>
+      s.questions.map(({ options, ...q }) => ({
+        ...q,
+        versionId: v.id,
+        sectionId: sectionIdByKey.get(s.key),
+      })));
+    if (questionRows.length) await tx.questionnaireQuestion.createMany({ data: questionRows });
+
+    const newQuestions = await tx.questionnaireQuestion.findMany({
+      where: { versionId: v.id },
+      select: { id: true, key: true },
+    });
+    const questionIdByKey = new Map(newQuestions.map((q) => [q.key, q.id]));
+
+    // 3. Options, every question at once.
+    const optionRows = clonedSections.flatMap((s) =>
+      s.questions.flatMap((q) =>
+        (q.options || []).map((o) => ({ ...o, questionId: questionIdByKey.get(q.key) }))));
+    if (optionRows.length) await tx.questionnaireQuestionOption.createMany({ data: optionRows });
+
     return v;
-  });
+  }, { timeout: 20_000 });
   return { id: created.id, existed: false };
 }
 

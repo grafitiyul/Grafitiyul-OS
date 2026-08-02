@@ -12,32 +12,24 @@
 // message in the system. Nothing here composes text or sends anything.
 //
 // ── The condition ────────────────────────────────────────────────────────────
-// `when` is deliberately empty in code and the real condition lives in
-// `dependsOn`: the payment question is identified by its STABLE KEY, which the
-// office maps once in the questionnaire builder. Until that mapping exists the
-// automation reports itself as שבורה in the registry with the exact missing
-// key, which is the honest state — better than silently matching nothing.
+// The payment question is `yesno`, whose stored value is a BOOLEAN (see
+// questionnaires/types.js) — not an option key. So the condition compares to
+// `true`; there is no option dependency to declare, because no option value is
+// ever written into an answer for this type.
 //
-// To finish wiring this automation:
-//   1. In the tour summary questionnaire, open the payment question and copy
-//      its stable key (the automation panel shows it).
-//   2. Replace PAYMENT_QUESTION_KEY / PAYMENT_YES_OPTION below.
-//   3. Create a Communication Center event on the AUT-001 trigger.
-//
-// The registry's dependency panel walks an operator through exactly this.
+// The key below is the LIVE question, verified against production. If the
+// question is ever deleted and recreated the key changes, and the registry will
+// report this automation שבורה with the exact missing key — publish is also
+// blocked by the questionnaire's own key guard, so it cannot happen silently.
 
 import { registerAutomation } from '../registry.js';
 
-// The office maps these once. They are the ONLY template-specific values in
-// this file, and they are keys — never question or answer wording.
-// The LIVE tour-summary template. Template keys are auto-generated at
-// creation (tpl_<hex>), so this is the real one, verified in production.
-// The TRIGGER matches on PURPOSE, not on this key — the office decides which
-// template serves 'tour_summary' — so rebuilding the form cannot stop the
-// automation. The key is used only for the key-protection dependency check.
+// The live tour-summary template. The TRIGGER matches on PURPOSE (the office
+// decides which template serves 'tour_summary'), so this key is used only for
+// the key-protection dependency check.
 const TEMPLATE_KEY = 'tpl_2ff0ecd9';
-const PAYMENT_QUESTION_KEY = null; // e.g. 'q_9f3a12bd'
-const PAYMENT_YES_OPTION = null;   // e.g. 'o_7c21ab90'
+// "האם התקבל תשלום?" — yesno.
+const PAYMENT_QUESTION_KEY = 'q_1aa409f5';
 
 const definition = {
   id: 'AUT-001',
@@ -58,28 +50,15 @@ const definition = {
     contexts: ['deal', 'contact', 'org', 'tour', 'payment'],
   },
 
-  // Stable keys only. Null until the office maps the question, which the
-  // registry surfaces as a broken dependency rather than a silent no-op.
-  when: PAYMENT_QUESTION_KEY && PAYMENT_YES_OPTION
-    ? { q: PAYMENT_QUESTION_KEY, op: 'eq', value: PAYMENT_YES_OPTION }
-    : null,
+  // Boolean, because `yesno` stores a boolean. Referenced by STABLE KEY, so
+  // rewording the question changes nothing.
+  when: { q: PAYMENT_QUESTION_KEY, op: 'eq', value: true },
 
   actions: [{ kind: 'communication' }],
 
   dependsOn: [
     { kind: 'questionnaire_template', templateKey: TEMPLATE_KEY, severity: 'hard' },
-    ...(PAYMENT_QUESTION_KEY
-      ? [{ kind: 'questionnaire_question', templateKey: TEMPLATE_KEY, questionKey: PAYMENT_QUESTION_KEY, severity: 'hard' }]
-      : []),
-    ...(PAYMENT_QUESTION_KEY && PAYMENT_YES_OPTION
-      ? [{
-        kind: 'questionnaire_option',
-        templateKey: TEMPLATE_KEY,
-        questionKey: PAYMENT_QUESTION_KEY,
-        optionValue: PAYMENT_YES_OPTION,
-        severity: 'hard',
-      }]
-      : []),
+    { kind: 'questionnaire_question', templateKey: TEMPLATE_KEY, questionKey: PAYMENT_QUESTION_KEY, severity: 'hard' },
     { kind: 'communication_trigger', triggerType: 'automation:AUT-001' },
   ],
 
@@ -89,8 +68,7 @@ const definition = {
 
   notesHe:
     'היתרה לתשלום מגיעה ממודול הגבייה (collection.js), שהוא מקור האמת היחיד לחישוב — '
-    + 'לא מסכום הדיל. הודעה למנהלים בלבד; הלקוח אינו מקבל דבר מהאוטומציה הזו. '
-    + 'כל עוד שאלת התשלום לא מופתה במרשם, האוטומציה תוצג כשבורה עם המפתח החסר.',
+    + 'לא מסכום הדיל. הודעה למנהלים בלבד; הלקוח אינו מקבל דבר מהאוטומציה הזו.',
 };
 
 registerAutomation(definition);
