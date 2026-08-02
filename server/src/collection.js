@@ -442,7 +442,9 @@ export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
       // Operational context the work queue filters on. Read-only — none of it
       // enters the collection math.
       product: { select: { id: true, nameHe: true } },
-      productVariant: { select: { id: true, nameHe: true } },
+      // A ProductVariant has no name of its own — it IS a Product × Location
+      // pair, and its identity to an operator is the city.
+      productVariant: { select: { id: true, location: { select: { nameHe: true } } } },
       location: { select: { id: true, nameHe: true } },
       // The guide is a property of the TOUR, reached through the deal's live
       // booking — the same canonical relationship the Tours module uses.
@@ -452,7 +454,9 @@ export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
           tourEvent: {
             select: {
               date: true,
-              assignments: { select: { role: true, person: { select: { displayName: true } } } },
+              // TourAssignment carries a displayName snapshot alongside its PersonRef —
+              // the canonical way the Tours module reads a guide name.
+              assignments: { select: { role: true, displayName: true, personRef: { select: { displayName: true } } } },
             },
           },
         },
@@ -498,7 +502,11 @@ export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
         collectionReviewStatusSource: deal.collectionReviewStatusSource || null,
         activityType: deal.activityType || null,
         product: deal.product ? { id: deal.product.id, name: deal.product.nameHe } : null,
-        productVariant: deal.productVariant ? { id: deal.productVariant.id, name: deal.productVariant.nameHe } : null,
+        productVariant: deal.productVariant
+          ? { id: deal.productVariant.id, name: deal.productVariant.location?.nameHe || null }
+          : null,
+        // The deal's operational city — usually the variant's location, but it
+        // may be a manual override, which is why it is read from the deal.
         city: deal.location ? { id: deal.location.id, name: deal.location.nameHe } : null,
         // Business when an organisation is linked (the canonical rule — a
         // linked org IS the classification SSOT) or when explicitly classified.
@@ -507,7 +515,7 @@ export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
           ...new Set(
             (deal.bookings || [])
               .flatMap((b) => b.tourEvent?.assignments || [])
-              .map((a) => a.person?.displayName)
+              .map((a) => a.personRef?.displayName || a.displayName)
               .filter(Boolean),
           ),
         ],
