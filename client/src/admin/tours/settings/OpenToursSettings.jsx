@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import Toggle from '../../common/Toggle.jsx';
 import Dialog from '../../common/Dialog.jsx';
+import CollapsibleCard from '../../common/CollapsibleCard.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import AlertDialog from '../../common/AlertDialog.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
@@ -19,12 +20,21 @@ const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 const PRIMARY =
   'rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50';
+const SECONDARY =
+  'rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
 const FIELD_LABEL = 'mb-1 block text-[12px] font-medium text-gray-600';
 
 const EXCEPTION_TYPE_LABELS = { add: 'תוספת מועד', cancel: 'ביטול מועד', time_override: 'שינוי שעה' };
 
 function errText(e) {
   return 'שגיאה: ' + (e.payload?.error || e.message);
+}
+
+// Small count badge for collapsed-section headers (rules/exceptions/products).
+function CountChip({ n }) {
+  return (
+    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-gray-500">{n}</span>
+  );
 }
 
 export default function OpenToursSettings() {
@@ -34,6 +44,8 @@ export default function OpenToursSettings() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [editIsNew, setEditIsNew] = useState(false); // freshly created → editor opens with details expanded
+  const [wooOpen, setWooOpen] = useState(false); // advanced/technical — collapsed by default
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   // Shared TourSettings globals (migrated here from the retired Group Tours page).
@@ -83,6 +95,7 @@ export default function OpenToursSettings() {
       const t = await api.openTours.create({ nameHe: newName.trim() });
       setNewName('');
       await refresh();
+      setEditIsNew(true);
       setEditId(t.id); // open the editor on the fresh template
     } catch (e) {
       setAlertMsg(errText(e));
@@ -122,46 +135,60 @@ export default function OpenToursSettings() {
         </p>
       </header>
 
-      {/* Shared generation globals */}
-      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+      {/* 1a. The active website template — the page's primary action */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6 overflow-hidden">
         <div className="px-5 pt-4 pb-3 border-b border-gray-100">
-          <h2 className="text-[15px] font-semibold text-gray-900">תזמון אוטומטי</h2>
+          <h2 className="text-[15px] font-semibold text-gray-900">
+            {templates.filter((t) => t.active).length > 1 ? 'תבניות הסיור הפעילות באתר' : 'תבנית הסיור הפעילה באתר'}
+          </h2>
           <p className="text-[12.5px] text-gray-500 mt-0.5">
-            המערכת יוצרת סלוטים עתידיים אוטומטית כשהם נכנסים לאופק המוגדר, לפי תבניות הסיור הפתוח.
+            התבנית שמייצרת את מועדי הסיור הפתוח שנמכרים באתר — כאן עורכים אותה.
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-3 px-5 py-4">
-          <label className="block">
-            <span className={FIELD_LABEL}>קיבולת ברירת מחדל</span>
-            <input
-              type="number"
-              min="1"
-              value={globals.defaultCapacity}
-              onChange={(e) => setGlobals((g) => ({ ...g, defaultCapacity: e.target.value }))}
-              className={INPUT + ' w-32'}
-            />
-          </label>
-          <label className="block">
-            <span className={FIELD_LABEL}>ימים קדימה ליצירה</span>
-            <input
-              type="number"
-              min="0"
-              max="366"
-              value={globals.generateDaysAhead}
-              onChange={(e) => setGlobals((g) => ({ ...g, generateDaysAhead: e.target.value }))}
-              className={INPUT + ' w-32'}
-            />
-          </label>
-          <button type="button" disabled={savingGlobals} onClick={saveGlobals} className={PRIMARY + ' h-10'}>
-            {savingGlobals ? 'שומר…' : 'שמירה'}
-          </button>
-        </div>
-      </section>
-
-      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
-        <div className="flex flex-wrap items-end gap-2 px-5 py-4 border-b border-gray-100 bg-gray-50/60 rounded-t-2xl">
+        {loading ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">טוען…</div>
+        ) : error ? (
+          <div className="px-5 py-6 text-center text-sm text-red-600">
+            שגיאה: <span dir="ltr" className="font-mono">{error}</span>
+          </div>
+        ) : templates.filter((t) => t.active).length === 0 ? (
+          <p className="px-5 py-6 text-[13px] text-gray-500">
+            אין תבנית פעילה כרגע — הפעילו תבנית קיימת ברשימה למטה, או צרו תבנית חדשה.
+          </p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {templates
+              .filter((t) => t.active)
+              .map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[16px] font-bold text-gray-900">
+                      {t.nameHe}
+                      {t.location?.nameHe && <span className="font-normal text-gray-400"> · {t.location.nameHe}</span>}
+                    </div>
+                    <div className="mt-0.5 text-[12.5px] text-gray-500">
+                      {t.scheduleRules?.length || 0} כללי תזמון · {t.products?.length || 0} מוצרים ·{' '}
+                      {t.exceptions?.length || 0} חריגים
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditIsNew(false);
+                      setEditId(t.id);
+                    }}
+                    className={PRIMARY + ' h-11 px-6 text-[15px]'}
+                  >
+                    עריכת תבנית
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
+        {/* Secondary action: create another website template */}
+        <div className="flex flex-wrap items-end gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50/60">
           <label className="block flex-1 min-w-[200px]">
-            <span className={FIELD_LABEL}>תבנית חדשה</span>
+            <span className={FIELD_LABEL}>שם התבנית החדשה</span>
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -170,11 +197,18 @@ export default function OpenToursSettings() {
               className={INPUT}
             />
           </label>
-          <button type="button" disabled={creating || !newName.trim()} onClick={createTemplate} className={PRIMARY}>
-            {creating ? 'יוצר…' : '+ יצירת תבנית'}
+          <button type="button" disabled={creating || !newName.trim()} onClick={createTemplate} className={SECONDARY}>
+            {creating ? 'יוצר…' : '+ יצירת תבנית חדשה למוצר באתר'}
           </button>
         </div>
+      </section>
 
+      {/* 1b. Full template list — activate/suspend, edit, delete */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <h2 className="text-[15px] font-semibold text-gray-900">כל התבניות</h2>
+          <p className="text-[12.5px] text-gray-500 mt-0.5">הפעלה, השהיה, עריכה ומחיקה של כל תבניות הסיור הפתוח.</p>
+        </div>
         {loading ? (
           <div className="px-5 py-8 text-center text-sm text-gray-400">טוען…</div>
         ) : error ? (
@@ -203,7 +237,10 @@ export default function OpenToursSettings() {
                 <Toggle checked={t.active} onChange={(v) => toggleActive(t, v)} label="פעיל" />
                 <button
                   type="button"
-                  onClick={() => setEditId(t.id)}
+                  onClick={() => {
+                    setEditIsNew(false);
+                    setEditId(t.id);
+                  }}
                   className="h-8 rounded-md px-3 text-[13px] font-medium text-blue-600 hover:bg-blue-50"
                 >
                   עריכה
@@ -222,13 +259,59 @@ export default function OpenToursSettings() {
         )}
       </section>
 
-      <WooMappingsSection />
+      {/* 2. Shared generation globals */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <h2 className="text-[15px] font-semibold text-gray-900">תזמון אוטומטי</h2>
+          <p className="text-[12.5px] text-gray-500 mt-0.5">
+            המערכת יוצרת סלוטים עתידיים אוטומטית כשהם נכנסים לאופק המוגדר, לפי תבניות הסיור הפתוח.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3 px-5 py-4">
+          <label className="block max-w-[280px]">
+            <span className={FIELD_LABEL}>מקסימום משתתפים ברירת מחדל (לא מונע הרשמה אם יהיו עוד)</span>
+            <input
+              type="number"
+              min="1"
+              value={globals.defaultCapacity}
+              onChange={(e) => setGlobals((g) => ({ ...g, defaultCapacity: e.target.value }))}
+              className={INPUT + ' w-32'}
+            />
+          </label>
+          <label className="block">
+            <span className={FIELD_LABEL}>ימים קדימה ליצירה</span>
+            <input
+              type="number"
+              min="0"
+              max="366"
+              value={globals.generateDaysAhead}
+              onChange={(e) => setGlobals((g) => ({ ...g, generateDaysAhead: e.target.value }))}
+              className={INPUT + ' w-32'}
+            />
+          </label>
+          <button type="button" disabled={savingGlobals} onClick={saveGlobals} className={PRIMARY + ' h-10'}>
+            {savingGlobals ? 'שומר…' : 'שמירה'}
+          </button>
+        </div>
+      </section>
+
+      {/* 3. Woo mapping — advanced/technical, collapsed by default */}
+      <CollapsibleCard
+        open={wooOpen}
+        onToggle={() => setWooOpen((o) => !o)}
+        title="WooCommerce — מיפוי מוצרים"
+        subtitle="הגדרה טכנית של חיבור הכרטיסים למוצרי האתר — לא נדרשת בעבודה השוטפת"
+      >
+        <WooMappingsSection />
+      </CollapsibleCard>
 
       {editId && (
         <OpenTourEditor
           templateId={editId}
+          isNew={editIsNew}
           onClose={() => {
             setEditId(null);
+            setEditIsNew(false);
             refresh();
           }}
         />
@@ -253,8 +336,17 @@ export default function OpenToursSettings() {
 const EMPTY_RULE = { weekday: 4, startTime: '17:00', validFrom: '', validUntil: '', season: '' };
 const EMPTY_EXC = { date: '', type: 'add', time: '11:00' };
 
-function OpenTourEditor({ templateId, onClose }) {
+function OpenTourEditor({ templateId, isNew = false, onClose }) {
   const [tpl, setTpl] = useState(null);
+  // Section expansion: day-to-day work happens in rules + exceptions, so details
+  // and products start collapsed on an existing template. A fresh template must
+  // be filled in, so everything starts open.
+  const [openSecs, setOpenSecs] = useState(() =>
+    isNew
+      ? { details: true, products: true, rules: true, exceptions: true }
+      : { details: false, products: false, rules: true, exceptions: true },
+  );
+  const toggleSec = (k) => setOpenSecs((o) => ({ ...o, [k]: !o[k] }));
   const [locations, setLocations] = useState([]);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -505,14 +597,22 @@ function OpenTourEditor({ templateId, onClose }) {
   }
 
   return (
-    <Dialog open onClose={onClose} title="עריכת תבנית סיור פתוח" size="2xl">
+    <Dialog open onClose={onClose} title={isNew ? 'תבנית סיור פתוח חדשה' : 'עריכת תבנית סיור פתוח'} size="2xl">
       {loading || !scalars ? (
         <div className="py-10 text-center text-sm text-gray-400">טוען…</div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-3">
           {/* Scalars */}
-          <section>
-            <h3 className="mb-2 text-[13px] font-semibold text-gray-700">פרטי התבנית</h3>
+          <CollapsibleCard
+            open={openSecs.details}
+            onToggle={() => toggleSec('details')}
+            title="פרטי התבנית"
+            subtitle={
+              [scalars.nameHe, locations.find((l) => l.id === scalars.locationId)?.nameHe]
+                .filter(Boolean)
+                .join(' · ') || 'שם, מיקום, שפה, משך וקיבולת'
+            }
+          >
             <div className="grid grid-cols-2 gap-3">
               <label className="col-span-2 block">
                 <span className={FIELD_LABEL}>שם</span>
@@ -561,11 +661,16 @@ function OpenTourEditor({ templateId, onClose }) {
                 {saving ? 'שומר…' : 'שמירת פרטים'}
               </button>
             </div>
-          </section>
+          </CollapsibleCard>
 
           {/* Products */}
-          <section className="border-t border-gray-100 pt-5">
-            <h3 className="mb-1 text-[13px] font-semibold text-gray-700">מוצרים למכירה</h3>
+          <CollapsibleCard
+            open={openSecs.products}
+            onToggle={() => toggleSec('products')}
+            title="מוצרים למכירה"
+            meta={<CountChip n={selectedVariantIds.size} />}
+            subtitle="אילו כרטיסים נמכרים בסיור הזה"
+          >
             <p className="mb-2 text-[12px] text-gray-500">
               בחרו אילו כרטיסים (Pricing Cards שסומנו למכירת כרטיסים) נמכרים בסיור זה. סמנו כרטיס אחד
               כ״בסיס״ — הוא המוצר התפעולי כשאין הרשמות.
@@ -595,11 +700,16 @@ function OpenTourEditor({ templateId, onClose }) {
                 })}
               </div>
             )}
-          </section>
+          </CollapsibleCard>
 
           {/* Schedule rules */}
-          <section className="border-t border-gray-100 pt-5">
-            <h3 className="mb-2 text-[13px] font-semibold text-gray-700">כללי תזמון שבועיים</h3>
+          <CollapsibleCard
+            open={openSecs.rules}
+            onToggle={() => toggleSec('rules')}
+            title="כללי תזמון שבועיים"
+            meta={<CountChip n={tpl.scheduleRules?.length || 0} />}
+            subtitle="באילו ימים ושעות הסיור מתקיים"
+          >
             <div className="mb-3 divide-y divide-gray-100 rounded-lg border border-gray-200">
               {(tpl.scheduleRules || []).length === 0 ? (
                 <p className="px-3 py-3 text-center text-[12.5px] text-gray-400">אין כללים עדיין.</p>
@@ -651,11 +761,16 @@ function OpenTourEditor({ templateId, onClose }) {
               <DateField value={ruleDraft.validUntil} onChange={(v) => setRuleDraft((d) => ({ ...d, validUntil: v }))} placeholder="בתוקף עד" />
               <button type="button" onClick={addRule} className={PRIMARY}>+ כלל</button>
             </div>
-          </section>
+          </CollapsibleCard>
 
           {/* Exceptions */}
-          <section className="border-t border-gray-100 pt-5">
-            <h3 className="mb-2 text-[13px] font-semibold text-gray-700">חריגים חד-פעמיים</h3>
+          <CollapsibleCard
+            open={openSecs.exceptions}
+            onToggle={() => toggleSec('exceptions')}
+            title="חריגים חד-פעמיים"
+            meta={<CountChip n={tpl.exceptions?.length || 0} />}
+            subtitle="תוספת, ביטול או שינוי שעה של מועד בודד"
+          >
             <div className="mb-3 divide-y divide-gray-100 rounded-lg border border-gray-200">
               {(tpl.exceptions || []).length === 0 ? (
                 <p className="px-3 py-3 text-center text-[12.5px] text-gray-400">אין חריגים.</p>
@@ -702,7 +817,7 @@ function OpenTourEditor({ templateId, onClose }) {
               )}
               <button type="button" disabled={!excDraft.date} onClick={addException} className={PRIMARY}>+ חריג</button>
             </div>
-          </section>
+          </CollapsibleCard>
         </div>
       )}
 
@@ -914,9 +1029,11 @@ function WooMappingsSection() {
   }
 
   return (
-    <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+    // Rendered inside the page-level CollapsibleCard (advanced section, collapsed
+    // by default); -m-4 reclaims the card body padding so the full-bleed rows keep
+    // their original edge-to-edge layout.
+    <div className="-m-4">
       <div className="px-5 pt-4 pb-3 border-b border-gray-100">
-        <h2 className="text-[15px] font-semibold text-gray-900">WooCommerce — מיפוי מוצרים</h2>
         <p className="text-[12.5px] text-gray-500 mt-0.5">
           לכל כרטיס תמחור שנמכר, מזהה המוצר (Variable Product) באתר. כרטיס = ערך פעילות אחד (pa_פעילות)
           בתוך מוצר עירוני, וכל סוג כרטיס (מבוגר/ילד) הופך לווריאציית גיל (pa_גיל) במחירו הקנוני. GOS
@@ -1112,7 +1229,7 @@ function WooMappingsSection() {
         body={typeof alertMsg === 'object' ? alertMsg?.body : alertMsg}
         onClose={() => setAlertMsg(null)}
       />
-    </section>
+    </div>
   );
 }
 
