@@ -13,6 +13,7 @@ import { reserveSendSlot } from '../whatsapp/sendPace.js';
 import { reportByNumber, renderReport, renderReportSubject, reportChannel } from './registry.js';
 import { deliverReportEmail, resolveEmailRecipients } from './emailDelivery.js';
 import { checkSendAllowed, audienceKindFromReport } from '../communication/sendingPolicy.js';
+import { enqueueCustomerMessage } from './customerDelivery.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
 export async function reportConfig(number) {
@@ -48,10 +49,10 @@ export async function fireAdminReport(
   try {
     const report = reportByNumber(number);
     if (!report) return { ok: false, reason: 'unknown_report' };
-    // A guide-audience report addresses ONE PERSON; the caller resolves who
-    // (the canonical guide resolver) and passes them in. The configured group
-    // chat is irrelevant for these — only the sending account is.
-    const toPerson = report.audience === 'guides';
+    // A guide- or customer-audience report addresses ONE PERSON; the caller
+    // resolves who and passes them in. The configured group chat is irrelevant
+    // for these — only the sending account is.
+    const toPerson = report.audience === 'guides' || report.audience === 'customer';
     if (toPerson && !recipient) return { ok: false, reason: 'recipient_required' };
 
     const config = await reportConfig(number);
@@ -64,9 +65,12 @@ export async function fireAdminReport(
     // language when the office enables it; manager reports stay Hebrew unless
     // the same switch is turned on for them. Falls back to Hebrew whenever the
     // report has no English version, so an untranslated report still arrives.
-    const lang = config?.sendInGuideLanguage
+    // A CUSTOMER report always follows the customer's own language: "send in
+    // the guide's language" is a staff setting and has no meaning here, and a
+    // customer must never receive Hebrew because an internal toggle is off.
+    const lang = report.audience === 'customer'
       ? (recipient?.preferredLanguage || 'he')
-      : 'he';
+      : (config?.sendInGuideLanguage ? (recipient?.preferredLanguage || 'he') : 'he');
     const renderedText = renderReport(number, ctx, lang);
 
     const base = {
@@ -119,6 +123,14 @@ export async function fireAdminReport(
       destinationLabel: toPerson ? (recipient.name || recipient.phone) : await destinationLabel(config),
     }, log);
     if (!row) return { ok: true, reason: 'duplicate' }; // idempotency hit
+
+    // Customer messages are TRANSPORTED by the shared queue (customer windows,
+    // connection deferral, retries, attachments). The row above is the
+    // exactly-once gate; the queue is what actually sends.
+    if (report.audience === 'customer') {
+      await enqueueCustomerMessage(row, { attachments: data?.attachments || [] }, log);
+      return { ok: true, deliveryId: row.id };
+    }
 
     await sendDelivery(row, log);
     return { ok: true, deliveryId: row.id };

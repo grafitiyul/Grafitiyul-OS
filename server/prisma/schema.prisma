@@ -4800,6 +4800,12 @@ model QuestionnairePurposeConfig {
   purpose    String                 @unique
   template   QuestionnaireTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   templateId String?
+  // Read-only context block shown ABOVE the questions:
+  // [{ key, enabled, labelHe, labelEn }] in display order. Keys are restricted
+  // to the allowlisted catalog (questionnaires/contextCatalog.js) — this is a
+  // choice of WHICH canonical field appears and how it is labelled, never a
+  // query and never questionnaire content. Null = the catalog default.
+  contextFields Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5951,6 +5957,12 @@ model AdminReportDelivery {
   renderedSubject      String?
   destinationLabel     String?
   providerMessageId    String?
+  // Customer-audience reports are TRANSPORTED by the shared WhatsApp queue
+  // (windows, connection deferral, retries and the media path all live there),
+  // so this row is the idempotency gate and the audit record while the linked
+  // scheduled message carries the actual send. Loose ref, same convention as
+  // the other cross-module ids here.
+  scheduledMessageId   String?
   attemptCount         Int       @default(0)
   // Provider unreachable: the row is PRESERVED and retried WITHOUT burning a
   // real attempt (mirrors the WhatsApp/email workers). Before this, a long

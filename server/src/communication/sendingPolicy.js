@@ -55,9 +55,18 @@ export function audienceKindFromScheduledMessage(row) {
   return row?.personRefId ? 'guide' : 'customer';
 }
 
-/** Admin reports: guide-audience reports address one guide; the rest are internal. */
+/**
+ * Admin reports: a guide-audience report addresses one guide, a
+ * customer-audience one addresses a customer, everything else is internal.
+ *
+ * Customer reports never reach this resolver at send time — they are handed to
+ * the WhatsApp queue, which resolves the SAME 'customer' policy from the row
+ * itself. Both paths therefore agree by construction rather than by agreement.
+ */
 export function audienceKindFromReport(report) {
-  return report?.audience === 'guides' ? 'guide' : 'manager';
+  if (report?.audience === 'guides') return 'guide';
+  if (report?.audience === 'customer') return 'customer';
+  return 'manager';
 }
 
 /**

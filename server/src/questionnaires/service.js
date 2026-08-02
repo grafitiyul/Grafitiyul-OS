@@ -27,6 +27,8 @@ import { isKnownType, typeHasOptions } from './types.js';
 import { validateVersionForPublish, blockingProblems } from './publishRules.js';
 import { referencesForTemplate, referencePayloadForTemplate } from '../automations/references.js';
 import { fireQuestionnaireAutomations } from '../automations/sources/questionnaire.js';
+import { freezeCoordinationContext } from './coordinationContext.js';
+import { coordinationFollowups } from './coordinationFollowup.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, purposeAllowsLiveEdit, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
@@ -1139,6 +1141,24 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
   // subject-agnostic: both שיחת תיאום (booking) and סיכום סיור (tour_event) are
   // covered without touching either adapter.
   fireQuestionnaireAutomations(updated, { firstSubmit: isFirstSubmit });
+
+  // Coordination consequences — same contract as the automation hook: AFTER the
+  // commit, never awaited into the response, never able to fail the submission.
+  //
+  // Only on FIRST submit. A guide re-opening their form to fix a typo is not a
+  // second coordination call, and every action downstream is keyed on the
+  // submission id anyway — this just avoids the pointless work.
+  if (updated.purpose === 'coordination' && isFirstSubmit) {
+    // The context the guide actually saw becomes evidence at this moment.
+    freezeCoordinationContext(updated).catch(() => {});
+    coordinationFollowups({
+      submission: updated,
+      // Questions live under sections, so they must be flattened — `version.questions`
+      // does not exist and would silently match no roles at all.
+      questions: flatQuestions(structureOf(version)),
+      answers,
+    }).catch(() => {});
+  }
 
   return updated;
 }

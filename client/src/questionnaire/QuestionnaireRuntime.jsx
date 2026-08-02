@@ -529,6 +529,10 @@ export default function QuestionnaireRuntime({
   busyLabel,
   previewBadge = false,
   uploader = null,
+  // Server-computed live values for specific questions, keyed by question key.
+  // Canonical data shown WITH a question without being stored as questionnaire
+  // content — the same principle as the read-only context block.
+  hints = null,
 }) {
   const defLang = runtime?.template?.defaultLanguage || 'he';
   const lang = language || defLang;
@@ -648,6 +652,9 @@ export default function QuestionnaireRuntime({
           {r(q.label)}
           {q.required ? <span className="text-red-500 ms-1">*</span> : null}
         </label>
+        {hints?.[q.key] ? (
+          <p className="text-[12.5px] font-medium text-gray-700 mb-1.5">{hints[q.key]}</p>
+        ) : null}
         {r(q.helpText) ? (
           <p className="text-[12px] text-gray-500 mb-1.5">{r(q.helpText)}</p>
         ) : null}

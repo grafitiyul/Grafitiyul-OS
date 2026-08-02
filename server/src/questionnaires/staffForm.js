@@ -18,6 +18,8 @@ import {
 } from './service.js';
 import { resolveStaffFormLink } from './staffLinks.js';
 import { getSubjectAdapter, getPurpose } from './registry.js';
+import { coordinationContextBlock, frozenContextBlock } from './coordinationContext.js';
+import { coordinationHints } from './coordinationHints.js';
 
 /**
  * Everything the staff fill page needs, for the ONE form this token authorizes.
@@ -51,9 +53,24 @@ export async function staffFormPayload(token) {
     ? await adapter.prefill(link.subjectId, language)
     : {};
 
+  // The read-only context block. A LIVE form reads canonical data now (the
+  // guide is about to phone this customer and needs the current number); a
+  // SUBMITTED one shows what was frozen at submit, because from that moment it
+  // is evidence rather than a working aid.
+  let context = [];
+  let hints = {};
+  if (link.purpose === 'coordination' && link.subjectType === 'booking') {
+    context = submission.status === 'draft'
+      ? await coordinationContextBlock(link.subjectId, language)
+      : (frozenContextBlock(submission) || []);
+    hints = await coordinationHints(link.subjectId, runtimePayload(version), language);
+  }
+
   return {
     status: submission.status,
     language,
+    context,
+    hints,
     // The subject snapshot the form itself needs (which booking / which tour),
     // frozen at start — the same context a guide sees on the tour page.
     subject: submission.subjectSnapshot || null,

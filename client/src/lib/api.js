@@ -1806,6 +1806,25 @@ export const api = {
       return res.json();
     },
     // Public fill (no auth — token IS the capability; used by /form/:token).
+    // Staff form — the scoped-link surface (/f/:token). Separate namespace
+    // from publicForm because it is a different capability with different
+    // server rules, not a variant of the customer one.
+    staffForm: {
+      get: (token) => request(`/api/staff-form/form/${token}`),
+      saveAnswers: (token, answers) =>
+        request(`/api/staff-form/form/${token}/answers`, { method: 'PUT', body: JSON.stringify({ answers }) }),
+      submit: (token, answers, language) =>
+        request(`/api/staff-form/form/${token}/submit`, { method: 'POST', body: JSON.stringify({ answers, language }) }),
+      upload: async (token, file) => {
+        const res = await fetch(`/api/staff-form/form/${token}/upload?filename=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          cache: 'no-store',
+          body: file,
+        });
+        if (!res.ok) throw new Error('upload_failed');
+        return res.json();
+      },
+    },
     publicForm: {
       get: (token) => request(`/api/public/form/${token}`),
       saveAnswers: (token, answers) =>

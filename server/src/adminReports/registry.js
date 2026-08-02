@@ -22,6 +22,7 @@ import { adminDisplayName } from '../admin/displayName.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 import { GUIDE_REPORTS } from './guideReports.js';
 import { REVIEW_REPORTS } from './reviewReports.js';
+import { COORDINATION_FOLLOWUP_REPORTS } from './coordinationFollowups.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -463,6 +464,12 @@ REPORTS.push(...GUIDE_REPORTS);
 // Review-inbox reports (#17 per summary, #18 the daily digest email). Same
 // catalog, same renderer contract — the email one simply also renders a subject.
 REPORTS.push(...REVIEW_REPORTS);
+
+// Coordination follow-ups (#21-#24). #23 and #24 are CUSTOMER-audience: same
+// catalog and same renderer contract, transported by the shared WhatsApp queue
+// rather than sent directly, because a customer message needs customer sending
+// windows, connection deferral and attachments.
+REPORTS.push(...COORDINATION_FOLLOWUP_REPORTS);
 
 // ── Bilingual integrity, enforced at load ────────────────────────────────────
 // A report that CLAIMS to be bilingual (it carries an English name) must

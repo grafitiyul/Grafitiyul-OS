@@ -181,8 +181,10 @@ test('each workflow owns only its own guide notifications', () => {
     assert.equal(r.audience, 'guides', `#${r.number} addresses a guide`);
     assert.ok(r.triggerHe?.length > 10);
   }
-  // The office reports stay where they are.
-  assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 17, 18, 19, 20]);
+  // The office reports stay where they are. #23/#24 are customer-audience but
+  // still belong on the Manager Reports screen: the operator configures and
+  // previews them there, they simply address a customer rather than the office.
+  assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 17, 18, 19, 20, 21, 22, 23, 24]);
   assert.equal(reportByNumber(1).audience, undefined, 'office reports keep the group destination');
 });
 

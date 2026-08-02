@@ -78,6 +78,7 @@ import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
 import QuestionnaireBuilderPage from './admin/questionnaires/QuestionnaireBuilderPage.jsx';
 import QuestionnairePreviewPage from './admin/questionnaires/QuestionnairePreviewPage.jsx';
 import PublicFormPage from './questionnaire/PublicFormPage.jsx';
+import StaffFormPage from './questionnaire/StaffFormPage.jsx';
 import AgentReservationPage from './reservations/AgentReservationPage.jsx';
 import ReservationsList from './admin/crm/reservations/ReservationsList.jsx';
 // Global Settings module (low-frequency configuration).
@@ -401,6 +402,10 @@ export default function App() {
       {/* Public questionnaire fill (coordination form etc.) — token-gated
           (QuestionnaireLink.token), no admin auth, mobile-first. */}
       <Route path="/form/:token" element={<PublicFormPage />} />
+      {/* Staff form fill — token-gated single-form capability, the landing page
+          for coordination/summary links in operational messages. Deliberately
+          NOT under /p/: a portal token opens the portal, this opens one form. */}
+      <Route path="/f/:token" element={<StaffFormPage />} />
       {/* Public travel-agent reservation form — token-gated
           (AgentReservationLink.token), no admin auth, bilingual RTL/LTR. */}
       <Route path="/r/:token" element={<AgentReservationPage />} />
