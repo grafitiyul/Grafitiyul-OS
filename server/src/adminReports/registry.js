@@ -24,6 +24,7 @@ import { GUIDE_REPORTS } from './guideReports.js';
 import { REVIEW_REPORTS } from './reviewReports.js';
 import { COORDINATION_FOLLOWUP_REPORTS } from './coordinationFollowups.js';
 import { OFFICE_REPORTS_EN, OFFICE_REPORT_NAMES_EN } from './officeReportsEn.js';
+import { NEW_LEAD_REPORT } from './newLeadReport.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -471,6 +472,10 @@ REPORTS.push(...REVIEW_REPORTS);
 // rather than sent directly, because a customer message needs customer sending
 // windows, connection deferral and attachments.
 REPORTS.push(...COORDINATION_FOLLOWUP_REPORTS);
+
+// #25 — the new-lead manager alert, migrated out of AUT-004 + Communication
+// Center message #12 so one business event has one implementation.
+REPORTS.push(NEW_LEAD_REPORT);
 
 // ── Bilingual integrity, enforced at load ────────────────────────────────────
 // A report that CLAIMS to be bilingual (it carries an English name) must

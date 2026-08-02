@@ -28,17 +28,14 @@ const DEFS = new Map();
 
 // Trigger kinds, by approved scope. The generic `domain_event`/`schedule`
 // programme (adopting every existing GOS behaviour into the engine) was
-// declined, and the workers keep owning their own scheduling. Kinds are added
-// one at a time, each for an explicitly approved business event:
-//   * external_lead_created   — a genuinely NEW deal born from an EXTERNAL
-//     intake origin (ingress pipeline / Pipedrive lead bridge). Fired by the
-//     intake code itself, never inferred from which screen created the deal —
-//     internal creation paths (manual, WhatsApp, Email, duplication,
-//     migration) can never reach it.
-// questionnaire_submitted was REMOVED with the last questionnaire automation.
-// Leaving it declared would be a trap: a definition could use it, pass
-// validation, and never fire — there is no source that emits it any more.
-export const TRIGGER_KINDS = ['external_lead_created'];
+// declined, and the workers keep owning their own scheduling.
+//
+// EMPTY, deliberately. A kind is declared only when a SOURCE emits it; every
+// previous kind was removed with the automation it served, because leaving one
+// declared is a trap — a definition could use it, pass validation, appear in
+// the registry UI and never fire. Adding an automation means adding its kind
+// and the code that emits it, together.
+export const TRIGGER_KINDS = [];
 
 export const CATEGORIES = {
   tours: 'סיורים',

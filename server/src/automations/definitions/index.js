@@ -1,21 +1,24 @@
 // Automation registration — importing this module wires every automation into
-// the registry. Adding an automation is ONE import line here plus the
-// definition file; the runtime, the API and the registry screen never change.
+// the registry.
 //
-// ── What is NOT here anymore ────────────────────────────────────────────────
-// Every questionnaire automation has been retired. AUT-001 and AUT-003 became
-// Manager Reports #19 and #20; AUT-002 became a direct call from the submit
-// path (questionnaires/service.js), because a registry runtime between "a form
-// was submitted" and "a card exists" added a second idempotency layer and an
-// enable/disable toggle on top of operations that are each already idempotent,
-// and made the chain readable only by tracing a definition, a trigger match and
-// an action executor.
+// ── There are currently NONE, and that is the finished state ────────────────
+// All four allocated automations have been retired into Manager Reports:
+//   AUT-001 → report #19   (payment left after the tour)
+//   AUT-002 → a direct call from questionnaires/service.js (review cards)
+//   AUT-003 → report #20   (logistics)
+//   AUT-004 → report #25   (new external lead)
 //
-// What remains is the ONE thing this engine is genuinely for: a business event
-// that an operator wants to route to editable Communication Center content.
+// The pattern every one of them followed was: a business event, routed through
+// a registry runtime, into Communication Center content, into the queue. That
+// middle layer added a second idempotency mechanism and an enable/disable
+// toggle on top of operations already idempotent by their own unique index,
+// and split "what happens when X" across three files. The Communication Center
+// now owns CUSTOMER-facing content only; every message to the team is a
+// code-defined report on the shared queue.
 //
-// Order does not matter: automations are independent by construction (they
-// react to events, never to each other). Read order in the registry comes from
-// the ledger, so it follows allocation, not import order.
-
-import './AUT-004.new-lead-manager-alert.js';
+// The ENGINE stays. What it is for is unchanged and still valid: a business
+// event an operator wants routed to editable content. Nothing needs it today.
+//
+// Adding one back is: allocate an id in ledger.js, add a trigger kind and the
+// source that emits it, add a definition file, add one import line here.
+// ledger.js keeps every retired id and its reason, so no id is ever reused.

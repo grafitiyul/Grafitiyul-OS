@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { registerAutomation, automationTriggerType, autIdFromTriggerType, __resetRegistry } from './registry.js';
+import { registerAutomation, automationTriggerType, autIdFromTriggerType, __resetRegistry, TRIGGER_KINDS,
+} from './registry.js';
 import { ALLOCATED } from './ledger.js';
 import {
   allTriggers, allTriggerTypes, triggerByType, isDerivedTrigger,
   CATEGORY_LABELS, unregisterDerivedTrigger,
 } from '../communication/triggerCatalog.js';
 import { TRIGGERS as BUILT_IN } from '../communication/triggers.js';
+
+// The registry declares NO trigger kinds: every one was removed with the
+// automation it served. These tests exercise the generic engine, so they lend
+// it a synthetic kind — the same trick withAllocatedId plays with ids.
+const TEST_TRIGGER_KIND = 'test_event';
+if (!TRIGGER_KINDS.includes(TEST_TRIGGER_KIND)) TRIGGER_KINDS.push(TEST_TRIGGER_KIND);
 
 // The bridge that keeps automations from becoming a second messaging system:
 // a registered automation appears in the Communication Center's trigger picker,
@@ -20,7 +27,7 @@ const def = (over = {}) => ({
   descriptionHe: 'נורה כשסיכום סיור מדווח על תשלום שהתקבל.',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'external_lead_created' },
+  trigger: { kind: TEST_TRIGGER_KIND },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],

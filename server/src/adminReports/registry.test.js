@@ -8,7 +8,7 @@ import {
 
 test('report numbers are stable, unique and documented', () => {
   const numbers = REPORTS.map((r) => r.number);
-  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
   assert.equal(new Set(numbers).size, numbers.length);
   for (const r of REPORTS) {
     assert.ok(r.nameHe?.length > 3, `#${r.number} has a Hebrew name`);

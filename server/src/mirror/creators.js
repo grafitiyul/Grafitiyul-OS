@@ -22,7 +22,7 @@ import { defaultFields, validateContactNames } from '../migration/review/nameCle
 import { tourStatusOf } from '../migration/import/tourImport.js';
 import { normalizeCoordRow } from '../migration/import/tourNormalize.js';
 import { CHILD_TABLES } from './sources/airtableTourChildren.js';
-import { fireExternalLeadAutomations } from '../automations/sources/leadCreated.js';
+import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
 
 const t = (v) => { const s = String(v ?? '').trim(); return s === '' ? null : s; };
 const pid = (v) => (v && typeof v === 'object' ? v.value ?? v.id : v) ?? null;
@@ -285,7 +285,7 @@ export async function createDeal(db, normalized, row) {
   // creates and non-open deals never notify; the batch/cutover importers do
   // not go through this creator at all, so history can never emit.
   if (made?.entityId && !made.alreadyExisted && !made.reason && p.status === 'open') {
-    fireExternalLeadAutomations({
+    fireNewLeadReport({
       dealId: made.entityId,
       origin: 'pipedrive:lead_bridge',
       eventRef: `pipedrive:deal:${row.externalId}`,

@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveHealth, resolveEnabled, needsAttention, STATUS } from './health.js';
-import { registerAutomation, __resetRegistry } from './registry.js';
+import { registerAutomation, __resetRegistry, TRIGGER_KINDS,
+} from './registry.js';
 import { ALLOCATED, RETIRED } from './ledger.js';
+
+// The registry declares NO trigger kinds: every one was removed with the
+// automation it served. These tests exercise the generic engine, so they lend
+// it a synthetic kind — the same trick withAllocatedId plays with ids.
+const TEST_TRIGGER_KIND = 'test_event';
+if (!TRIGGER_KINDS.includes(TEST_TRIGGER_KIND)) TRIGGER_KINDS.push(TEST_TRIGGER_KIND);
 
 // Live operational status. The contract: an automation that cannot run says so,
 // with the specific reason, and nothing is ever masked.
@@ -14,7 +21,7 @@ const def = (over = {}) => ({
   descriptionHe: 'x',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'external_lead_created' },
+  trigger: { kind: TEST_TRIGGER_KIND },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],

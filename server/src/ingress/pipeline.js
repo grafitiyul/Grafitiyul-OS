@@ -33,7 +33,7 @@ import {
 } from './records.js';
 import { IngressError, toIngressError, STAGES } from './errors.js';
 import { platformConfig } from './config.js';
-import { fireExternalLeadAutomations } from '../automations/sources/leadCreated.js';
+import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
 
 export const MAX_ATTEMPTS = 8;
 const RETRY_BASE_MS = 60 * 1000; // 1m, 2m, 4m … capped at 1h
@@ -241,7 +241,7 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
     // the origin-based rule: every ingress adapter is by definition an
     // external intake source, so a future channel is included automatically.
     if (result.outcome === 'created_deal' && normalized.kind === 'lead') {
-      fireExternalLeadAutomations({ dealId: result.dealId, origin: `ingress:${row.source}`, eventRef: eventId });
+      fireNewLeadReport({ dealId: result.dealId, origin: `ingress:${row.source}`, eventRef: eventId });
     }
     return { status: 'processed', ...result };
   } catch (err) {

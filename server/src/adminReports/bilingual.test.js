@@ -15,23 +15,34 @@ import { REPORTS, hasEnglish, renderReportBoth, assertBilingualIntegrity } from 
 
 const bilingual = () => REPORTS.filter((r) => r.nameEn);
 
-// A `labelHe` / `labelEn` pair is ONE fact carried in two languages (a
-// logistics finding's caption, say) and is SUPPOSED to differ between the two
-// reports, so it is collected separately.
+// A `*He` / `*En` pair is ONE fact carried in two languages, and each report is
+// SUPPOSED to show its own side: a product named both "סיור גרפיטי" and
+// "Graffiti tour" must read differently in the two languages.
 //
-// Deliberately narrow. `nameHe`, `firstNameHe`, `meetingPointHe` and friends
-// also end in "He", but they are business DATA: a customer really is named
-// דנה, and an English report showing her Hebrew name is correct, not drift.
-// Treating every *He key as a label made this test demand that English reports
-// hide real customer names.
-const isTranslated = (key) => key === 'labelHe' || key === 'labelEn';
+// The test is whether BOTH sides actually exist. A contact with
+// firstNameHe: 'דנה' and firstNameEn: '' has no English name, so 'דנה' is plain
+// data that correctly appears in both reports — demanding the English hide it
+// would be demanding the report omit the customer's name.
+//
+// Getting this wrong in either direction produces a false failure, which is why
+// it is stated as a rule rather than a list of key names.
+const hasPair = (obj, key) => {
+  if (!key.endsWith('He')) return false;
+  const en = obj?.[`${key.slice(0, -2)}En`];
+  return typeof en === 'string' && en.trim() !== '';
+};
 
 /** Every language-NEUTRAL leaf value — the facts both reports must show. */
 function leafValues(value, out = []) {
   if (value === null || value === undefined) return out;
   if (Array.isArray(value)) { for (const v of value) leafValues(v, out); return out; }
   if (typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) if (!isTranslated(k)) leafValues(v, out);
+    for (const [k, v] of Object.entries(value)) {
+      // Skip both halves of a real pair — they are compared separately below.
+      if (hasPair(value, k)) continue;
+      if (k.endsWith('En') && hasPair(value, `${k.slice(0, -2)}He`)) continue;
+      leafValues(v, out);
+    }
     return out;
   }
   const s = String(value).trim();
@@ -44,8 +55,8 @@ function translationPairs(value, out = []) {
   if (!value || typeof value !== 'object') return out;
   if (Array.isArray(value)) { for (const v of value) translationPairs(v, out); return out; }
   for (const [k, v] of Object.entries(value)) {
-    if (k === 'labelHe' && typeof v === 'string' && typeof value.labelEn === 'string') {
-      out.push({ he: v, en: value.labelEn });
+    if (typeof v === 'string' && hasPair(value, k)) {
+      out.push({ he: v, en: value[`${k.slice(0, -2)}En`] });
     }
     translationPairs(v, out);
   }

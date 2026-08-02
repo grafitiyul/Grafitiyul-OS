@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   registerAutomation, validateDefinition,
   TRIGGER_KINDS, validateRegistry, definitionHash,
@@ -8,6 +9,12 @@ import {
 } from './registry.js';
 import { ALLOCATED, RETIRED, nextAvailableId } from './ledger.js';
 import './definitions/index.js';
+
+// The registry declares NO trigger kinds: every one was removed with the
+// automation it served. These tests exercise the generic engine, so they lend
+// it a synthetic kind — the same trick withAllocatedId plays with ids.
+const TEST_TRIGGER_KIND = 'test_event';
+if (!TRIGGER_KINDS.includes(TEST_TRIGGER_KIND)) TRIGGER_KINDS.push(TEST_TRIGGER_KIND);
 
 // Guard tests for the Automation Registry. These enforce the promises the whole
 // module rests on — an AUT id means one thing forever, and the registry can
@@ -20,7 +27,7 @@ const baseDef = (over = {}) => ({
   descriptionHe: 'תיאור',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'external_lead_created' },
+  trigger: { kind: TEST_TRIGGER_KIND },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],
@@ -162,16 +169,25 @@ test('registered definitions are readable and trigger-matchable', () => {
     assert.equal(automationById('AUT-900').nameHe, 'אוטומציית בדיקה');
     assert.equal(listAutomations().length, 1);
 
-    assert.equal(automationsForTrigger({ kind: 'external_lead_created' }).length, 1);
+    assert.equal(automationsForTrigger({ kind: TEST_TRIGGER_KIND }).length, 1);
     // A different kind matches nothing — the kind IS the identity.
     assert.equal(automationsForTrigger({ kind: 'something_else' }).length, 0);
   });
 });
 
-test('the live registry declares only trigger kinds a source actually emits', () => {
-  // Every declared kind must have a fire site, or a definition can be added,
-  // pass validation, appear in the UI and never run.
-  assert.deepEqual(TRIGGER_KINDS, ['external_lead_created']);
+test('every declared trigger kind has a source that emits it', () => {
+  // A kind with no fire site is a trap: a definition could use it, pass
+  // validation, appear in the registry UI and never run. The registry currently
+  // declares none — every automation was retired into Manager Reports — so this
+  // asserts the RULE, not a fixed list, and keeps holding when one comes back.
+  const declared = TRIGGER_KINDS.filter((k) => k !== TEST_TRIGGER_KIND);
+  for (const kind of declared) {
+    const emitted = fs.readdirSync('src', { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith('.js') && !f.includes('.test.'))
+      .some((f) => fs.readFileSync(`src/${f}`, 'utf8').includes(`kind: '${kind}'`));
+    assert.ok(emitted, `trigger kind ${kind} is declared but nothing emits it`);
+  }
 });
 
 // ── definition drift ─────────────────────────────────────────────────────────

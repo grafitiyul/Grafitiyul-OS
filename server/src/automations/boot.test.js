@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncAutomationChanges } from './boot.js';
-import { registerAutomation, __resetRegistry, definitionHash } from './registry.js';
+import { registerAutomation, __resetRegistry, definitionHash, TRIGGER_KINDS,
+} from './registry.js';
 import { ALLOCATED } from './ledger.js';
 import { unregisterDerivedTrigger } from '../communication/triggerCatalog.js';
 
@@ -20,6 +21,12 @@ test('index.js both imports AND calls syncAutomationChanges', () => {
   assert.match(src, /^\s*syncAutomationChanges\(/m, 'it must actually be CALLED at boot');
 });
 
+// The registry declares NO trigger kinds: every one was removed with the
+// automation it served. These tests exercise the generic engine, so they lend
+// it a synthetic kind — the same trick withAllocatedId plays with ids.
+const TEST_TRIGGER_KIND = 'test_event';
+if (!TRIGGER_KINDS.includes(TEST_TRIGGER_KIND)) TRIGGER_KINDS.push(TEST_TRIGGER_KIND);
+
 test('index.js validates the registry at boot', () => {
   const src = fs.readFileSync(path.join(__dirname, '../index.js'), 'utf8');
   assert.match(src, /^\s*const registryProblems = validateRegistry\(\);/m);
@@ -32,7 +39,7 @@ const def = (over = {}) => ({
   descriptionHe: 'x',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'external_lead_created' },
+  trigger: { kind: TEST_TRIGGER_KIND },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],

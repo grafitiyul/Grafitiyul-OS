@@ -146,7 +146,15 @@ router.get('/events', handle(async (req, res) => {
   const status = str(req.query.status);
   const trigger = str(req.query.trigger);
   const channel = str(req.query.channel);
+  // ARCHIVED events are retired: a message that will never be sent again is
+  // noise on the operator's main screen, and three of them were sitting there
+  // named "[הוסר] …" after the Manager Reports migration.
+  //
+  // "כל הסטטוסים" therefore means every LIVE status, not literally every row.
+  // Asking for archived explicitly still returns them — the status dropdown
+  // offers it, and that is the audit view. The rows are never deleted.
   if (status) where.status = status;
+  else where.status = { not: 'archived' };
   if (trigger) where.triggerType = trigger;
   if (channel) where.messages = { some: { channel } };
   if (search) {
