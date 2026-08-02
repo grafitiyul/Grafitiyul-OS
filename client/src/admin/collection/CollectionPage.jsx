@@ -12,6 +12,7 @@ import {
 import AdvancedFilterButton from '../common/filters/AdvancedFilterButton.jsx';
 import { evaluateTree, normalizeTree, emptyGroup } from '../common/filters/advancedFilterCore.js';
 import { COLLECTION_FILTER_FIELDS, COLLECTION_FILTER_FIELDS_BY_KEY } from './collectionFilterFields.js';
+import { summarizeCollectionRows } from './collectionSummary.js';
 import { dealPath } from '../deals/config.js';
 
 // גבייה — the main Collection screen: every WON deal whose money has not fully
@@ -201,17 +202,6 @@ export default function CollectionPage() {
     };
   }, [queue]);
 
-  const summary = useMemo(() => {
-    const s = { count: rows.length, balance: 0, unpaid: 0, partial: 0, review: 0 };
-    for (const r of rows) {
-      s.balance += Math.max(0, Number(r.balanceMinor || 0));
-      if (r.status === 'unpaid') s.unpaid++;
-      if (r.status === 'partial') s.partial++;
-      if (r.status === 'review') s.review++;
-    }
-    return s;
-  }, [rows]);
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let out = rows.filter((r) => {
@@ -242,6 +232,11 @@ export default function CollectionPage() {
     return out;
   }, [rows, search, status, sort, advanced]);
 
+  // ONE derivation for the header cards, over the SAME rows the table renders.
+  // Buckets are total by construction (collectionSummary.js), so the cards can
+  // never again sum to less than the visible rows.
+  const summary = useMemo(() => summarizeCollectionRows(filtered), [filtered]);
+
   function onSort(key) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
   }
@@ -265,12 +260,19 @@ export default function CollectionPage() {
         </button>
       </div>
 
-      {/* Summary strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-        <SummaryCard label="יתרה לגבייה" value={formatMinor(summary.balance, 'ILS')} tone="emerald" icon="💰" />
-        <SummaryCard label="טרם שולם" value={summary.unpaid} tone="red" icon="⏳" />
-        <SummaryCard label="שולם חלקית" value={summary.partial} tone="amber" icon="◐" />
-        <SummaryCard label="דורש בדיקה" value={summary.review} tone="purple" icon="⚑" />
+      {/* Summary strip — one card per status PRESENT in the rendered rows,
+          derived by the shared summarizer. Never a hardcoded subset again. */}
+      <div className="flex flex-wrap gap-2 mb-3">
+        <SummaryCard label="יתרה לגבייה" value={formatMinor(summary.balanceMinor, 'ILS')} tone="emerald" icon="💰" />
+        {summary.buckets.map((b) => (
+          <SummaryCard
+            key={b.status}
+            label={COLLECTION_STATUS_LABELS[b.status] || b.status}
+            value={b.count}
+            tone={STATUS_TONE[b.status] || 'gray'}
+            icon={STATUS_ICON[b.status] || '❔'}
+          />
+        ))}
       </div>
 
       {/* THE work queue switch. The default view is the actionable queue; the
@@ -411,17 +413,40 @@ const SUMMARY_TONES = {
   red: 'bg-red-50 text-red-600 ring-red-100',
   amber: 'bg-amber-50 text-amber-600 ring-amber-100',
   purple: 'bg-purple-50 text-purple-600 ring-purple-100',
+  sky: 'bg-sky-50 text-sky-600 ring-sky-100',
+  gray: 'bg-gray-100 text-gray-500 ring-gray-200',
 };
 const SUMMARY_TEXT = {
   emerald: 'text-emerald-700',
   red: 'text-red-700',
   amber: 'text-amber-700',
   purple: 'text-purple-700',
+  sky: 'text-sky-700',
+  gray: 'text-gray-600',
+};
+
+// Presentation per canonical status. A status missing here still renders (gray)
+// — these maps style buckets, they never decide membership.
+const STATUS_TONE = {
+  unpaid: 'red',
+  partial: 'amber',
+  review: 'purple',
+  no_amount: 'gray',
+  overpaid: 'sky',
+  paid: 'emerald',
+};
+const STATUS_ICON = {
+  unpaid: '⏳',
+  partial: '◐',
+  review: '⚑',
+  no_amount: '✏️',
+  overpaid: '⇅',
+  paid: '✓',
 };
 
 function SummaryCard({ label, value, tone, icon }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-right shadow-sm">
+    <div className="flex min-w-[170px] flex-1 items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-right shadow-sm sm:flex-none sm:min-w-[190px]">
       <div className="min-w-0">
         <div className={`text-[10px] font-semibold tracking-wide ${SUMMARY_TEXT[tone]}`}>{label}</div>
         <div className="text-lg font-bold leading-tight text-gray-900 tabular-nums" dir="ltr">{value}</div>
