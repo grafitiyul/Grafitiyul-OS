@@ -1,10 +1,24 @@
-import { Outlet } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import NavRail from './NavRail.jsx';
 import TopBar from './TopBar.jsx';
 import MobileTabBar from './MobileTabBar.jsx';
 import VersionGate from './VersionGate.jsx';
+import { moduleForPath } from './moduleRoutes.js';
+import { applyModuleFavicon, resetModuleFavicon } from './moduleFavicon.js';
 
 export default function AppShell() {
+  const { pathname } = useLocation();
+
+  // Browser-tab favicon follows the open module (AppShell mounts once for the
+  // whole admin session, so this is the single owner of the tab icon). Leaving
+  // /admin/* unmounts the shell and restores the brand favicon — public pages
+  // and the guide portal are never affected. PWA icons are untouched.
+  useEffect(() => {
+    applyModuleFavicon(moduleForPath(pathname));
+  }, [pathname]);
+  useEffect(() => resetModuleFavicon, []);
+
   return (
     <div className="h-full flex flex-col">
       {/* Deploy-update surface — scoped to the authenticated internal workspace.
