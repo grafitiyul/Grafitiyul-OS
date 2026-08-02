@@ -67,3 +67,21 @@ test('doc/email: missing/odd response shapes never count as confirmed', () => {
   );
   assert.equal(emailRecipientConfirmed(LIVE_EXPLICIT, ''), false);
 });
+
+test('getDocUrl reads doc_url — the field iCount actually returns', async () => {
+  // Verified live 2026-08-02: doc/get_doc_url answers { status, doctype, docnum,
+  // doc_lang, doc_url }. Reading `url` returned null for EVERY document, so
+  // "פתח מסמך" could not work and the Gmail send fallback lost its link.
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ status: true, reason: 'OK', doctype: 'invrec', docnum: '38494', doc_url: 'https://app.icount.co.il/hash/p_print.php?code=ABC' }),
+  });
+  process.env.ICOUNT_CID = 'x'; process.env.ICOUNT_USER = 'y'; process.env.ICOUNT_PASS = 'z';
+  try {
+    const { getDocUrl } = await import('./icount.js');
+    assert.equal(await getDocUrl('invrec', '38494'), 'https://app.icount.co.il/hash/p_print.php?code=ABC');
+  } finally {
+    globalThis.fetch = original;
+  }
+});

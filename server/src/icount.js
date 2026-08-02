@@ -312,6 +312,11 @@ export function emailRecipientConfirmed(data, addr) {
 }
 
 // Viewer URL for an issued document (doc/get_doc_url).
+//
+// The response field is `doc_url`, NOT `url` — verified live 2026-08-02. This
+// read `data.url` and therefore returned null for every document that has ever
+// existed: "פתח מסמך" could not work, and the Gmail send fallback silently lost
+// its link and degraded to "no_doc_url". `url` is kept as a defensive alias.
 export async function getDocUrl(doctype, docnum) {
   const data = await icountRequest('doc/get_doc_url', {
     doctype,
@@ -320,5 +325,5 @@ export async function getDocUrl(doctype, docnum) {
     orig: true,
     hidenis: false,
   });
-  return data.url || null;
+  return data.doc_url || data.url || null;
 }
