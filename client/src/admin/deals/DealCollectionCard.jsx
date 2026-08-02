@@ -11,6 +11,7 @@ import LinkExistingDocumentModal from './collection/LinkExistingDocumentModal.js
 import { formatMinor } from '../../lib/money.js';
 import { contactNameHe } from './config.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
+import { ReviewStatusBadge } from '../collection/CollectionPage.jsx';
 import {
   COLLECTION_STATUS_LABELS,
   COLLECTION_STATUS_STYLES,
@@ -469,6 +470,11 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         <h2 className="text-[13px] font-semibold text-gray-900">גבייה</h2>
         <span className="inline-flex items-center gap-2">
           {payFeedback && <span className="text-[11px] text-gray-500">{payFeedback}</span>}
+          {/* The operational badge, beside the accounting one — a historical
+              deal must never read as outstanding work. */}
+          {summary?.collectionReviewStatus === 'likely_paid_legacy' && (
+            <ReviewStatusBadge status={summary.collectionReviewStatus} />
+          )}
           {summary && (
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${

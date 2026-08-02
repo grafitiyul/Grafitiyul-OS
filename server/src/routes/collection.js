@@ -30,6 +30,9 @@ const COLLECTION_DEAL_SELECT = {
   valueMinor: true,
   currency: true,
   collectionReview: true,
+  // The OPERATIONAL work-queue status, so the Deal panel can badge a historical
+  // deal. Presentation only — it never enters the collection math.
+  collectionReviewStatus: true,
 };
 
 async function loadDeal(id) {
@@ -52,6 +55,7 @@ async function collectionPayload(deal) {
   ]);
   return {
     ...summary,
+    collectionReviewStatus: deal.collectionReviewStatus || null,
     paymentMethods: PAYMENT_METHODS,
     // Manual rows INCLUDING reversed ones: a reversal must stay readable, so a
     // balance that changed is never unexplained.
