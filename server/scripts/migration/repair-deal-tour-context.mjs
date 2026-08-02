@@ -46,44 +46,15 @@
 //   * Idempotent: preconditions are re-checked INSIDE each transaction, so a
 //     re-run — or a concurrent operator edit — can never overwrite live work.
 import { PrismaClient } from '@prisma/client';
-import { splitVat } from '../../src/pricing/engine.js';
+// GAP 2's seeding mechanism now lives in src/quote/importedBuilderSeed.js — THE
+// ONE implementation, shared with the unlockUnpaidMigratedBuilders maintenance
+// runner (which applies it balance-based instead of future-tour-based).
+import { loadVatDefault, seedWorkingFromFrozen } from '../../src/quote/importedBuilderSeed.js';
 
 const EXECUTE = process.argv.includes('--execute');
 const prisma = new PrismaClient({ datasourceUrl: process.env.MIGRATION_DB_URL || process.env.DATABASE_URL });
 const TODAY = new Date().toISOString().slice(0, 10);
-const SIGN = (k) => (k === 'discount' || k === 'credit' ? -1 : 1);
 const ILS = (m) => (m == null ? '—' : (m / 100).toFixed(2));
-
-// Compose exactly as pricing/builderCompose.js does for non-engine lines
-// (every imported line is kind 'manual'/'discount', so the engine never prices
-// them). `forceMode` tests one VAT interpretation of the same amounts.
-function grossOf(lines, vatDefault, forceMode) {
-  let gross = 0;
-  for (const ln of lines) {
-    if (ln.active === false) continue;
-    let qty = parseInt(ln.quantity, 10);
-    if (!Number.isFinite(qty) || qty < 0) qty = 1;
-    const unit = Number(ln.unitPriceMinor) || 0;
-    const mode = forceMode || (!ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode);
-    const rate = mode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
-    gross += splitVat(SIGN(ln.kind) * unit * qty, mode, rate).grossMinor;
-  }
-  return gross;
-}
-
-// The ONE decision rule for gap 2. Returns the interpretation that reproduces
-// the agreed total, or null when none does (→ operator review).
-export function chooseVatInterpretation(lines, valueMinor, vatDefault) {
-  for (const [forceMode, why] of [
-    [null, 'as-imported'],
-    ['included', 'imported amounts are VAT-inclusive'],
-    ['excluded', 'imported amounts are net of VAT'],
-  ]) {
-    const gross = grossOf(lines, vatDefault, forceMode);
-    if (Math.abs(gross - Number(valueMinor)) < 100) return { forceMode, why, gross };
-  }
-  return null;
-}
 
 const audit = async (tx, sourceType, dealId, cardData) =>
   tx.legacyRecord.upsert({
@@ -92,14 +63,7 @@ const audit = async (tx, sourceType, dealId, cardData) =>
     update: { cardData },
   });
 
-const priceList = await prisma.priceList.findFirst({
-  where: { isDefault: true },
-  select: { defaultVatMode: true, defaultVatRate: true },
-});
-const vatDefault = {
-  mode: priceList?.defaultVatMode || 'included',
-  rate: priceList?.defaultVatRate != null ? priceList.defaultVatRate : 18,
-};
+const vatDefault = await loadVatDefault(prisma);
 
 const tours = await prisma.tourEvent.findMany({
   where: {
@@ -191,80 +155,23 @@ for (const tour of tours) {
 
     // ── GAP 2 ────────────────────────────────────────────────────────────────
     const value = deal.valueMinor == null ? 0 : Number(deal.valueMinor);
-    const working = await prisma.quoteVersion.findFirst({
-      where: { dealId: deal.id, isWorking: true },
-      select: { id: true, _count: { select: { lines: true } } },
-    });
-    if (value <= 0 || (working && working._count.lines > 0)) {
+    const result = await seedWorkingFromFrozen(prisma, deal, { vatDefault, execute: EXECUTE });
+    if (result.outcome === 'no_value' || result.outcome === 'already_editable') {
       com.already.push(deal.orderNo);
-      continue;
-    }
-    const frozen = await prisma.quoteVersion.findFirst({
-      where: { dealId: deal.id, sourceKind: 'pipedrive_import' },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, lines: { orderBy: { sortOrder: 'asc' } } },
-    });
-    if (!frozen || !frozen.lines.length) {
+    } else if (result.outcome === 'no_evidence') {
       com.noEvidence.push({ orderNo: deal.orderNo, title: deal.title, valueMinor: value });
-      continue;
-    }
-    const choice = chooseVatInterpretation(frozen.lines, value, vatDefault);
-    if (!choice) {
+    } else if (result.outcome === 'ambiguous') {
       com.ambiguous.push({
         orderNo: deal.orderNo, title: deal.title, date: tour.date, valueMinor: value,
-        candidates: {
-          asImported: grossOf(frozen.lines, vatDefault, null),
-          asGross: grossOf(frozen.lines, vatDefault, 'included'),
-          asNet: grossOf(frozen.lines, vatDefault, 'excluded'),
-        },
-        lines: frozen.lines.map((l) => `${l.label || '(ללא שם)'} ×${l.quantity} @ ${ILS(Number(l.unitPriceMinor))} [${l.vatMode}]`),
+        candidates: result.candidates,
+        lines: [],
       });
-      continue;
-    }
-    const entry = {
-      orderNo: deal.orderNo, title: deal.title, date: tour.date,
-      valueMinor: value, gross: choice.gross, interpretation: choice.why, lines: frozen.lines.length,
-    };
-    if (EXECUTE) {
-      await prisma.$transaction(async (tx) => {
-        // Re-check inside the tx — never overwrite a builder someone just filled.
-        let target = await tx.quoteVersion.findFirst({
-          where: { dealId: deal.id, isWorking: true },
-          select: { id: true, _count: { select: { lines: true } } },
-        });
-        if (target && target._count.lines > 0) return;
-        if (!target) {
-          target = await tx.quoteVersion.create({
-            data: { dealId: deal.id, isWorking: true, status: 'draft' },
-            select: { id: true, _count: { select: { lines: true } } },
-          });
-        }
-        await tx.quoteLine.createMany({
-          data: frozen.lines.map((l, i) => ({
-            quoteVersionId: target.id,
-            kind: l.kind,
-            label: l.label,
-            quantity: l.quantity,
-            unitPriceMinor: l.unitPriceMinor,
-            // The ONE reinterpreted field — see the header. Amounts are verbatim.
-            vatMode: choice.forceMode || l.vatMode,
-            vatRate: l.vatRate,
-            active: l.active,
-            note: l.note,
-            // Frozen price: the engine must never reprice these from the cards.
-            overridden: true,
-            sourceKind: 'pipedrive_import',
-            sortOrder: i,
-          })),
-        });
-        await audit(tx, 'deal_builder_backfill', deal.id, {
-          source: 'frozen_quote_version', frozenVersionId: frozen.id, workingVersionId: target.id,
-          interpretation: choice.why, vatMode: choice.forceMode, grossMinor: choice.gross,
-          dealValueMinor: value, lines: frozen.lines.length, at: new Date().toISOString(),
-        });
+    } else {
+      com.repaired.push({
+        orderNo: deal.orderNo, title: deal.title, date: tour.date,
+        valueMinor: value, gross: result.gross, interpretation: result.why, lines: null,
       });
     }
-    com.repaired.push(entry);
   }
 }
 
@@ -277,7 +184,7 @@ for (const b of ctx.blocked) console.log(`     #${b.orderNo} ${b.title} — ${b.
 
 console.log('\n══ GAP 2 — Builder commercial state ══');
 console.log(`  seeded from frozen evidence: ${com.repaired.length}`);
-for (const r of com.repaired) console.log(`     #${r.orderNo} ${r.date} — ₪${ILS(r.gross)} (${r.interpretation}, ${r.lines} lines)`);
+for (const r of com.repaired) console.log(`     #${r.orderNo} ${r.date} — ₪${ILS(r.gross)} (${r.interpretation})`);
 console.log(`  already meaningful / no value: ${com.already.length}`);
 console.log(`  NO frozen evidence          : ${com.noEvidence.length} ${list(com.noEvidence)}`);
 console.log(`  AMBIGUOUS → operator review : ${com.ambiguous.length}`);

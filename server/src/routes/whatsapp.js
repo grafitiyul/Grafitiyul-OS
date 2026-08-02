@@ -477,7 +477,7 @@ router.get(
         });
         const index = buildPhoneIndex(allPhones);
         for (const chat of candidates) {
-          const contactId = matchContactId(chat.phoneNumber, index);
+          const contactId = matchContactId(normalizePhoneIntl(chat.phoneNumber) ?? chat.phoneNumber, index);
           if (!contactId) continue; // shared number → stays unmatched
           await prisma.whatsAppChat.update({
             where: { id: chat.id },

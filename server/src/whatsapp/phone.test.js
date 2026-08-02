@@ -22,6 +22,20 @@ test('normalizePhoneIntl: unusable input → null', () => {
   assert.equal(normalizePhoneIntl('012345678901'), null); // leading 0, unknown local shape
 });
 
+test('normalizePhoneIntl: 972+0 double prefix is repaired', () => {
+  assert.equal(normalizePhoneIntl('972050-1234567'), '972501234567'); // mobile
+  assert.equal(normalizePhoneIntl('97203-1234567'), '97231234567'); // landline
+  assert.equal(normalizePhoneIntl('+972 052-321816'), '97252321816'); // truncated but unambiguous repair
+});
+
+test('normalizePhoneIntl: impossible Israeli shapes → null, never a fake JID', () => {
+  assert.equal(normalizePhoneIntl('+9725551780355'), null); // 972 + 10 digits (foreign number, wrong prefix)
+  assert.equal(normalizePhoneIntl('97254583848482'), null); // 972 + 11 digits
+  assert.equal(normalizePhoneIntl('9725012345'), null); // 972 + 7 digits (truncated)
+  // Real foreign numbers still pass through untouched.
+  assert.equal(normalizePhoneIntl('5215551780355'), '5215551780355'); // Mexico mobile JID form
+});
+
 test('matching: exactly-one-owner links; ambiguity and misses stay unmatched', () => {
   const index = buildPhoneIndex([
     { contactId: 'c1', value: '050-123-4567' },

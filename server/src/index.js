@@ -807,6 +807,22 @@ app.listen(port, () => {
     .then(({ buildHistoricalFallbackQuotes }) => buildHistoricalFallbackQuotes(prisma, { log: console }))
     .catch((e) => console.warn('[maintenance] historical fallback builders failed:', e?.message));
 
+  // Migrated WON deals that still OWE money get an editable working Builder
+  // seeded from their frozen imported evidence — the canonical Collection
+  // resolver decides "not fully paid", never a tour date. Fully paid deals
+  // stay locked read-only. Re-runs on every boot (a later refund can unlock).
+  import('./maintenance/unlockUnpaidMigratedBuilders.js')
+    .then(({ unlockUnpaidMigratedBuilders }) => unlockUnpaidMigratedBuilders(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] unpaid migrated-builder unlock failed:', e?.message));
+
+  // One-time WhatsApp identity repair for Deal #26333: the contact's Mexican
+  // number was stored under an Israeli prefix, so the real conversation never
+  // linked and sends probed a nonexistent number. Reports 'already_repaired'
+  // on every subsequent boot.
+  import('./maintenance/repairDeal26333WhatsAppIdentity.js')
+    .then(({ repairDeal26333WhatsAppIdentity }) => repairDeal26333WhatsAppIdentity(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] deal 26333 WhatsApp identity repair failed:', e?.message));
+
   // Collection WORK QUEUE classification. Operational only — it reads the
   // canonical collection resolver and writes nothing but the review status.
   // Re-runs on every boot so the future-tour rule stays true as tours pass into
