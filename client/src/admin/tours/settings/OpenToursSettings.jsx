@@ -124,6 +124,8 @@ export default function OpenToursSettings() {
     }
   }
 
+  const activeTemplates = templates.filter((t) => t.active);
+
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
@@ -139,7 +141,7 @@ export default function OpenToursSettings() {
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6 overflow-hidden">
         <div className="px-5 pt-4 pb-3 border-b border-gray-100">
           <h2 className="text-[15px] font-semibold text-gray-900">
-            {templates.filter((t) => t.active).length > 1 ? 'תבניות הסיור הפעילות באתר' : 'תבנית הסיור הפעילה באתר'}
+            {activeTemplates.length > 1 ? 'תבניות הסיור הפעילות באתר' : 'תבנית הסיור הפעילה באתר'}
           </h2>
           <p className="text-[12.5px] text-gray-500 mt-0.5">
             התבנית שמייצרת את מועדי הסיור הפתוח שנמכרים באתר — כאן עורכים אותה.
@@ -151,15 +153,13 @@ export default function OpenToursSettings() {
           <div className="px-5 py-6 text-center text-sm text-red-600">
             שגיאה: <span dir="ltr" className="font-mono">{error}</span>
           </div>
-        ) : templates.filter((t) => t.active).length === 0 ? (
+        ) : activeTemplates.length === 0 ? (
           <p className="px-5 py-6 text-[13px] text-gray-500">
             אין תבנית פעילה כרגע — הפעילו תבנית קיימת ברשימה למטה, או צרו תבנית חדשה.
           </p>
         ) : (
           <div className="divide-y divide-gray-100">
-            {templates
-              .filter((t) => t.active)
-              .map((t) => (
+            {activeTemplates.map((t) => (
                 <div key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
                   <div className="min-w-0 flex-1">
                     <div className="text-[16px] font-bold text-gray-900">
