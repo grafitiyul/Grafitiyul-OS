@@ -28,7 +28,7 @@ import { validateVersionForPublish, blockingProblems } from './publishRules.js';
 import { referencesForTemplate, referencePayloadForTemplate } from '../automations/references.js';
 import { fireQuestionnaireAutomations } from '../automations/sources/questionnaire.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
-import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
+import { getPurpose, isValidPurpose, purposeAllowsSubject, purposeAllowsLiveEdit, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
 import { buildAnswerChanges } from './answerDiff.js';
 
@@ -124,13 +124,34 @@ export function runtimePayload(version) {
   };
 }
 
+/**
+ * May this version be structurally edited?
+ *
+ * A DRAFT always may. A PUBLISHED version may only when its template's purpose
+ * is liveEdit (the two operational questionnaires) — see registry.js for why
+ * that is safe: history is protected by per-answer snapshots, not by version
+ * immutability.
+ *
+ * Returns { writable, reason } so callers can produce the right error.
+ */
+async function versionWritability(version, client = prisma) {
+  if (version.status === 'draft') return { writable: true, live: false };
+  const template = await client.questionnaireTemplate.findUnique({
+    where: { id: version.templateId },
+    select: { purpose: true },
+  });
+  const live = purposeAllowsLiveEdit(template?.purpose);
+  return { writable: live, live };
+}
+
 async function assertDraftVersion(versionId, client = prisma) {
   const v = await client.questionnaireVersion.findUnique({
     where: { id: versionId },
     select: { id: true, status: true, templateId: true },
   });
   if (!v) throw new QError(404, 'version_not_found');
-  if (v.status !== 'draft') throw new QError(409, 'version_immutable');
+  const { writable } = await versionWritability(v, client);
+  if (!writable) throw new QError(409, 'version_immutable');
   return v;
 }
 
@@ -475,10 +496,11 @@ export async function createSection(versionId, { title }) {
 async function loadSectionDraft(sectionId) {
   const s = await prisma.questionnaireSection.findUnique({
     where: { id: sectionId },
-    select: { id: true, versionId: true, version: { select: { status: true } } },
+    select: { id: true, versionId: true, version: { select: { status: true, templateId: true } } },
   });
   if (!s) throw new QError(404, 'section_not_found');
-  if (s.version.status !== 'draft') throw new QError(409, 'version_immutable');
+  const { writable } = await versionWritability(s.version);
+  if (!writable) throw new QError(409, 'version_immutable');
   return s;
 }
 
@@ -532,10 +554,11 @@ export async function createQuestion(sectionId, input) {
 async function loadQuestionDraft(questionId) {
   const q = await prisma.questionnaireQuestion.findUnique({
     where: { id: questionId },
-    select: { id: true, versionId: true, type: true, version: { select: { status: true } } },
+    select: { id: true, key: true, versionId: true, type: true, version: { select: { status: true, templateId: true } } },
   });
   if (!q) throw new QError(404, 'question_not_found');
-  if (q.version.status !== 'draft') throw new QError(409, 'version_immutable');
+  const { writable } = await versionWritability(q.version);
+  if (!writable) throw new QError(409, 'version_immutable');
   return q;
 }
 
@@ -562,8 +585,38 @@ export async function updateQuestion(questionId, patch) {
   });
 }
 
+/**
+ * Automation key protection at DELETE time.
+ *
+ * On a versioned questionnaire the publish gate catches a dropped key before it
+ * goes live. A LIVE-EDIT questionnaire has no publish step, so the guard has to
+ * move to the moment of deletion — otherwise the one thing that can silently
+ * break an automation (delete a question, add it back, new key) would be
+ * completely unguarded for exactly the two forms automations depend on.
+ */
+async function assertKeyNotReferenced({ templateId, questionKey, optionValue = null }) {
+  const template = await prisma.questionnaireTemplate.findUnique({
+    where: { id: templateId },
+    select: { key: true },
+  });
+  const { questions, options } = referencesForTemplate(template?.key);
+  const refs = optionValue
+    ? options.get(`${questionKey}:${optionValue}`)
+    : questions.get(questionKey);
+  if (refs?.length) {
+    throw new QError(409, optionValue ? 'automation_option_referenced' : 'automation_question_referenced', {
+      automations: refs,
+    });
+  }
+}
+
 export async function deleteQuestion(questionId) {
-  await loadQuestionDraft(questionId);
+  const q = await loadQuestionDraft(questionId);
+  const version = await prisma.questionnaireVersion.findUnique({
+    where: { id: q.versionId },
+    select: { templateId: true },
+  });
+  await assertKeyNotReferenced({ templateId: version.templateId, questionKey: q.key });
   await prisma.questionnaireQuestion.delete({ where: { id: questionId } });
 }
 
@@ -611,10 +664,19 @@ export async function updateOption(optionId, patch) {
 export async function deleteOption(optionId) {
   const o = await prisma.questionnaireQuestionOption.findUnique({
     where: { id: optionId },
-    select: { id: true, question: { select: { version: { select: { status: true } } } } },
+    select: {
+      id: true, value: true,
+      question: { select: { key: true, version: { select: { status: true, templateId: true } } } },
+    },
   });
   if (!o) throw new QError(404, 'option_not_found');
-  if (o.question.version.status !== 'draft') throw new QError(409, 'version_immutable');
+  const { writable } = await versionWritability(o.question.version);
+  if (!writable) throw new QError(409, 'version_immutable');
+  await assertKeyNotReferenced({
+    templateId: o.question.version.templateId,
+    questionKey: o.question.key,
+    optionValue: o.value,
+  });
   await prisma.questionnaireQuestionOption.delete({ where: { id: optionId } });
 }
 

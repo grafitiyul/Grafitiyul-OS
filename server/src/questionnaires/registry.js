@@ -42,6 +42,8 @@ const PURPOSES = {
     singleton: true,
     perActor: true,
     tourOperational: true,
+    // ONE LIVE FORM. See liveEdit below.
+    liveEdit: true,
     answerLockGraceMs: SUMMARY_POST_COMPLETION_EDIT_MS,
     // Primary action: first press officially submits; later presses save a
     // meaningful update (one history entry each).
@@ -57,6 +59,7 @@ const PURPOSES = {
     audience: 'staff',
     singleton: true,
     tourOperational: true,
+    liveEdit: true,
     answerLockGraceMs: 0,
     submitLabels: { first: 'בוצעה שיחת תיאום', update: 'שמור עדכון' },
   },
@@ -71,6 +74,30 @@ const PURPOSES = {
     singleton: false,
   },
 };
+
+// ── liveEdit: one live form, no version chrome ───────────────────────────────
+// For the two OPERATIONAL questionnaires the office maintains itself, versions
+// are pure overhead: nobody wants to think about drafts, publishing or version
+// numbers to fix a typo in a question.
+//
+// This is safe because version immutability is NOT what protects history —
+// the per-answer questionSnapshot is. Every submitted answer freezes its own
+// question text, type, options, help text and section title at submit time, and
+// renderSubmissionAnswers is built from those snapshots ONLY, never from the
+// live version tree. A submitted summary therefore reads exactly as it did the
+// day it was filed, no matter how the questionnaire changes afterwards.
+//
+// What versions still do, and still do here:
+//   * pin the structure an IN-FLIGHT draft is being filled against;
+//   * keep the historical version rows that old submissions point at.
+// Both keep working — liveEdit only removes the requirement to create a NEW
+// version in order to change the live one.
+//
+// The generic engine is untouched: any other questionnaire keeps the full
+// draft → publish lifecycle.
+export function purposeAllowsLiveEdit(key) {
+  return !!PURPOSES[key]?.liveEdit;
+}
 
 export function getPurpose(key) {
   return PURPOSES[key] || null;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
@@ -81,6 +81,15 @@ function computeMissingLanguages(runtime) {
   return [...missing];
 }
 
+// The two operational questionnaires the office maintains itself are ONE LIVE
+// FORM: editing updates the questionnaire immediately for future submissions,
+// and every already-submitted response keeps its own frozen snapshot. So the
+// whole version vocabulary — drafts, publishing, version numbers — is hidden.
+// The server enforces the same rule (registry.js purposeAllowsLiveEdit); this
+// only removes the chrome.
+const LIVE_EDIT_PURPOSES = ['tour_summary', 'coordination'];
+const isLiveForm = (runtime) => LIVE_EDIT_PURPOSES.includes(runtime?.template?.purpose);
+
 const OPTION_TYPES = ['choice', 'dropdown', 'multi'];
 // Free-input types where an in-field example text (placeholder) is meaningful.
 // date/time/datetime are excluded — native pickers ignore the placeholder
@@ -152,7 +161,9 @@ export default function QuestionnaireBuilderPage() {
     if (versionId) refreshRuntime(versionId).catch((e) => setError(e.message));
   }, [versionId, refreshRuntime]);
 
-  const isDraft = runtime?.version?.status === 'draft';
+  // A live form is ALWAYS editable; a versioned one only in its draft.
+  const liveForm = isLiveForm(runtime);
+  const isDraft = liveForm || runtime?.version?.status === 'draft';
 
   // Wrap every mutation: run → refresh → surface errors uniformly.
   const mutate = async (fn, { refreshTemplate = false } = {}) => {
@@ -215,7 +226,7 @@ export default function QuestionnaireBuilderPage() {
   );
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto" dir="rtl">
+    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-6xl mx-auto" dir="rtl">
       <header className="mb-5">
         <div className="flex items-center gap-2 text-[12.5px] text-gray-500">
           <Link to="/admin/questionnaires" className="hover:text-gray-800">שאלונים</Link>
@@ -228,14 +239,21 @@ export default function QuestionnaireBuilderPage() {
             className="text-2xl font-bold tracking-tight text-gray-900"
             onSave={(v) => mutate(() => api.questionnaires.update(id, { internalName: v }), { refreshTemplate: true })}
           />
-          <span className={`rounded-full border px-2 py-0.5 text-[11.5px] ${
-            isDraft ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          }`}>
-            v{runtime.version.versionNo} · {VERSION_STATUS_LABELS[runtime.version.status]}
-          </span>
+          {/* Version identity is meaningless on a live form — there is only one. */}
+          {liveForm ? (
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11.5px] text-emerald-700">
+              שאלון פעיל
+            </span>
+          ) : (
+            <span className={`rounded-full border px-2 py-0.5 text-[11.5px] ${
+              isDraft ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}>
+              v{runtime.version.versionNo} · {VERSION_STATUS_LABELS[runtime.version.status]}
+            </span>
+          )}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {template.versions.length > 1 ? (
+          {!liveForm && template.versions.length > 1 ? (
             <select
               className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-[12.5px]"
               value={versionId || ''}
@@ -251,7 +269,14 @@ export default function QuestionnaireBuilderPage() {
           <button type="button" onClick={openPreview} className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] text-gray-700 hover:bg-gray-50">
             👁️ תצוגה מקדימה
           </button>
-          {isDraft ? (
+          {/* A live form has no publish step: edits are already in effect. The
+              operator gets a plain statement of that instead of a button that
+              would do nothing. */}
+          {liveForm ? (
+            <span className="rounded-lg bg-emerald-50 px-3 py-1.5 text-[12.5px] text-emerald-700 ring-1 ring-emerald-200">
+              ✓ שינויים נשמרים מיד וחלים על שאלונים הבאים
+            </span>
+          ) : isDraft ? (
             <button type="button" onClick={() => publish()} className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-emerald-700">
               פרסום גרסה
             </button>
@@ -729,7 +754,9 @@ function BilingualField({
   return (
     <div>
       {label ? <label className="mb-1 block text-[12.5px] font-medium text-gray-600">{label}</label> : null}
-      <div className="grid gap-2 sm:grid-cols-2">
+      {/* Equal halves on desktop; stacked on mobile so neither language is
+          squeezed into an unusable column. */}
+      <div className="grid gap-3 lg:grid-cols-2">
         {languages.map((lang) => {
           const text = readLang(value, lang);
           const missing = !text;
@@ -798,12 +825,28 @@ function InlineText({ value, onSave, className = '', input = false, disabled = f
   );
 }
 
+// Grows with its content instead of trapping text in a tiny scroll box — the
+// whole point of side-by-side translation is seeing both texts at once, and a
+// 64px window with an inner scrollbar defeats it.
 function SavedTextarea({ value, onSave, disabled, placeholder = '' }) {
   const [v, setV] = useState(value ?? '');
+  const ref = useRef(null);
   useEffect(() => setV(value ?? ''), [value]);
+
+  // Re-measure on every value change (typing, and the async load that arrives
+  // after first paint).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [v]);
+
   return (
     <textarea
-      className="w-full min-h-[64px] rounded-lg border border-gray-300 px-3 py-2 text-[13px] focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400"
+      ref={ref}
+      rows={2}
+      className="w-full min-h-[72px] resize-y overflow-hidden rounded-lg border border-gray-300 px-3 py-2 text-[13px] leading-relaxed focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400"
       value={v}
       disabled={disabled}
       placeholder={placeholder}
@@ -958,7 +1001,7 @@ function QuestionInspector({ state, runtime, authoring, isDraft, versionId, lx, 
     save({ config: { ...(q.config || {}), [key]: value === '' || value === undefined ? undefined : value } });
 
   return (
-    <Dialog open onClose={onClose} title="הגדרות שאלה" size="lg">
+    <Dialog open onClose={onClose} title="הגדרות שאלה" size="2xl">
       <div className="space-y-4 p-1" dir="rtl">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
