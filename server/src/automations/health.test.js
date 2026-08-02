@@ -14,7 +14,7 @@ const def = (over = {}) => ({
   descriptionHe: 'x',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination' },
+  trigger: { kind: 'external_lead_created' },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],

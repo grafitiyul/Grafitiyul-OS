@@ -20,7 +20,7 @@ const def = (over = {}) => ({
   descriptionHe: 'נורה כשסיכום סיור מדווח על תשלום שהתקבל.',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_summary' },
+  trigger: { kind: 'external_lead_created' },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],

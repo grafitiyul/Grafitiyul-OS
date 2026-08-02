@@ -25,8 +25,8 @@ import {
 } from './structure.js';
 import { isKnownType, typeHasOptions } from './types.js';
 import { validateVersionForPublish, blockingProblems } from './publishRules.js';
-import { referencesForTemplate, referencePayloadForTemplate } from '../automations/references.js';
-import { fireQuestionnaireAutomations } from '../automations/sources/questionnaire.js';
+import { operationalDependents, optionDependents } from './operationalRoles.js';
+import { reviewItemsForTourSummary } from '../reviewItems/fromTourSummary.js';
 import { freezeCoordinationContext } from './coordinationContext.js';
 import { coordinationFollowups } from './coordinationFollowup.js';
 import { CONTEXT_FIELD_KEYS, contextCatalogForPicker, defaultContextConfig } from './contextCatalog.js';
@@ -301,7 +301,6 @@ export async function getVersionRuntime(versionId) {
 export async function getVersionAuthoring(versionId) {
   const version = await loadVersion(versionId);
   const templateKey = version.template.key;
-  const refs = referencePayloadForTemplate(templateKey);
   const questions = {};
 
   // How many SUBMITTED answers exist per question key — drives the delete
@@ -317,7 +316,6 @@ export async function getVersionAuthoring(versionId) {
   const answersByKey = Object.fromEntries(answered.map((a) => [a.questionKey, a._count._all]));
 
   for (const q of flatQuestions(structureOf(version))) {
-    const ref = refs[q.key] || null;
     questions[q.key] = {
       historicalAnswers: answersByKey[q.key] || 0,
       // Fully-qualified stable reference — what an operator copies and what an
@@ -325,11 +323,12 @@ export async function getVersionAuthoring(versionId) {
       // unique inside its own template.
       reference: `${templateKey}#${q.key}`,
       flag: !!q.automationFlag,
-      automations: ref?.automations || [],
+      // What actually breaks if this question is deleted, derived from the
+      // question's OWN role config — see operationalRoles.js.
+      dependents: operationalDependents(q),
       options: Object.fromEntries(
         (q.options || []).map((o) => [o.value, {
           reference: `${templateKey}#${q.key}:${o.value}`,
-          automations: ref?.options?.[o.value] || [],
         }]),
       ),
     };
@@ -339,12 +338,18 @@ export async function getVersionAuthoring(versionId) {
 }
 
 /**
- * Input for the publish-time automation guard: what the registry references,
- * and which keys the CURRENT PUBLISHED version had flagged (the flag is only
- * meaningful as "it used to be there and now it is not").
+ * Input for the publish-time guard.
+ *
+ * The referenced-key half is now always EMPTY: no automation names questionnaire
+ * keys any more (they were all retired), and the operational bindings are roles
+ * on the questions themselves, guarded at delete time instead — a role cannot
+ * survive its own question, so there is nothing for a publish gate to compare.
+ * What remains meaningful is the author's manual flag: "it used to be there and
+ * now it is not".
  */
 async function buildAutomationGuardInput(template) {
-  const { questions, options } = referencesForTemplate(template.key);
+  const questions = new Map();
+  const options = new Map();
 
   const flaggedQuestionKeys = new Set();
   if (template.currentVersionId) {
@@ -602,37 +607,33 @@ export async function updateQuestion(questionId, patch) {
 }
 
 /**
- * Automation key protection at DELETE time.
+ * OPERATIONAL ROLE protection at DELETE time.
  *
- * On a versioned questionnaire the publish gate catches a dropped key before it
- * goes live. A LIVE-EDIT questionnaire has no publish step, so the guard has to
- * move to the moment of deletion — otherwise the one thing that can silently
- * break an automation (delete a question, add it back, new key) would be
- * completely unguarded for exactly the two forms automations depend on.
+ * On a versioned questionnaire the publish gate catches a dropped question
+ * before it goes live. The two operational forms are LIVE-EDIT — no publish
+ * step — so the guard has to sit at the moment of deletion. Otherwise the one
+ * action that silently breaks a workflow (delete the question, add it back, new
+ * key, role gone) would be completely unguarded on exactly the two forms every
+ * operational report depends on.
+ *
+ * This used to guard keys named by automation definitions. Those are gone; the
+ * behaviour now hangs off `config.<x>Role`, so the guard follows it. The error
+ * names the CONSEQUENCE ("report #19 stops"), not the role.
  */
-async function assertKeyNotReferenced({ templateId, questionKey, optionValue = null }) {
-  const template = await prisma.questionnaireTemplate.findUnique({
-    where: { id: templateId },
-    select: { key: true },
+async function assertNoOperationalRole(question) {
+  const dependents = operationalDependents(question);
+  if (!dependents.length) return;
+  throw new QError(409, 'question_drives_operations', {
+    dependents,
+    // Read verbatim by the client dialog.
+    messageHe: `לשאלה הזו יש תפקיד תפעולי: ${dependents.map((d) => d.consumerHe).join(' · ')}. `
+      + 'מחיקה תעצור אותו בשקט. יש להסיר קודם את התפקיד בהגדרות השאלה.',
   });
-  const { questions, options } = referencesForTemplate(template?.key);
-  const refs = optionValue
-    ? options.get(`${questionKey}:${optionValue}`)
-    : questions.get(questionKey);
-  if (refs?.length) {
-    throw new QError(409, optionValue ? 'automation_option_referenced' : 'automation_question_referenced', {
-      automations: refs,
-    });
-  }
 }
 
 export async function deleteQuestion(questionId) {
   const q = await loadQuestionDraft(questionId);
-  const version = await prisma.questionnaireVersion.findUnique({
-    where: { id: q.versionId },
-    select: { templateId: true },
-  });
-  await assertKeyNotReferenced({ templateId: version.templateId, questionKey: q.key });
+  await assertNoOperationalRole(q);
   await prisma.questionnaireQuestion.delete({ where: { id: questionId } });
 }
 
@@ -682,17 +683,20 @@ export async function deleteOption(optionId) {
     where: { id: optionId },
     select: {
       id: true, value: true,
-      question: { select: { key: true, version: { select: { status: true, templateId: true } } } },
+      question: { select: { key: true, config: true, version: { select: { status: true, templateId: true } } } },
     },
   });
   if (!o) throw new QError(404, 'option_not_found');
   const { writable } = await versionWritability(o.question.version);
   if (!writable) throw new QError(409, 'version_immutable');
-  await assertKeyNotReferenced({
-    templateId: o.question.version.templateId,
-    questionKey: o.question.key,
-    optionValue: o.value,
-  });
+  const optDeps = optionDependents(o.question, o.value);
+  if (optDeps.length) {
+    throw new QError(409, 'option_drives_operations', {
+      dependents: optDeps,
+      messageHe: 'האפשרות הזו היא התשובה החיובית שמפעילה את הדו״ח הלוגיסטי. '
+        + 'מחיקה תשתיק את הזיהוי בשקט — יש לבחור קודם אפשרות חיובית אחרת.',
+    });
+  }
   await prisma.questionnaireQuestionOption.delete({ where: { id: optionId } });
 }
 
@@ -1192,18 +1196,32 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
     return frozen;
   });
 
-  // THE automation hook — ONE call site, after the transaction commits, so a
-  // submission can never be rolled back or slowed by an automation. Deliberately
-  // subject-agnostic: both שיחת תיאום (booking) and סיכום סיור (tour_event) are
-  // covered without touching either adapter.
-  fireQuestionnaireAutomations(updated, { firstSubmit: isFirstSubmit });
-
-  // Coordination consequences — same contract as the automation hook: AFTER the
-  // commit, never awaited into the response, never able to fail the submission.
+  // ── Operational consequences of a submitted form ──────────────────────────
   //
-  // Only on FIRST submit. A guide re-opening their form to fix a typo is not a
-  // second coordination call, and every action downstream is keyed on the
-  // submission id anyway — this just avoids the pointless work.
+  // ONE call site per questionnaire purpose, AFTER the commit, never awaited
+  // into the response and never able to fail the submission.
+  //
+  // These used to run through the Automation Registry. They no longer do: a
+  // registry runtime between "a form was submitted" and "a card exists" bought
+  // a second idempotency layer and an enable/disable toggle on top of
+  // operations that are each already idempotent by their own unique index, and
+  // it made the chain readable only by tracing a definition file, a trigger
+  // match and an action executor. The flow is now literally what it says:
+  //
+  //     submitted → business rules → ReviewItems → Manager Reports → queue
+  //
+  // Only on FIRST submit. Re-opening a form to fix a typo is not a second
+  // business event, and every downstream action is keyed on the submission id
+  // anyway — this just avoids the pointless work.
+  if (updated.purpose === 'tour_summary' && isFirstSubmit) {
+    // Creates the summary + logistics cards and fires reports #17, #19, #20.
+    reviewItemsForTourSummary({
+      submission: updated,
+      answers,
+      refs: { tourEventId: updated.subjectId },
+    }).catch(() => {});
+  }
+
   if (updated.purpose === 'coordination' && isFirstSubmit) {
     // The context the guide actually saw becomes evidence at this moment.
     freezeCoordinationContext(updated).catch(() => {});

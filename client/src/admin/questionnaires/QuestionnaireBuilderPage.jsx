@@ -552,16 +552,18 @@ export default function QuestionnaireBuilderPage() {
 function deleteQuestionWarning(q, authoring, lx) {
   const title = lx.show(q.label) || 'ללא כותרת';
   const info = authoring?.questions?.[q.key];
-  const auts = info?.automations || [];
+  const deps = info?.dependents || [];
   const answers = info?.historicalAnswers || 0;
 
   const parts = [`למחוק את השאלה "${title}"?`];
 
-  if (auts.length) {
+  if (deps.length) {
+    // The server refuses this delete outright — the dialog explains why before
+    // the operator runs into a 409.
     parts.push(
-      `⚠ האוטומציות הבאות תלויות בשאלה זו ויפסיקו לפעול:\n${
-        auts.map((a) => `• ${a.autId} · ${a.nameHe}`).join('\n')
-      }\n\nהוספת השאלה מחדש תיצור מפתח חדש ולא תשחזר את הקשר.`,
+      `⛔ לשאלה הזו יש תפקיד תפעולי, והתהליכים הבאים תלויים בה:\n${
+        deps.map((d) => `• ${d.consumerHe}`).join('\n')
+      }\n\nיש להסיר קודם את התפקיד בהגדרות השאלה. לשינוי הנוסח אין צורך למחוק — ההתנהגות קשורה לתפקיד, לא למילים.`,
     );
   } else if (info?.flag) {
     parts.push('השאלה מסומנת "משמשת באוטומציות". מחיקתה תאבד את מפתח השאלה לצמיתות — הוספה מחדש תיצור מפתח חדש.');
@@ -582,8 +584,7 @@ function AutomationPanel({ q, info, isDraft, onToggleFlag }) {
   // The registry read failed or the version predates it — say nothing rather
   // than imply "no automations use this".
   if (!info) return null;
-  const auts = info.automations || [];
-  const optionRefs = Object.entries(info.options || {}).filter(([, list]) => list.length);
+  const deps = info.dependents || [];
 
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3.5">
@@ -615,48 +616,26 @@ function AutomationPanel({ q, info, isDraft, onToggleFlag }) {
         המפתח נשמר בין גרסאות. שינוי נוסח השאלה או סדר השאלות אינו משנה אותו — מחיקה ויצירה מחדש כן.
       </p>
 
-      {auts.length ? (
+      {deps.length ? (
         <div className="mt-3 border-t border-gray-200 pt-3">
-          <div className="text-[12px] font-medium text-gray-700">אוטומציות המשתמשות בשאלה כרגע</div>
+          <div className="text-[12px] font-medium text-gray-700">התהליכים שתלויים בשאלה הזו</div>
           <ul className="mt-1.5 space-y-1">
-            {auts.map((a) => (
-              <li key={a.autId} className="flex items-center gap-2 text-[12px]">
+            {deps.map((d) => (
+              <li key={d.configKey + ':' + d.role} className="flex flex-wrap items-center gap-2 text-[12px]">
                 <code className="rounded bg-white px-1.5 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200" dir="ltr">
-                  {a.autId}
+                  {d.role}
                 </code>
-                <Link to={`/admin/settings/automations/${a.autId}`} className="text-blue-600 hover:underline">
-                  {a.nameHe}
-                </Link>
+                <span className={d.known ? 'text-gray-700' : 'text-amber-700'}>{d.consumerHe}</span>
               </li>
             ))}
           </ul>
           <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11.5px] text-amber-800">
-            ⚠ מחיקת השאלה או מחיקת אפשרויות התשובה ישברו את האוטומציות האלה.
+            ⚠ מחיקת השאלה תעצור אותם. אפשר לשנות את הנוסח בחופשיות — ההתנהגות קשורה לתפקיד, לא למילים.
           </div>
         </div>
       ) : info.flag ? (
         <div className="mt-3 border-t border-gray-200 pt-3 text-[11.5px] text-gray-500">
-          השאלה מסומנת כנקודת חיבור לאוטומציות; טרם נבנתה אוטומציה המשתמשת בה.
-        </div>
-      ) : null}
-
-      {!info.flag && auts.length ? (
-        <div className="mt-2 text-[11.5px] text-amber-700">
-          ⚠ קיימות אוטומציות התלויות בשאלה זו למרות שאינה מסומנת.
-        </div>
-      ) : null}
-
-      {optionRefs.length ? (
-        <div className="mt-3 border-t border-gray-200 pt-3">
-          <div className="text-[12px] font-medium text-gray-700">אפשרויות תשובה בשימוש</div>
-          <ul className="mt-1.5 space-y-1 text-[11.5px] text-gray-600">
-            {optionRefs.map(([value, list]) => (
-              <li key={value} className="flex flex-wrap items-center gap-1.5">
-                <code className="rounded bg-white px-1.5 py-0.5 text-[11px] ring-1 ring-gray-200" dir="ltr">{value}</code>
-                <span>{list.map((a) => a.autId).join(', ')}</span>
-              </li>
-            ))}
-          </ul>
+          השאלה מסומנת כנקודת חיבור לאוטומציות; אין כרגע תהליך תפעולי שתלוי בה.
         </div>
       ) : null}
     </div>
@@ -672,11 +651,10 @@ function PublishProblems({ problems, warningsOnly, questionLabelByKey, onAcknowl
   const label = (p) => {
     const text = PUBLISH_PROBLEM_LABELS[p.code] || p.code;
     const q = p.questionKey ? questionLabelByKey.get(p.questionKey) : null;
-    const named = p.questionKey ? `${text} — "${q || p.questionKey}"` : text;
-    // Naming the AUT ids is the whole point: the author needs to know WHICH
-    // automations break, not merely that something does.
-    const auts = (p.automations || []).map((a) => `${a.autId} · ${a.nameHe}`).join(' · ');
-    return auts ? `${named} · ${auts}` : named;
+    // Only the author's manual flag reaches here now. Operational ROLES are
+    // guarded at delete time instead — a role cannot outlive its own question,
+    // so there is nothing for a publish gate to compare.
+    return p.questionKey ? `${text} — "${q || p.questionKey}"` : text;
   };
 
   const errors = problems.filter((p) => (p.level || 'error') === 'error');

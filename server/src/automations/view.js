@@ -163,10 +163,13 @@ export async function communicationRulesFor(def, { db = prisma } = {}) {
   }));
 }
 
+const TRIGGER_LABELS_HE = {
+  external_lead_created: 'נוצר ליד חדש ממקור חיצוני',
+};
+
 function triggerLabel(def) {
-  if (def.trigger?.kind !== 'questionnaire_submitted') return def.trigger?.kind || '—';
-  const first = def.trigger.firstSubmitOnly !== false ? ' (הגשה ראשונה בלבד)' : '';
-  return `הגשת שאלון "${def.trigger.templateKey}"${first}`;
+  const kind = def.trigger?.kind;
+  return TRIGGER_LABELS_HE[kind] || kind || '—';
 }
 
 const OP_HE = {

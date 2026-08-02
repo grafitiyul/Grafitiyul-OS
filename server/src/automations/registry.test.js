@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  registerAutomation, validateDefinition, validateRegistry, definitionHash,
+  registerAutomation, validateDefinition,
+  TRIGGER_KINDS, validateRegistry, definitionHash,
   automationById, listAutomations, automationsForTrigger, listRegistryEntries,
   __resetRegistry,
 } from './registry.js';
@@ -19,7 +20,7 @@ const baseDef = (over = {}) => ({
   descriptionHe: 'תיאור',
   category: 'tours',
   defaultEnabled: true,
-  trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination' },
+  trigger: { kind: 'external_lead_created' },
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],
@@ -134,9 +135,12 @@ test('an automation without an idempotency rule is rejected', () => {
     .includes('idempotency_function_required'));
 });
 
-test('a questionnaire trigger must name its template', () => {
-  assert.ok(validateDefinition(baseDef({ trigger: { kind: 'questionnaire_submitted' } }))
-    .includes('questionnaire_trigger_requires_templateKey'));
+test('a trigger kind with no source is rejected — an orphan trigger never fires', () => {
+  // questionnaire_submitted was removed with the last questionnaire automation.
+  // A definition using it must fail at BOOT, not sit in the registry silently
+  // waiting for an event nothing emits.
+  assert.ok(validateDefinition(baseDef({ trigger: { kind: 'questionnaire_submitted', templateKey: 'x' } }))
+    .some((x) => x.startsWith('unknown_trigger_kind')));
 });
 
 // ── registration ─────────────────────────────────────────────────────────────
@@ -158,29 +162,16 @@ test('registered definitions are readable and trigger-matchable', () => {
     assert.equal(automationById('AUT-900').nameHe, 'אוטומציית בדיקה');
     assert.equal(listAutomations().length, 1);
 
-    const matched = automationsForTrigger({
-      kind: 'questionnaire_submitted',
-      templateKey: 'tour_coordination',
-      purpose: 'coordination',
-    });
-    assert.equal(matched.length, 1);
-
-    assert.equal(automationsForTrigger({
-      kind: 'questionnaire_submitted',
-      templateKey: 'other_form',
-    }).length, 0);
+    assert.equal(automationsForTrigger({ kind: 'external_lead_created' }).length, 1);
+    // A different kind matches nothing — the kind IS the identity.
+    assert.equal(automationsForTrigger({ kind: 'something_else' }).length, 0);
   });
 });
 
-test('a purpose-scoped trigger only matches that purpose', () => {
-  withAllocatedId('AUT-900', () => {
-    registerAutomation(baseDef({
-      trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination', purpose: 'coordination' },
-    }));
-    assert.equal(automationsForTrigger({
-      kind: 'questionnaire_submitted', templateKey: 'tour_coordination', purpose: 'tour_summary',
-    }).length, 0);
-  });
+test('the live registry declares only trigger kinds a source actually emits', () => {
+  // Every declared kind must have a fire site, or a definition can be added,
+  // pass validation, appear in the UI and never run.
+  assert.deepEqual(TRIGGER_KINDS, ['external_lead_created']);
 });
 
 // ── definition drift ─────────────────────────────────────────────────────────

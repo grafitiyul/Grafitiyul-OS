@@ -1,16 +1,18 @@
 // Automation Registry — admin routes.
 //
-// Read-only by design, with exactly THREE mutations: enable, disable, and a
-// manual re-run. No definition field is writable, which is what keeps the
-// registry generated from the code the runtime executes.
+// Read-only by design, with exactly TWO mutations: enable and disable. No
+// definition field is writable, which is what keeps the registry generated from
+// the code the runtime executes.
+//
+// The manual re-run endpoint was removed with the questionnaire automations: it
+// could only replay a questionnaire submission, and there are no questionnaire
+// automations left to replay it against.
 
 import { Router } from 'express';
 import { handle } from '../asyncHandler.js';
 import { prisma } from '../db.js';
 import { listView, detailView } from '../automations/view.js';
 import { automationById } from '../automations/registry.js';
-import { runAutomation } from '../automations/runtime.js';
-import { resolveSubjectRefs, answersOf } from '../automations/sources/questionnaire.js';
 
 const router = Router();
 const h = (fn) => handle(fn);
@@ -59,41 +61,6 @@ router.put('/:autId/enabled', h(async (req, res) => {
     },
   });
   res.json(await detailView(autId));
-}));
-
-/**
- * Manual re-run against one submission. Safe by construction: it goes through
- * the SAME runtime, so the idempotency key is the same and a submission that
- * already ran is a no-op rather than a second send.
- */
-router.post('/:autId/rerun', h(async (req, res) => {
-  const { autId } = req.params;
-  const def = automationById(autId);
-  if (!def) return res.status(404).json({ error: 'automation_not_found' });
-
-  const submissionId = String((req.body || {}).submissionId || '').trim();
-  if (!submissionId) return res.status(400).json({ error: 'submission_id_required' });
-
-  const submission = await prisma.questionnaireSubmission.findUnique({
-    where: { id: submissionId },
-    include: {
-      answers: true,
-      template: { select: { id: true, key: true, internalName: true, purpose: true } },
-    },
-  });
-  if (!submission) return res.status(404).json({ error: 'submission_not_found' });
-  if (submission.template?.key !== def.trigger?.templateKey) {
-    return res.status(422).json({ error: 'submission_template_mismatch' });
-  }
-
-  const refs = await resolveSubjectRefs(submission);
-  const result = await runAutomation(def, {
-    submission,
-    answers: answersOf(submission),
-    refs,
-    firstSubmit: true,
-  });
-  res.json({ result, detail: await detailView(autId) });
 }));
 
 export default router;

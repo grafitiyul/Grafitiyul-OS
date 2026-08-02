@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runAutomation, RUN_STATUS } from './runtime.js';
 import { registerActionExecutor } from './actions/index.js';
-import { resolveSubjectRefs, answersOf } from './sources/questionnaire.js';
 
 // The runtime's contract, stated as tests:
 //   * the same submission can NEVER act twice;
@@ -237,57 +236,7 @@ test('only the answers the automation reads are frozen into the run', async () =
   assert.equal(input.answers.q_private, undefined, 'unread answers must not land in an audit table');
 });
 
-// ── subject → business refs ──────────────────────────────────────────────────
-
-test('a tour with exactly one active booking resolves its deal', async () => {
-  const db = stubDb({ bookings: [{ id: 'b1', tourEventId: 'tour1', dealId: 'deal1', status: 'confirmed' }] });
-  const refs = await resolveSubjectRefs({ id: 's', subjectType: 'tour_event', subjectId: 'tour1' }, { db });
-  assert.equal(refs.dealId, 'deal1');
-  assert.equal(refs.tourEventId, 'tour1');
-  assert.equal(refs.ambiguousDeal, false);
-});
-
-test('a tour with several bookings resolves NO deal, and says it was ambiguous', async () => {
-  // Guessing here would put the wrong customer's name and balance in a
-  // manager's message.
-  const db = stubDb({
-    bookings: [
-      { id: 'b1', tourEventId: 'tour1', dealId: 'deal1', status: 'confirmed' },
-      { id: 'b2', tourEventId: 'tour1', dealId: 'deal2', status: 'confirmed' },
-    ],
-  });
-  const refs = await resolveSubjectRefs({ id: 's', subjectType: 'tour_event', subjectId: 'tour1' }, { db });
-  assert.equal(refs.dealId, null);
-  assert.equal(refs.ambiguousDeal, true);
-});
-
-test('cancelled bookings do not count toward the deal resolution', async () => {
-  const db = stubDb({
-    bookings: [
-      { id: 'b1', tourEventId: 'tour1', dealId: 'deal1', status: 'confirmed' },
-      { id: 'b2', tourEventId: 'tour1', dealId: 'deal2', status: 'cancelled' },
-    ],
-  });
-  const refs = await resolveSubjectRefs({ id: 's', subjectType: 'tour_event', subjectId: 'tour1' }, { db });
-  assert.equal(refs.dealId, 'deal1');
-});
-
-test('a booking subject resolves both the deal and the tour', async () => {
-  const db = stubDb({ bookings: [{ id: 'b1', tourEventId: 'tour1', dealId: 'deal1', status: 'confirmed' }] });
-  const refs = await resolveSubjectRefs({ id: 's', subjectType: 'booking', subjectId: 'b1' }, { db });
-  assert.equal(refs.dealId, 'deal1');
-  assert.equal(refs.tourEventId, 'tour1');
-});
-
-test('an unbound submission resolves no business context', async () => {
-  const refs = await resolveSubjectRefs({ id: 's', subjectType: null, subjectId: null }, { db: stubDb() });
-  assert.equal(refs.dealId, null);
-  assert.equal(refs.tourEventId, null);
-});
-
-test('answersOf flattens frozen answers to a key map', () => {
-  assert.deepEqual(
-    answersOf({ answers: [{ questionKey: 'q_a', value: 'x' }, { questionKey: 'q_b', value: ['y'] }] }),
-    { q_a: 'x', q_b: ['y'] },
-  );
-});
+// The subject→refs and answersOf helpers were removed with
+// sources/questionnaire.js: no questionnaire automation exists any more, and the
+// submit path calls its consequences directly. Their tests went with them
+// rather than being kept alive against a module nothing imports.

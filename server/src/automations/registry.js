@@ -30,13 +30,15 @@ const DEFS = new Map();
 // programme (adopting every existing GOS behaviour into the engine) was
 // declined, and the workers keep owning their own scheduling. Kinds are added
 // one at a time, each for an explicitly approved business event:
-//   * questionnaire_submitted — the original scope (slices 0-1);
 //   * external_lead_created   — a genuinely NEW deal born from an EXTERNAL
 //     intake origin (ingress pipeline / Pipedrive lead bridge). Fired by the
 //     intake code itself, never inferred from which screen created the deal —
 //     internal creation paths (manual, WhatsApp, Email, duplication,
 //     migration) can never reach it.
-export const TRIGGER_KINDS = ['questionnaire_submitted', 'external_lead_created'];
+// questionnaire_submitted was REMOVED with the last questionnaire automation.
+// Leaving it declared would be a trap: a definition could use it, pass
+// validation, and never fire — there is no source that emits it any more.
+export const TRIGGER_KINDS = ['external_lead_created'];
 
 export const CATEGORIES = {
   tours: 'סיורים',
@@ -71,8 +73,8 @@ export function registerAutomation(def) {
     kind: 'event',
     hintHe: def.descriptionHe,
     contexts: def.trigger?.contexts || ['deal', 'contact', 'org', 'tour'],
-    // A questionnaire submission is a past-tense fact: "3 days before the tour"
-    // is meaningless for it, so trigger_time is the only sane anchor.
+    // An automation trigger is a past-tense fact: "3 days before the tour" is
+    // meaningless for it, so trigger_time is the only sane anchor.
     anchors: ['trigger_time'],
     autId: def.id,
   });
@@ -104,9 +106,6 @@ export function validateDefinition(def) {
   // ── trigger ──
   const trigger = def.trigger || {};
   if (!TRIGGER_KINDS.includes(trigger.kind)) p.push(`unknown_trigger_kind:${trigger.kind}`);
-  if (trigger.kind === 'questionnaire_submitted' && !trigger.templateKey) {
-    p.push('questionnaire_trigger_requires_templateKey');
-  }
 
   // ── answer conditions: STABLE KEYS ONLY ──
   // The single rule that keeps content and logic separate. A condition that
@@ -191,21 +190,17 @@ export function listRegistryEntries() {
   }));
 }
 
-/** Definitions whose trigger matches an incoming event (runtime + tests). */
-export function automationsForTrigger({ kind, templateKey = null, purpose = null, eventType = null }) {
-  return listAutomations().filter((def) => {
-    const t = def.trigger;
-    if (t.kind !== kind) return false;
-    // Non-questionnaire kinds match on the kind alone — the event IS the
-    // business identity; there is no template/purpose sub-binding.
-    if (t.kind !== 'questionnaire_submitted') return true;
-    // PURPOSE is the canonical binding when a definition declares one: the
-    // office decides which template serves 'tour_summary' via the purpose
-    // config, and template keys are auto-generated (tpl_<hex>), so matching on
-    // the key alone would break the moment a form is rebuilt.
-    if (t.purpose) return t.purpose === purpose;
-    return t.templateKey === templateKey;
-  });
+/**
+ * Definitions whose trigger matches an incoming event (runtime + tests).
+ *
+ * The KIND is the whole match. The questionnaire kinds used to need a second
+ * binding (which template / which purpose) because several automations shared
+ * one trigger; every remaining kind is a distinct business event, so the event
+ * IS the identity. If a future kind needs sub-binding again, it belongs here
+ * and nowhere else.
+ */
+export function automationsForTrigger({ kind }) {
+  return listAutomations().filter((def) => def.trigger?.kind === kind);
 }
 
 /**

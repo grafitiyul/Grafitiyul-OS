@@ -15,10 +15,16 @@ import { REPORTS, hasEnglish, renderReportBoth, assertBilingualIntegrity } from 
 
 const bilingual = () => REPORTS.filter((r) => r.nameEn);
 
-// A `*He` / `*En` pair in the context is ONE fact carried in two languages
-// (a finding's label, say). Those are supposed to differ between the two
-// reports, so they are collected separately from the language-neutral values.
-const isTranslated = (key) => /(He|En)$/.test(key);
+// A `labelHe` / `labelEn` pair is ONE fact carried in two languages (a
+// logistics finding's caption, say) and is SUPPOSED to differ between the two
+// reports, so it is collected separately.
+//
+// Deliberately narrow. `nameHe`, `firstNameHe`, `meetingPointHe` and friends
+// also end in "He", but they are business DATA: a customer really is named
+// דנה, and an English report showing her Hebrew name is correct, not drift.
+// Treating every *He key as a label made this test demand that English reports
+// hide real customer names.
+const isTranslated = (key) => key === 'labelHe' || key === 'labelEn';
 
 /** Every language-NEUTRAL leaf value — the facts both reports must show. */
 function leafValues(value, out = []) {
@@ -38,9 +44,8 @@ function translationPairs(value, out = []) {
   if (!value || typeof value !== 'object') return out;
   if (Array.isArray(value)) { for (const v of value) translationPairs(v, out); return out; }
   for (const [k, v] of Object.entries(value)) {
-    if (k.endsWith('He') && typeof v === 'string') {
-      const en = value[`${k.slice(0, -2)}En`];
-      if (typeof en === 'string') out.push({ he: v, en });
+    if (k === 'labelHe' && typeof v === 'string' && typeof value.labelEn === 'string') {
+      out.push({ he: v, en: value.labelEn });
     }
     translationPairs(v, out);
   }

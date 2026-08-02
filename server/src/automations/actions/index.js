@@ -12,11 +12,11 @@
 // runtime — it reports, and the run row records the outcome.
 
 import { fireCommunicationAction } from './communication.js';
-import { createReviewItemAction } from './reviewItem.js';
 
+// review_item was removed with AUT-002: ReviewItem creation is now a direct
+// call from the questionnaire submit path, not an automation action.
 const EXECUTORS = {
   communication: fireCommunicationAction,
-  review_item: createReviewItemAction,
 };
 
 export function actionExecutor(kind) {

@@ -23,6 +23,7 @@ import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 import { GUIDE_REPORTS } from './guideReports.js';
 import { REVIEW_REPORTS } from './reviewReports.js';
 import { COORDINATION_FOLLOWUP_REPORTS } from './coordinationFollowups.js';
+import { OFFICE_REPORTS_EN, OFFICE_REPORT_NAMES_EN } from './officeReportsEn.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -481,6 +482,18 @@ REPORTS.push(...COORDINATION_FOLLOWUP_REPORTS);
 // production — the server refuses to boot rather than sending something wrong.
 // It is deliberately a claim-based rule: a report with no `nameEn` is honestly
 // Hebrew-only and keeps working untouched.
+// The office reports (#1-#10) get their English renderers attached here rather
+// than inline: registry.js is already the longest file in the module, and a
+// second renderer per definition would have doubled it. One object, two
+// renderers — exactly the same contract as #11-#24, and bilingual.test.js
+// proves the two languages report the same facts.
+for (const r of REPORTS) {
+  const en = OFFICE_REPORTS_EN[r.number];
+  if (!en) continue;
+  r.renderEn = en;
+  r.nameEn = OFFICE_REPORT_NAMES_EN[r.number];
+}
+
 export function assertBilingualIntegrity(reports) {
   for (const r of reports) {
     if (!r.nameEn) continue;

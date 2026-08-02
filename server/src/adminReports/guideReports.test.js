@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { REPORTS, renderReport, renderReportSample, reportByNumber, reportsInGroup } from './registry.js';
+import { REPORTS, renderReport, renderReportSample, renderReportBoth, reportByNumber, reportsInGroup } from './registry.js';
 import { statusIcon, dayLabel, cityChip, hebrewWeekday } from './guideReports.js';
 import { coordinationSendMs, GUIDE_SEND_HOUR, SUMMARY_REMINDERS } from './tourSweeps.js';
 import { israelLocalToMs } from '../communication/windows.js';
@@ -231,18 +231,22 @@ test('#12 for an open tour with no registrations says so, never a blank gap', ()
 // the whole-portal token with a path appended: truncate the path and you have
 // the entire portal. This test exists so that link shape can never come back.
 
-test('NO guide notification may ever contain a portal link', () => {
-  const guideNumbers = REPORTS.filter((r) => r.audience === 'guides').map((r) => r.number);
-  assert.ok(guideNumbers.length >= 5, 'expected the guide notification family');
+test('NO report, in EITHER language, may contain a portal link', () => {
+  // Widened deliberately. The original guard covered guide-audience reports in
+  // Hebrew only, which left two ways for the shape to come back: a customer or
+  // office report, and an English renderer nobody was checking.
+  assert.ok(REPORTS.filter((r) => r.audience === 'guides').length >= 5, 'the guide family exists');
 
-  for (const number of guideNumbers) {
-    const text = renderReportSample(number);
-    assert.ok(text, `#${number} renders`);
-    // The portal surface is /p/<token>. A form link is /f/<token>.
-    assert.equal(/\/p\/[A-Za-z0-9_-]+/.test(text), false,
-      `#${number} contains a guide-portal link:\n${text}`);
-    assert.equal(text.includes('/tour/'), false,
-      `#${number} contains a portal tour deep link:\n${text}`);
+  for (const r of REPORTS) {
+    const both = renderReportBoth(r.number);
+    for (const [lang, text] of [['he', both.he], ['en', both.en]]) {
+      if (!text) continue;
+      // The portal surface is /p/<token>. A form link is /f/<token>.
+      assert.equal(/\/p\/[A-Za-z0-9_-]+/.test(text), false,
+        `#${r.number} (${lang}) contains a guide-portal link:\n${text}`);
+      assert.equal(text.includes('/tour/'), false,
+        `#${r.number} (${lang}) contains a portal tour deep link:\n${text}`);
+    }
   }
 });
 
