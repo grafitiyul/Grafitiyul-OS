@@ -19,6 +19,7 @@ import {
 } from './dates.js';
 import { calendarEventVisual, isUnassignedScheduled, eventCity } from './eventVisuals.js';
 import { useTourChanged } from '../tourEvents.js';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 
 // לוח שנה — the Admin Tours calendar. STRICTLY a second VIEW of the same
 // TourEvent data as the table: same status filter vocabulary, same Tour modal
@@ -193,10 +194,6 @@ export default function ToursCalendar({ search, kind, statuses, status, onOpenTo
           byDate={byDate}
           today={today}
           onOpenTour={onOpenTour}
-          onOpenDay={(d) => {
-            setAnchor(d);
-            setMode('day');
-          }}
         />
       ) : (
         <TimeGridView
@@ -238,7 +235,7 @@ function NavButton({ onClick, label, children }) {
 
 const MONTH_CELL_MAX_EVENTS = 3;
 
-function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) {
+function MonthView({ weeks, monthStart, byDate, today, onOpenTour }) {
   const nextMonth = addMonths(monthStart, 1);
   // Fill the viewport: the weeks region gets min-height = remaining screen
   // space below the calendar's document position, and each week row grows an
@@ -298,13 +295,7 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
                     <MonthEvent key={ev.id} ev={ev} onOpen={() => onOpenTour(ev.id)} />
                   ))}
                   {list.length > MONTH_CELL_MAX_EVENTS && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenDay(day)}
-                      className="w-full rounded px-1 py-0.5 text-right text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
-                    >
-                      +{list.length - MONTH_CELL_MAX_EVENTS} עוד
-                    </button>
+                    <DayOverflow day={day} list={list} onOpenTour={onOpenTour} />
                   )}
                 </div>
               </div>
@@ -314,6 +305,58 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
       ))}
       </div>
     </div>
+  );
+}
+
+// "+N עוד" — opens the FULL day list in a popover anchored to the cell. The
+// calendar stays in month view: no mode switch, no anchor change, nothing
+// persisted to viewPrefs. AnchoredMenu (the canonical floating surface) gives
+// portal + RTL + outside-click/Escape close + viewport flip/clamp + internal
+// scroll for free, and the list reuses MonthEvent — every tour here renders
+// and behaves EXACTLY like a tour drawn in the cell itself (list comes from
+// the live byDate map, so a background refetch refreshes the popover too).
+function DayOverflow({ day, list, onOpenTour }) {
+  const anchorRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="w-full rounded px-1 py-0.5 text-right text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
+      >
+        +{list.length - MONTH_CELL_MAX_EVENTS} עוד
+      </button>
+      <AnchoredMenu
+        anchorRef={anchorRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={Math.min(340, window.innerWidth - 32)}
+        panelClassName="rounded-xl p-2"
+      >
+        <div className="mb-1.5 flex items-baseline justify-between gap-2 px-1">
+          <span className="text-[12.5px] font-bold text-gray-900">
+            {WEEKDAY_HEADERS[new Date(`${day}T00:00:00Z`).getUTCDay()]} · {fmtTourDate(day)}
+          </span>
+          <span className="shrink-0 text-[11px] text-gray-500">{list.length} סיורים</span>
+        </div>
+        <div className="space-y-0.5">
+          {list.map((ev) => (
+            <MonthEvent
+              key={ev.id}
+              ev={ev}
+              onOpen={() => {
+                setOpen(false);
+                onOpenTour(ev.id);
+              }}
+            />
+          ))}
+        </div>
+      </AnchoredMenu>
+    </>
   );
 }
 
