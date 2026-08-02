@@ -2,10 +2,14 @@ import { useState } from 'react';
 import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import QuestionnairePurposeCard from '../../settings/QuestionnairePurposeCard.jsx';
 import CodeManagedNotifications from '../../adminReports/CodeManagedNotifications.jsx';
+import ContextFieldsCard from '../../settings/ContextFieldsCard.jsx';
 
-// Settings → Tours → "שיחת תיאום". Two tabs:
+// Settings → Tours → "שיחת תיאום". Three tabs:
 //   טפסים   — binds the coordination purpose to a questionnaire template
 //             (unchanged behaviour; the builder still owns the form itself).
+//   פרטי הסיור — which canonical facts appear above the questions. Configuration,
+//             NOT content: the operator picks fields and labels from an
+//             allowlist, never what any field says.
 //   התראות  — the automatic guide notifications of the coordination-call flow
 //             only (#11–#13). Same code-managed architecture as דיווחי מנהלים,
 //             rendered by the SAME component — not a second notification screen.
@@ -13,6 +17,7 @@ import CodeManagedNotifications from '../../adminReports/CodeManagedNotification
 //             page: Settings → Tours → סיכום סיור → התראות אוטומטיות.
 const TABS = [
   { key: 'forms', label: 'שאלוני שיחת תיאום' },
+  { key: 'context', label: 'פרטי הסיור למדריך' },
   { key: 'alerts', label: 'התראות אוטומטיות' },
 ];
 
@@ -31,7 +36,8 @@ export default function CoordinationSettingsPage() {
     try { localStorage.setItem(TAB_STORAGE_KEY, key); } catch { /* private mode */ }
   }
 
-  const wide = tab === 'alerts';
+  // The context picker is a two-column editor with a preview — it needs room.
+  const wide = tab === 'alerts' || tab === 'context';
 
   return (
     <div dir="rtl" className={`px-5 py-8 lg:px-10 lg:py-10 mx-auto ${wide ? 'max-w-[1400px]' : 'max-w-3xl'}`}>
@@ -66,6 +72,8 @@ export default function CoordinationSettingsPage() {
           title="שאלון שיחת תיאום"
           description="הטופס הפנימי שממלאים אחרי שיחת התיאום עם הלקוח. נבנה בבילדר — כאן רק בוחרים איזו תבנית משמשת."
         />
+      ) : tab === 'context' ? (
+        <ContextFieldsCard purpose="coordination" />
       ) : (
         <CodeManagedNotifications
           group="coordination"

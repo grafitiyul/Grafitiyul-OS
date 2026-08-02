@@ -1742,6 +1742,13 @@ export const api = {
     purposes: () => request('/api/questionnaires/purposes'),
     setPurposeConfig: (purpose, templateId) =>
       request(`/api/questionnaires/purpose-config/${purpose}`, { method: 'PUT', body: JSON.stringify({ templateId }) }),
+    // The read-only context block above a form's questions: the allowlisted
+    // catalog plus which fields the operator chose, in which order.
+    contextFields: {
+      get: (purpose) => request(`/api/questionnaires/purpose-config/${purpose}/context-fields`),
+      save: (purpose, fields) =>
+        request(`/api/questionnaires/purpose-config/${purpose}/context-fields`, { method: 'PUT', body: JSON.stringify({ fields }) }),
+    },
     // Versions (draft-only writes; publish freezes)
     getVersion: (versionId) => request(`/api/questionnaires/versions/${versionId}`),
     updateVersion: (versionId, data) =>

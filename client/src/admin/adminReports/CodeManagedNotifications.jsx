@@ -128,6 +128,10 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
       <div className="space-y-4">
         {data.reports.map((r) => {
           const toGuides = r.audience === 'guides';
+          const toCustomer = r.audience === 'customer';
+          // Both address one person resolved from the business event, so
+          // neither has a group destination to choose.
+          const toPerson = toGuides || toCustomer;
           return (
             <div key={r.number} className={`${card} overflow-hidden`}>
               <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 px-4 py-3">
@@ -145,7 +149,7 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
                     : r.enabled ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
                       : 'bg-amber-50 text-amber-700 ring-amber-200'
                 }`}>
-                  {!r.configured ? (toGuides ? 'לא נבחר חשבון שולח' : 'לא הוגדר יעד') : r.enabled ? 'פעיל' : 'מושבת'}
+                  {!r.configured ? (toPerson ? 'לא נבחר חשבון שולח' : 'לא הוגדר יעד') : r.enabled ? 'פעיל' : 'מושבת'}
                 </span>
                 <label className="flex cursor-pointer items-center gap-1.5 text-[12.5px] text-gray-700">
                   <input type="checkbox" checked={r.enabled} onChange={(e) => saveConfig(r.number, { enabled: e.target.checked })} className="h-4 w-4" />
@@ -160,23 +164,25 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
 
                   <div>
                     <div className="mb-1 text-[12.5px] font-semibold text-gray-700">
-                      {toGuides ? 'שליחה (WhatsApp)' : 'יעד השליחה (WhatsApp)'}
+                      {toPerson ? 'שליחה (WhatsApp)' : 'יעד השליחה (WhatsApp)'}
                     </div>
-                    {toGuides && (
+                    {toPerson && (
                       <div className="mb-2 rounded-lg bg-sky-50 px-2.5 py-1.5 text-[12px] leading-relaxed text-sky-900 ring-1 ring-sky-100">
-                        👤 הודעה אישית לכל מדריך משובץ — אין קבוצת יעד. בחרו רק מאיזה חשבון נשלח.
+                        {toCustomer
+                          ? '👤 הודעה אישית ללקוח של אותה הזמנה — הנמען נקבע מהאירוע העסקי, לא כאן. בחרו רק מאיזה חשבון נשלח.'
+                          : '👤 הודעה אישית לכל מדריך משובץ — אין קבוצת יעד. בחרו רק מאיזה חשבון נשלח.'}
                       </div>
                     )}
-                    <div className={`grid gap-2 ${toGuides ? '' : 'sm:grid-cols-2'}`}>
+                    <div className={`grid gap-2 ${toPerson ? '' : 'sm:grid-cols-2'}`}>
                       <SearchSelect
                         value={r.waAccountId ? { id: r.waAccountId, label: meta?.waAccounts?.find((a) => a.id === r.waAccountId)?.label || r.waAccountId } : null}
-                        onSelect={(item) => saveConfig(r.number, { waAccountId: item?.id || null, ...(toGuides ? {} : { waChatId: null }) })}
+                        onSelect={(item) => saveConfig(r.number, { waAccountId: item?.id || null, ...(toPerson ? {} : { waChatId: null }) })}
                         search={async (q) => (meta?.waAccounts || [])
                           .filter((a) => !q || a.label.includes(q))
                           .map((a) => ({ id: a.id, label: a.label, icon: '📱', subtitle: a.status === 'connected' ? 'מחובר' : a.status }))}
                         placeholder="חשבון שולח…"
                       />
-                      {!toGuides && (
+                      {!toPerson && (
                         <SearchSelect
                           value={r.waChatId ? { id: r.waChatId, label: r.destinationName || 'קבוצה נבחרה' } : null}
                           onSelect={(item) => saveConfig(r.number, { waChatId: item?.id || null })}
@@ -214,9 +220,16 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[12.5px] font-semibold text-gray-700">תצוגה מקדימה (נתוני דוגמה)</span>
                     <div className="flex items-center gap-2">
-                      {/* Applies wherever the report addresses a person whose
-                          language we know — a group chat has no preference. */}
-                      {r.audience === 'guides' && (
+                      {/* Guides only. A CUSTOMER message always follows the
+                          customer's own language — there is nothing to toggle,
+                          and offering the choice would imply an operator could
+                          send a customer Hebrew by mistake. */}
+                      {toCustomer && (
+                        <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                          נשלח בשפת הלקוח
+                        </span>
+                      )}
+                      {toGuides && (
                         <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-gray-700">
                           <input
                             type="checkbox"

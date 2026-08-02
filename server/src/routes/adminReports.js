@@ -63,13 +63,18 @@ router.get('/', handle(async (req, res) => {
         key: r.key,
         nameHe: r.nameHe,
         group: reportGroup(r),
-        // 'guides' → the destination is each guide's own WhatsApp; the UI hides
-        // the group picker and shows the sending account only.
+        // 'guides' / 'customer' → the destination is that ONE person's WhatsApp,
+        // resolved per event; the UI hides the group picker and shows the sending
+        // account only. 'config' → the configured group chat.
         audience: r.audience || 'config',
         triggerHe: r.triggerHe,
         dataHe: r.dataHe,
         enabled: config ? config.enabled : false,
-        configured: r.audience === 'guides' ? !!config?.waAccountId : !!(config?.waAccountId && config?.waChatId),
+        // A per-person report needs only a sending ACCOUNT — there is no group
+        // to pick, because the recipient comes from the business event.
+        configured: (r.audience === 'guides' || r.audience === 'customer')
+          ? !!config?.waAccountId
+          : !!(config?.waAccountId && config?.waChatId),
         waAccountId: config?.waAccountId || null,
         waChatId: config?.waChatId || null,
         destinationName: chat?.groupSubject || null,

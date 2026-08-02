@@ -29,6 +29,7 @@ import { referencesForTemplate, referencePayloadForTemplate } from '../automatio
 import { fireQuestionnaireAutomations } from '../automations/sources/questionnaire.js';
 import { freezeCoordinationContext } from './coordinationContext.js';
 import { coordinationFollowups } from './coordinationFollowup.js';
+import { CONTEXT_FIELD_KEYS, contextCatalogForPicker, defaultContextConfig } from './contextCatalog.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, purposeAllowsLiveEdit, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
@@ -766,6 +767,61 @@ export async function setPurposeConfig(purpose, templateId) {
     update: { templateId: templateId || null },
     include: { template: { select: TEMPLATE_LIST_SELECT } },
   });
+}
+
+/**
+ * Save the read-only context-block configuration for a purpose.
+ *
+ * The whole point of the allowlist is enforced HERE, on the write: an unknown
+ * key is rejected rather than stored and silently dropped at render. Labels are
+ * trimmed to a sane length — this is a form field caption, not a document.
+ *
+ * The operator chooses which canonical field appears, its order and its label.
+ * They cannot choose what it says.
+ */
+export async function setPurposeContextFields(purpose, fields) {
+  if (!isValidPurpose(purpose)) throw new QError(400, 'invalid_purpose');
+  if (!Array.isArray(fields)) throw new QError(400, 'fields_must_be_an_array');
+
+  const known = new Set(CONTEXT_FIELD_KEYS);
+  const seen = new Set();
+  const clean = [];
+  for (const f of fields) {
+    const key = String(f?.key || '');
+    if (!known.has(key)) throw new QError(400, 'unknown_context_field', { key });
+    if (seen.has(key)) throw new QError(400, 'duplicate_context_field', { key });
+    seen.add(key);
+    clean.push({
+      key,
+      enabled: f?.enabled !== false,
+      labelHe: String(f?.labelHe || '').trim().slice(0, 60) || undefined,
+      labelEn: String(f?.labelEn || '').trim().slice(0, 60) || undefined,
+    });
+  }
+
+  const row = await prisma.questionnairePurposeConfig.upsert({
+    where: { purpose },
+    create: { purpose, contextFields: clean },
+    update: { contextFields: clean },
+    select: { contextFields: true },
+  });
+  return row.contextFields;
+}
+
+/** The catalog + the current configuration, for the picker. */
+export async function getPurposeContextFields(purpose) {
+  const row = await prisma.questionnairePurposeConfig.findUnique({
+    where: { purpose },
+    select: { contextFields: true },
+  });
+  const stored = row?.contextFields;
+  return {
+    catalog: contextCatalogForPicker(),
+    fields: Array.isArray(stored) && stored.length ? stored : defaultContextConfig(),
+    // Whether the operator has ever configured this, so the UI can say
+    // "ברירת מחדל" instead of implying someone chose it.
+    configured: Array.isArray(stored) && stored.length > 0,
+  };
 }
 
 // ── submissions ──────────────────────────────────────────────────────────────

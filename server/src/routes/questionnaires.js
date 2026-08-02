@@ -50,6 +50,18 @@ router.put('/purpose-config/:purpose', qh(async (req, res) => {
   res.json(await setPurposeConfig(req.params.purpose, req.body?.templateId || null));
 }));
 
+// The read-only context block shown above a form's questions. GET returns the
+// allowlisted catalog plus the current choice; PUT validates every key against
+// that catalog, so an unknown field is rejected at the boundary rather than
+// stored and silently dropped at render time.
+router.get('/purpose-config/:purpose/context-fields', qh(async (req, res) => {
+  res.json(await getPurposeContextFields(req.params.purpose));
+}));
+
+router.put('/purpose-config/:purpose/context-fields', qh(async (req, res) => {
+  res.json({ fields: await setPurposeContextFields(req.params.purpose, req.body?.fields) });
+}));
+
 // ── public links (operator side) ─────────────────────────────────────────────
 
 // Get-or-create the ONE active public link for (subject, purpose). Returns the
