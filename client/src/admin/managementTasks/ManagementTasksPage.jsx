@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 
 // משימות הנהלה — the operational review inbox.
@@ -17,6 +17,11 @@ const TABS = [
 ];
 
 export default function ManagementTasksPage() {
+  // Manager notifications and the daily digest deep-link to ?item=<reviewItemId>.
+  // Without honouring it the link dumps the manager on the inbox to hunt for the
+  // card they were just told about — the link may as well not exist.
+  const [params, setParams] = useSearchParams();
+  const focusId = params.get('item');
   const [status, setStatus] = useState('open');
   const [data, setData] = useState(null);
   const [kinds, setKinds] = useState([]);
@@ -38,6 +43,20 @@ export default function ManagementTasksPage() {
   }, [status]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Scroll the linked card into view and flash it. If it has already been
+  // handled it lives in the other tab, so switch there rather than showing
+  // nothing — a manager following a link must always land on the card.
+  useEffect(() => {
+    if (!focusId || !data) return;
+    const here = data.groups.some((g) => g.cards.some((c) => c.id === focusId));
+    if (!here) {
+      setStatus((cur) => (cur === 'open' ? 'handled' : cur));
+      return;
+    }
+    const el = document.getElementById(`review-${focusId}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusId, data]);
 
   const act = async (id, action) => {
     setBusy(id);
@@ -83,6 +102,19 @@ export default function ManagementTasksPage() {
         ) : null}
       </div>
 
+      {focusId ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-[12.5px] text-blue-800">
+          <span>הגעתם מקישור להתראה — הכרטיס המסומן מודגש למטה.</span>
+          <button
+            type="button"
+            onClick={() => setParams({}, { replace: true })}
+            className="ms-auto rounded-lg border border-blue-300 bg-white px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-100"
+          >
+            הצג את כל המשימות
+          </button>
+        </div>
+      ) : null}
+
       {error ? (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">{error}</div>
       ) : null}
@@ -104,6 +136,7 @@ export default function ManagementTasksPage() {
               group={group}
               status={status}
               busy={busy}
+              focusId={focusId}
               onAct={act}
             />
           ))}
@@ -138,7 +171,7 @@ export default function ManagementTasksPage() {
  * They stay completely independent: separate rows, separate handle buttons,
  * separate dedupeKeys. The container is presentation only.
  */
-function TourGroup({ group, status, busy, onAct }) {
+function TourGroup({ group, status, busy, focusId, onAct }) {
   const cards = [...group.cards].sort((a, b) => {
     // Summary leads (right in RTL); the alert card sits beside it.
     if (a.kind === b.kind) return 0;
@@ -172,20 +205,25 @@ function TourGroup({ group, status, busy, onAct }) {
       {/* The independent tasks */}
       <div className="grid gap-3 p-3 lg:grid-cols-2">
         {cards.map((card) => (
-          <ReviewCard key={card.id} card={card} status={status} busy={busy} onAct={onAct} />
+          <ReviewCard key={card.id} card={card} status={status} busy={busy} focused={card.id === focusId} onAct={onAct} />
         ))}
       </div>
     </section>
   );
 }
 
-function ReviewCard({ card, status, busy, onAct }) {
+function ReviewCard({ card, status, busy, focused, onAct }) {
   const [open, setOpen] = useState(false);
   const alert = card.tone === 'alert';
   const d = card.data || {};
 
   return (
-    <article className={`rounded-2xl border bg-white ${alert ? 'border-red-300 shadow-[0_0_0_1px_rgba(239,68,68,0.1)]' : 'border-gray-200'}`}>
+    <article
+      id={`review-${card.id}`}
+      className={`rounded-2xl border bg-white transition ${
+        focused ? 'border-blue-400 ring-2 ring-blue-300 ring-offset-2' : alert ? 'border-red-300 shadow-[0_0_0_1px_rgba(239,68,68,0.1)]' : 'border-gray-200'
+      }`}
+    >
       <div className={`flex flex-wrap items-center gap-2 rounded-t-2xl px-4 py-2.5 ${alert ? 'bg-red-50' : 'bg-blue-50/70'}`}>
         {/* Colour is the fastest signal: blue = read it, red = go do something. */}
         <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${alert ? 'bg-red-500' : 'bg-blue-500'}`} />
