@@ -807,6 +807,15 @@ app.listen(port, () => {
     .then(({ buildHistoricalFallbackQuotes }) => buildHistoricalFallbackQuotes(prisma, { log: console }))
     .catch((e) => console.warn('[maintenance] historical fallback builders failed:', e?.message));
 
+  // Collection WORK QUEUE classification. Operational only — it reads the
+  // canonical collection resolver and writes nothing but the review status.
+  // Re-runs on every boot so the future-tour rule stays true as tours pass into
+  // the past; operator decisions are never overwritten. Aborts loudly if the
+  // hand-over snapshot stops resolving.
+  import('./maintenance/classifyCollectionWorkQueue.js')
+    .then(({ classifyCollectionWorkQueue }) => classifyCollectionWorkQueue(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] collection work-queue classification failed:', e?.message));
+
   // Durable one-time backfill: legacy org finance scalars → canonical finance
   // Contacts (phone/email identity matching, membership link, designation,
   // timeline). Idempotent; summary lands on the MaintenanceJob row.

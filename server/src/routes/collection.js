@@ -163,10 +163,20 @@ collectionRouter.get(
       // hidden — computed from the persisted field, not from the money.
       prisma.deal.groupBy({ by: ['collectionReviewStatus'], where: { status: 'won' }, _count: { _all: true } }),
     ]);
+    // Two different true numbers, and the tab must show the one that matches
+    // what is on screen. `counts` is how many deals CARRY each classification;
+    // the list additionally drops deals that are already fully collected (a
+    // deal on the business's queue that has since been paid is not work). So
+    // the SELECTED tab reports the list it actually rendered, and the others
+    // report their classification totals.
+    const classified = Object.fromEntries(counts.map((c) => [c.collectionReviewStatus || 'unclassified', c._count._all]));
     res.json({
       deals,
       reviewStatus: reviewStatus || 'all',
-      counts: Object.fromEntries(counts.map((c) => [c.collectionReviewStatus || 'unclassified', c._count._all])),
+      counts: { ...classified, ...(reviewStatus ? { [reviewStatus]: deals.length } : { all: deals.length }) },
+      classifiedCounts: classified,
+      // How many deals in this queue are settled and therefore not shown.
+      settledHidden: reviewStatus ? Math.max(0, (classified[reviewStatus] || 0) - deals.length) : 0,
     });
   }),
 );

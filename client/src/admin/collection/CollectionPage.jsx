@@ -169,6 +169,8 @@ export default function CollectionPage() {
   // historical population stays one click away, never silently gone.
   const [queue, setQueue] = useState(saved.queue ?? 'active_collection');
   const [counts, setCounts] = useState({});
+  // Deals in this queue that are already fully collected, and so are not work.
+  const [settledHidden, setSettledHidden] = useState(0);
   const [advanced, setAdvanced] = useState(() => normalizeTree(saved.advanced) || emptyGroup());
 
   useEffect(() => {
@@ -186,6 +188,7 @@ export default function CollectionPage() {
         if (!cancelled) {
           setRows(res.deals || []);
           setCounts(res.counts || {});
+          setSettledHidden(res.settledHidden || 0);
         }
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -294,6 +297,11 @@ export default function CollectionPage() {
             )}
           </button>
         ))}
+        {settledHidden > 0 && (
+          <span className='text-[12px] text-gray-500'>
+            {settledHidden} עסקאות בתור הזה כבר נגבו במלואן ואינן מוצגות.
+          </span>
+        )}
         {queue === 'likely_paid_legacy' && (
           <span className="text-[12px] text-gray-500">
             עסקאות היסטוריות שיובאו מהמערכת הקודמת — ההנחה העסקית היא שכבר שולמו. היתרות מוצגות כפי שהן.

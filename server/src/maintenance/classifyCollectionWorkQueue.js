@@ -1,42 +1,69 @@
 import { computeCollection } from '../collection.js';
 import { classifyDeal, shouldWrite, SOURCE, COLLECTION_REVIEW_STATUS } from '../collectionWorkQueue.js';
+import { COLLECTION_SNAPSHOT_ORDER_NOS, COLLECTION_SNAPSHOT_EXPECTED } from '../collectionSnapshot.js';
 
-// One-time (and re-runnable) classification of the Collection work queue.
+// Classification of the Collection work queue.
 //
-// Populates Deal.collectionReviewStatus. It reads payment state from the
-// CANONICAL resolver and never recomputes it, and it writes nothing that is not
-// the classification itself: no amount, document, allocation, builder or
-// timeline row is touched by this script.
+// Populates Deal.collectionReviewStatus from exactly two business inputs — the
+// hand-over snapshot and the live-future-tour rule. It reads payment state from
+// the CANONICAL resolver and never recomputes it, and it writes nothing but the
+// classification: no amount, document, allocation, builder or timeline row.
 //
-// SAFETY
-//   • only NULLs are populated;
-//   • an OPERATOR decision is never overwritten;
-//   • a machine-set value is corrected only when explicitly asked
-//     (`allowMachineCorrection`), which is what lets the real Pipedrive
-//     "Business Collection" membership promote a deal later without
-//     re-litigating anything a human has since decided.
+// It is a REPLACE, not a fill: a machine-set value is corrected whenever the
+// rules now say something different. That is what retires the withdrawn
+// "unpaid business deal" heuristic in the same pass, with no separate rollback,
+// and what keeps the future-tour rule true as tours pass into the past.
+// An OPERATOR decision is never overwritten.
 //
-// `businessCollectionDealIds` is the real filter membership when it can be
-// read. It is optional on purpose: at the time of writing the Pipedrive API is
-// returning "daily request budget exceeded", so the GOS-native equivalent (an
-// unpaid business deal) stands in and every row records WHICH rule decided it.
+// SAFETY GATE: the snapshot must resolve to exactly the expected number of
+// deals. A missing order number means the hand-over list and GOS disagree, and
+// the run aborts with the offending ids rather than silently queueing fewer
+// deals than the business asked for.
 
 export async function classifyCollectionWorkQueue(
   client,
-  { log = console, dryRun = false, today = new Date().toISOString().slice(0, 10), businessCollectionDealIds = null, allowMachineCorrection = false } = {},
+  { log = console, dryRun = false, today = new Date().toISOString().slice(0, 10) } = {},
 ) {
+  // ── The snapshot, resolved and verified before anything is written ────────
+  const snapshotDeals = await client.deal.findMany({
+    where: { orderNo: { in: [...COLLECTION_SNAPSHOT_ORDER_NOS] } },
+    select: { id: true, orderNo: true },
+  });
+  const foundOrderNos = new Set(snapshotDeals.map((d) => d.orderNo));
+  const missing = COLLECTION_SNAPSHOT_ORDER_NOS.filter((n) => !foundOrderNos.has(n));
+  if (missing.length || snapshotDeals.length !== COLLECTION_SNAPSHOT_EXPECTED) {
+    const err = new Error(
+      `collection snapshot did not resolve: expected ${COLLECTION_SNAPSHOT_EXPECTED}, ` +
+      `resolved ${snapshotDeals.length}${missing.length ? `, missing order numbers: ${missing.join(', ')}` : ''}`,
+    );
+    err.code = 'snapshot_unresolved';
+    err.missing = missing;
+    throw err;
+  }
+  const snapshotIds = new Set(snapshotDeals.map((d) => d.id));
+
+  // ── Live future tours: an ACTIVE booking on a non-cancelled tour still ahead.
+  // The canonical relationship, not Deal.tourDate — a cancelled tour leaves its
+  // date on the deal, and that date must not put a dead deal in the queue.
+  const futureRows = await client.$queryRawUnsafe(
+    `select distinct b."dealId" id
+       from "Booking" b
+       join "TourEvent" te on te.id = b."tourEventId"
+      where b.status = 'active' and te.status <> 'cancelled' and te.date >= $1`,
+    today,
+  );
+  const liveFutureIds = new Set(futureRows.map((r) => r.id));
+
   const deals = await client.deal.findMany({
     where: { status: 'won' },
     select: {
       id: true, orderNo: true, valueMinor: true, currency: true, collectionReview: true,
-      tourDate: true, organizationId: true, activityType: true,
       collectionReviewStatus: true, collectionReviewStatusSource: true,
     },
   });
-  if (!deals.length) return { scanned: 0 };
 
-  // The same two bulk reads the collection service does — payment state comes
-  // from computeCollection, never from a second implementation.
+  // The same two bulk reads the collection service performs — payment state
+  // comes from computeCollection, never a second implementation.
   const [documents, evidence] = await Promise.all([
     client.icountDocument.findMany({ where: { status: 'issued' } }),
     client.dealCollectionEvidence.findMany({ where: { status: 'active' } }),
@@ -52,44 +79,58 @@ export async function classifyCollectionWorkQueue(
     evBy.get(e.dealId).push(e);
   }
 
-  const businessSet = businessCollectionDealIds ? new Set(businessCollectionDealIds) : null;
-  const stats = { scanned: deals.length, active: 0, legacy: 0, written: 0, unchanged: 0, operatorPreserved: 0, bySource: {} };
+  const stats = {
+    scanned: deals.length,
+    snapshotResolved: snapshotDeals.length,
+    liveFutureTours: liveFutureIds.size,
+    active: 0,
+    legacy: 0,
+    written: 0,
+    unchanged: 0,
+    operatorPreserved: 0,
+    retiredHeuristic: 0,
+    bySource: {},
+  };
   const writes = [];
 
   for (const deal of deals) {
     const summary = computeCollection(deal, docsBy.get(deal.id) || [], evBy.get(deal.id) || []);
-    const next = classifyDeal(deal, summary, {
-      today,
-      inBusinessCollectionSet: businessSet ? businessSet.has(deal.id) : false,
+    const next = classifyDeal(summary, {
+      inCollectionSnapshot: snapshotIds.has(deal.id),
+      hasLiveFutureTour: liveFutureIds.has(deal.id),
     });
     if (next.status === COLLECTION_REVIEW_STATUS.ACTIVE) stats.active += 1;
     else stats.legacy += 1;
     stats.bySource[next.source] = (stats.bySource[next.source] || 0) + 1;
 
     const current = { status: deal.collectionReviewStatus, source: deal.collectionReviewStatusSource };
-    if (!shouldWrite(current, next, { allowMachineCorrection })) {
+    if (!shouldWrite(current, next)) {
       if (current.source === SOURCE.OPERATOR) stats.operatorPreserved += 1;
       else stats.unchanged += 1;
       continue;
     }
+    // Deals the withdrawn "unpaid business deal" heuristic had queued.
+    if (current.source === 'migration:business_unpaid') stats.retiredHeuristic += 1;
     writes.push({ id: deal.id, status: next.status, source: next.source });
   }
 
   if (dryRun) {
-    log.log?.(`[work-queue] ${stats.active} active · ${stats.legacy} legacy · ${writes.length} would be written (dry run)`);
+    log.log?.(
+      `[work-queue] ${stats.active} active · ${stats.legacy} legacy · ${writes.length} would change ` +
+      `(${stats.retiredHeuristic} retiring the withdrawn business heuristic) — dry run`,
+    );
     return { ...stats, wouldWrite: writes.length };
   }
 
   const now = new Date();
   const CHUNK = 500;
   for (let i = 0; i < writes.length; i += CHUNK) {
-    const slice = writes.slice(i, i + CHUNK);
-    // Grouped by (status, source) so a chunk is a handful of updateMany calls
-    // rather than 500 round trips. A plain field write — deliberately NOT
+    // Grouped by (status, source) so a chunk is a few updateMany calls rather
+    // than hundreds of round trips. A plain field write — deliberately NOT
     // touchDealActivity: classifying a deal is not business activity and must
     // never reorder the CRM.
     const groups = new Map();
-    for (const w of slice) {
+    for (const w of writes.slice(i, i + CHUNK)) {
       const key = `${w.status}|${w.source}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(w.id);
@@ -103,12 +144,14 @@ export async function classifyCollectionWorkQueue(
         });
       }),
     );
-    stats.written += slice.length;
+    stats.written += Math.min(CHUNK, writes.length - i);
   }
 
   log.log?.(
-    `[work-queue] classified ${stats.written} deals — ${stats.active} active_collection, ${stats.legacy} likely_paid_legacy ` +
-    `(${stats.unchanged} already set, ${stats.operatorPreserved} operator decisions preserved); by rule: ${JSON.stringify(stats.bySource)}`,
+    `[work-queue] ${stats.active} active_collection · ${stats.legacy} likely_paid_legacy — ` +
+    `${stats.written} changed (${stats.retiredHeuristic} withdrawn-heuristic deals returned to legacy), ` +
+    `${stats.unchanged} unchanged, ${stats.operatorPreserved} operator decisions preserved; ` +
+    `by rule: ${JSON.stringify(stats.bySource)}`,
   );
   return stats;
 }
