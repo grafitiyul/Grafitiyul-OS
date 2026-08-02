@@ -84,6 +84,29 @@ export const REVIEW_REPORTS = [
       const a = ctx.aggregate || {};
       return `יש ${a.summaryCount ?? 0} סיכומי סיור ו-${a.logisticsCount ?? 0} דוחות לוגיסטיים שממתינים לך לטיפול`;
     },
+    // English lives BESIDE the Hebrew renderer — a second function, never a
+    // second definition and never editable database content.
+    renderSubjectEn: (ctx) => {
+      const a = ctx.aggregate || {};
+      return `You have ${a.summaryCount ?? 0} tour summaries and ${a.logisticsCount ?? 0} logistics reports waiting for review`;
+    },
+    renderEn: (ctx) => {
+      const a = ctx.aggregate || {};
+      const items = a.items || [];
+      return lines([
+        `You have ${a.summaryCount ?? 0} tour summaries and ${a.logisticsCount ?? 0} logistics reports waiting for review.`,
+        '',
+        ...items.map((i) => {
+          const party = [i.customerName, i.orgName].filter(Boolean).join(' - ') || '—';
+          const when = `${i.tourDate || '—'} ${i.tourTime || ''}`.trim();
+          const logistics = i.hasLogistics ? ' · includes a logistics report' : '';
+          return `• ${party} · ${i.guideName || '—'} · ${when}${logistics}`;
+        }),
+        '',
+        'Open Management Tasks:',
+        reviewLink(ctx),
+      ]);
+    },
     render: (ctx) => {
       const a = ctx.aggregate || {};
       const items = a.items || [];

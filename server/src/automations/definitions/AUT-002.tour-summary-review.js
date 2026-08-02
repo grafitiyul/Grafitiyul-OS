@@ -41,10 +41,17 @@ const definition = {
 
   when: null, // every summary is reviewed
 
-  actions: [{ kind: 'review_item', reviewKind: 'tour_summary' }],
+  // TWO actions, in order: create the card a manager reads, THEN tell them it
+  // exists. The notification carries a deep link to the card, so the card must
+  // exist first — action order is what guarantees the link resolves.
+  actions: [
+    { kind: 'review_item', reviewKind: 'tour_summary' },
+    { kind: 'communication' },
+  ],
 
   dependsOn: [
     { kind: 'questionnaire_template', templateKey: TEMPLATE_KEY, severity: 'hard' },
+    { kind: 'communication_trigger', triggerType: 'automation:AUT-002' },
   ],
 
   idempotency: (ev) => `AUT-002:${ev.submissionId}`,

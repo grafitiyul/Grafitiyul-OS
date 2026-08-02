@@ -13,3 +13,4 @@
 
 import './AUT-001.payment-received.js';
 import './AUT-002.tour-summary-review.js';
+import './AUT-003.logistics-alert.js';
