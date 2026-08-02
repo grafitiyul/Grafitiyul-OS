@@ -59,6 +59,7 @@ export async function classifyCollectionWorkQueue(
     select: {
       id: true, orderNo: true, valueMinor: true, currency: true, collectionReview: true,
       collectionReviewStatus: true, collectionReviewStatusSource: true,
+      paymentReviewStatus: true,
     },
   });
 
@@ -98,6 +99,7 @@ export async function classifyCollectionWorkQueue(
     const next = classifyDeal(summary, {
       inCollectionSnapshot: snapshotIds.has(deal.id),
       hasLiveFutureTour: liveFutureIds.has(deal.id),
+      paymentReviewStatus: deal.paymentReviewStatus,
     });
     if (next.status === COLLECTION_REVIEW_STATUS.ACTIVE) stats.active += 1;
     else stats.legacy += 1;

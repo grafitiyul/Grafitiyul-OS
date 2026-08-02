@@ -10,7 +10,11 @@
 // Pure (no React) and unit-tested against list-row fixtures.
 
 import { matchOrdered, matchIsAmong } from '../common/filters/advancedFilterCore.js';
-import { COLLECTION_STATUS_LABELS, COLLECTION_REVIEW_STATUS_LABELS } from './collectionConfig.js';
+import {
+  COLLECTION_STATUS_LABELS,
+  COLLECTION_REVIEW_STATUS_LABELS,
+  PAYMENT_REVIEW_STATUS_LABELS,
+} from './collectionConfig.js';
 
 // Distinct values of a row accessor across the loaded rows → select options.
 function derivedOptions(rows, get) {
@@ -60,6 +64,13 @@ export const COLLECTION_FILTER_FIELDS = [
     type: 'select',
     options: () => labelOptions(COLLECTION_STATUS_LABELS),
     match: (r, op, v) => matchIsAmong([r.status].filter(Boolean), op, v),
+  },
+  {
+    key: 'paymentReviewStatus',
+    label: 'בדיקת מקדמה/תשלום מלא',
+    type: 'select',
+    options: () => labelOptions(PAYMENT_REVIEW_STATUS_LABELS),
+    match: (r, op, v) => matchIsAmong([r.paymentReviewStatus].filter(Boolean), op, v),
   },
   // ── Customer ─────────────────────────────────────────────────────────────
   {

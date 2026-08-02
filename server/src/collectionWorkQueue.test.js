@@ -30,6 +30,36 @@ test('a live future tour that IS fully paid is not work', () => {
   assert.equal(classifyDeal(sum('paid'), { hasLiveFutureTour: true }).status, COLLECTION_REVIEW_STATUS.LEGACY);
 });
 
+// ── Payment review (deposit-vs-full audit) ──────────────────────────────────
+
+test('a reviewed deposit-only deal with a future tour is work EVEN when it reads "paid"', () => {
+  // The whole point of the review: the recorded agreed amount may itself be
+  // the deposit, so the resolver's "paid" is not proof of full payment.
+  for (const prs of ['confirmed_deposit', 'suspected_deposit']) {
+    const r = classifyDeal(sum('paid'), { hasLiveFutureTour: true, paymentReviewStatus: prs });
+    assert.equal(r.status, COLLECTION_REVIEW_STATUS.ACTIVE, prs);
+    assert.equal(r.source, SOURCE.PAYMENT_REVIEW);
+  }
+});
+
+test('a confirmed-full or unresolved review changes nothing', () => {
+  for (const prs of ['confirmed_full', 'unresolved', null]) {
+    assert.equal(
+      classifyDeal(sum('paid'), { hasLiveFutureTour: true, paymentReviewStatus: prs }).status,
+      COLLECTION_REVIEW_STATUS.LEGACY,
+      String(prs),
+    );
+  }
+});
+
+test('a deposit review WITHOUT a live future tour does not invent a candidate', () => {
+  // The queue's philosophy is preserved: the review classifies evidence; the
+  // route into the queue still requires the money to be operationally chaseable
+  // (a tour still ahead). Historical deposits stay a report, not work.
+  const r = classifyDeal(sum('paid'), { paymentReviewStatus: 'confirmed_deposit' });
+  assert.equal(r.status, COLLECTION_REVIEW_STATUS.LEGACY);
+});
+
 test('THE WITHDRAWN HEURISTIC IS GONE — an unpaid business deal is not a candidate', () => {
   // GOS does not invent collection candidates. Without the snapshot or a live
   // future tour there is no route into the queue, whatever the deal looks like.

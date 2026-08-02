@@ -37,6 +37,24 @@ export const COLLECTION_REVIEW_STATUS_STYLES = {
   likely_paid_legacy: 'bg-slate-100 text-slate-600 ring-slate-300',
 };
 
+// ── Payment review (deposit-vs-full) ────────────────────────────────────────
+// A reviewed judgement about whether the money collected is the WHOLE agreed
+// price or only a deposit — the historical "paid" from Pipedrive is not proof
+// of full payment. Values come from the server; never derived on the client.
+export const PAYMENT_REVIEW_STATUS_LABELS = {
+  confirmed_full: 'שולם במלואו — נבדק',
+  confirmed_deposit: 'שולמה מקדמה בלבד',
+  suspected_deposit: 'חשד למקדמה — לבדיקה',
+  unresolved: 'לא הוכרע',
+};
+
+export const PAYMENT_REVIEW_STATUS_STYLES = {
+  confirmed_full: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  confirmed_deposit: 'bg-amber-50 text-amber-800 ring-amber-200',
+  suspected_deposit: 'bg-orange-50 text-orange-700 ring-orange-200',
+  unresolved: 'bg-gray-100 text-gray-600 ring-gray-300',
+};
+
 // What the operator should actually DO about a review flag. A banner that only
 // states a problem leaves the work undone; each of these names the next step,
 // using the controls that exist in the גבייה panel.
@@ -59,6 +77,8 @@ export const REVIEW_GUIDANCE = {
     'קיימת חשבונית זיכוי ללא חשבונית מקור משויכת. חברו את מסמך המקור כדי שהשרשרת החשבונאית תהיה שלמה.',
   currency_mismatch:
     'התקבל תשלום במטבע שונה ממטבע העסקה. מטבעות אינם מחוברים זה לזה — קבעו את מטבע העסקה הנכון או רשמו את התשלום במטבע העסקה.',
+  deposit_only_suspected:
+    'לפי התיעוד בעסקה, ייתכן שהסכום שנרשם כ"שולם" הוא מקדמה בלבד והמחיר המלא שסוכם גבוה יותר. בדקו את ההערות והמסמכים: אם אכן שולמה רק מקדמה — עדכנו את סכום העסקה למחיר המלא שסוכם וסמנו "שולמה מקדמה בלבד"; אם שולם הכל — סמנו "שולם במלואו".',
 };
 
 // How a single piece of evidence was established. The distinction is a product

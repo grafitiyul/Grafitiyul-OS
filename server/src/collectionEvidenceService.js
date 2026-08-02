@@ -206,6 +206,54 @@ export async function resolveReview(prisma, deal, { note }, userId) {
   return cleared;
 }
 
+// Payment-review classification values (deposit-vs-full audit; see schema).
+export const PAYMENT_REVIEW_STATUSES = [
+  'confirmed_full',
+  'confirmed_deposit',
+  'suspected_deposit',
+  'unresolved',
+];
+
+/**
+ * Record an OPERATOR's deposit-vs-full judgement. Source is always 'operator'
+ * — the machine audit never overwrites it afterwards (the same precedence rule
+ * as collectionReviewStatusSource). Passing status null clears the
+ * classification. Never touches amounts, documents or history.
+ */
+export async function setPaymentReview(prisma, deal, { status, note }, userId) {
+  const next = status == null || status === '' ? null : String(status);
+  if (next !== null && !PAYMENT_REVIEW_STATUSES.includes(next)) {
+    const err = new Error('invalid_payment_review_status');
+    err.code = 'invalid_payment_review_status';
+    throw err;
+  }
+  const actor = await userOrigin(userId);
+  const now = new Date();
+  await prisma.deal.update({
+    where: { id: deal.id },
+    data: {
+      paymentReviewStatus: next,
+      paymentReviewSource: next === null ? null : 'operator',
+      paymentReviewAt: next === null ? null : now,
+      paymentReviewBy: next === null ? null : userId || null,
+    },
+  });
+
+  await emitTimelineEvent(prisma, {
+    subjectType: 'deal',
+    subjectId: deal.id,
+    kind: 'accounting',
+    data: {
+      event: 'payment_review_set',
+      status: next,
+      previous: deal.paymentReviewStatus || null,
+      note: String(note || '').trim() || null,
+    },
+    origin: actor,
+  });
+  return { status: next, at: now };
+}
+
 // Evidence rows for the panel — including reversed ones, which stay visible as
 // history (greyed by the UI) so a balance change is never unexplained.
 export async function listEvidence(prisma, dealId) {

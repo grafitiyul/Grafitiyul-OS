@@ -500,6 +500,10 @@ export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
         // Presentation/filtering only; none of it touches the numbers below.
         collectionReviewStatus: deal.collectionReviewStatus || null,
         collectionReviewStatusSource: deal.collectionReviewStatusSource || null,
+        // Deposit-vs-full payment review (see schema) — presentation/filtering
+        // only; the money stays computeCollection()'s answer.
+        paymentReviewStatus: deal.paymentReviewStatus || null,
+        paymentReviewSource: deal.paymentReviewSource || null,
         activityType: deal.activityType || null,
         product: deal.product ? { id: deal.product.id, name: deal.product.nameHe } : null,
         productVariant: deal.productVariant

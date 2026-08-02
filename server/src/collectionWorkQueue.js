@@ -42,10 +42,18 @@ export const SOURCE = {
   // A tour that has not happened yet and is not fully paid. Standing rule.
   FUTURE_TOUR: 'migration:future_tour_unpaid',
   LEGACY: 'migration:legacy_assumed_paid',
+  // A payment-review classification (deposit-vs-full audit) says only a
+  // deposit was collected — even when the resolver reads "paid", because the
+  // recorded agreed amount may itself be the deposit. Standing rule.
+  PAYMENT_REVIEW: 'audit:payment_review_deposit',
   OPERATOR: 'operator',
 };
 
-export const isMachineSource = (s) => typeof s === 'string' && s.startsWith('migration:');
+export const isMachineSource = (s) =>
+  typeof s === 'string' && (s.startsWith('migration:') || s.startsWith('audit:'));
+
+// Payment-review values that mean "money is still owed (or probably owed)".
+export const DEPOSIT_REVIEW_STATUSES = ['confirmed_deposit', 'suspected_deposit'];
 
 /**
  * Classify ONE deal. Pure, and deliberately incapable of inventing a candidate:
@@ -61,13 +69,27 @@ export const isMachineSource = (s) => typeof s === 'string' && s.startsWith('mig
  *                                  the plan (a cancelled tour leaves its date
  *                                  behind), the same reason the CRM's activity
  *                                  ladder refuses to use it as a liveness test.
+ * @param ctx.paymentReviewStatus   Deal.paymentReviewStatus — the reviewed
+ *                                  deposit-vs-full classification. Not a guess
+ *                                  made here: it arrives persisted, exactly
+ *                                  like the snapshot.
  */
-export function classifyDeal(summary, { inCollectionSnapshot = false, hasLiveFutureTour = false } = {}) {
+export function classifyDeal(
+  summary,
+  { inCollectionSnapshot = false, hasLiveFutureTour = false, paymentReviewStatus = null } = {},
+) {
   // The snapshot is a business decision about which deals are being collected.
   // It stands whatever the payment state says — if the business is chasing it,
   // it is work.
   if (inCollectionSnapshot) {
     return { status: COLLECTION_REVIEW_STATUS.ACTIVE, source: SOURCE.SNAPSHOT };
+  }
+
+  // A reviewed deposit-only (or suspected-deposit) deal with a tour still
+  // ahead is work even when the resolver reads "paid" — the recorded agreed
+  // amount may itself be the deposit, which is exactly what the review found.
+  if (hasLiveFutureTour && DEPOSIT_REVIEW_STATUSES.includes(paymentReviewStatus)) {
+    return { status: COLLECTION_REVIEW_STATUS.ACTIVE, source: SOURCE.PAYMENT_REVIEW };
   }
 
   // `status === 'paid'` is the resolver's own word for fully collected.

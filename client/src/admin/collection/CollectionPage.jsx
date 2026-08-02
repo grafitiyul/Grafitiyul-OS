@@ -8,6 +8,8 @@ import {
   COLLECTION_STATUS_STYLES,
   COLLECTION_REVIEW_STATUS_LABELS,
   COLLECTION_REVIEW_STATUS_STYLES,
+  PAYMENT_REVIEW_STATUS_LABELS,
+  PAYMENT_REVIEW_STATUS_STYLES,
 } from './collectionConfig.js';
 import AdvancedFilterButton from '../common/filters/AdvancedFilterButton.jsx';
 import { evaluateTree, normalizeTree, emptyGroup } from '../common/filters/advancedFilterCore.js';
@@ -133,6 +135,20 @@ const COLUMNS = [
   { key: 'reviewStatus', label: 'טיפול בגבייה', def: false,
     sortVal: (d) => d.collectionReviewStatus || '',
     render: (d) => <ReviewStatusBadge status={d.collectionReviewStatus} /> },
+  { key: 'paymentReview', label: 'בדיקת מקדמה', def: false,
+    sortVal: (d) => d.paymentReviewStatus || '',
+    render: (d) =>
+      d.paymentReviewStatus ? (
+        <span
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-medium ring-1 ${
+            PAYMENT_REVIEW_STATUS_STYLES[d.paymentReviewStatus] || 'bg-gray-100 text-gray-600 ring-gray-200'
+          }`}
+        >
+          {PAYMENT_REVIEW_STATUS_LABELS[d.paymentReviewStatus] || d.paymentReviewStatus}
+        </span>
+      ) : (
+        dash
+      ) },
   { key: 'tourDate', label: 'תאריך סיור', def: true, dir: 'ltr',
     sortVal: (d) => d.tourDate || '', cls: 'text-gray-500 tabular-nums',
     render: (d) => fmtDate(d.tourDate) },

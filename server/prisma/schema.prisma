@@ -1210,6 +1210,28 @@ model Deal {
   collectionReviewStatusSource String?
   collectionReviewStatusAt     DateTime?
   collectionReviewStatusBy     String?
+  // ── Payment-review classification (deposit-vs-full-payment) ─────────────
+  // Whether the money this deal shows as collected is the WHOLE agreed price
+  // or only a deposit. Exists because Pipedrive could mark a deal "paid" when
+  // only the deposit was paid in full, so a historical "paid" is not proof of
+  // full payment. Persisted (not computed) for the same reason as
+  // collectionReviewStatus: it records a reviewed judgement about evidence and
+  // must be filterable/reportable. It NEVER enters the collection math.
+  //   'confirmed_full'     — evidence shows the full agreed amount was paid
+  //   'confirmed_deposit'  — evidence shows only a deposit/partial payment
+  //   'suspected_deposit'  — evidence suggests a deposit; a human must review
+  //   'unresolved'         — evidence insufficient to decide
+  paymentReviewStatus          String?
+  // 'audit:<slug>' is machine-set and replaceable by a later run; 'operator'
+  // is a human decision and is never overwritten (the collectionReviewStatus
+  // precedence rule, reused verbatim).
+  paymentReviewSource          String?
+  // POINTERS to existing evidence (quoted note excerpts, document numbers,
+  // proposed outstanding amount when deterministically stated) — never a
+  // mutation of the history itself.
+  paymentReviewEvidence        Json?
+  paymentReviewAt              DateTime?
+  paymentReviewBy              String?
   customPaymentLinks    DealCustomPaymentLink[]
   paymentRequests       PaymentRequest[]
   tasks                 Task[]
@@ -1251,6 +1273,8 @@ model Deal {
   @@index([lastMeaningfulActivityAt])
   // Serves the Collection work queue default view.
   @@index([status, collectionReviewStatus])
+  // Serves the payment-review filter (deposit-vs-full audit).
+  @@index([status, paymentReviewStatus])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────

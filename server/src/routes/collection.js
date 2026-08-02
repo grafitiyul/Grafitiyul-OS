@@ -8,6 +8,7 @@ import {
   recordEvidence,
   reverseEvidence,
   resolveReview,
+  setPaymentReview,
   listEvidence,
   settlementAmountMinor,
   PAYMENT_METHODS,
@@ -33,6 +34,10 @@ const COLLECTION_DEAL_SELECT = {
   // The OPERATIONAL work-queue status, so the Deal panel can badge a historical
   // deal. Presentation only — it never enters the collection math.
   collectionReviewStatus: true,
+  // Deposit-vs-full payment review — presentation only, same rule.
+  paymentReviewStatus: true,
+  paymentReviewSource: true,
+  paymentReviewEvidence: true,
 };
 
 async function loadDeal(id) {
@@ -56,6 +61,9 @@ async function collectionPayload(deal) {
   return {
     ...summary,
     collectionReviewStatus: deal.collectionReviewStatus || null,
+    paymentReviewStatus: deal.paymentReviewStatus || null,
+    paymentReviewSource: deal.paymentReviewSource || null,
+    paymentReviewEvidence: deal.paymentReviewEvidence || null,
     paymentMethods: PAYMENT_METHODS,
     // Manual rows INCLUDING reversed ones: a reversal must stay readable, so a
     // balance that changed is never unexplained.
@@ -144,7 +152,41 @@ dealCollectionRouter.post(
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
     await resolveReview(prisma, deal, { note: req.body?.note }, req.adminAuth?.userId || null);
-    res.json(await collectionPayload({ ...deal, collectionReview: null }));
+    // Resolving a deposit-review question can carry the operator's verdict in
+    // the same action ("checked — it really was only a deposit / it was paid
+    // in full"), so the review list and the classification never disagree.
+    if (req.body?.paymentReviewStatus !== undefined) {
+      await setPaymentReview(
+        prisma,
+        deal,
+        { status: req.body.paymentReviewStatus, note: req.body?.note },
+        req.adminAuth?.userId || null,
+      );
+    }
+    const fresh = await loadDeal(req.params.id);
+    res.json(await collectionPayload(fresh));
+  }),
+);
+
+// Operator's deposit-vs-full verdict, standalone (filterable classification —
+// never money: amounts stay computeCollection()'s answer).
+dealCollectionRouter.post(
+  '/:id/collection/payment-review',
+  handle(async (req, res) => {
+    const deal = await loadDeal(req.params.id);
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    try {
+      await setPaymentReview(
+        prisma,
+        deal,
+        { status: req.body?.status ?? null, note: req.body?.note },
+        req.adminAuth?.userId || null,
+      );
+    } catch (err) {
+      return res.status(400).json({ error: err?.code || 'payment_review_failed' });
+    }
+    const fresh = await loadDeal(req.params.id);
+    res.json(await collectionPayload(fresh));
   }),
 );
 

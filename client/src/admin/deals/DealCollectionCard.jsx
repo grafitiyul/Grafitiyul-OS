@@ -426,10 +426,17 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
     }
   }
 
-  async function clearReview() {
+  // Clearing the flag can carry the operator's deposit-vs-full verdict in the
+  // same action (paymentReviewStatus), so the review answer is never lost.
+  async function clearReview(paymentReviewStatus) {
     setReviewBusy(true);
     try {
-      setSummary(await api.deals.resolveCollectionReview(deal.id, {}));
+      setSummary(
+        await api.deals.resolveCollectionReview(
+          deal.id,
+          paymentReviewStatus ? { paymentReviewStatus } : {},
+        ),
+      );
       flash('✓ סומן כנבדק');
     } catch {
       flash('הפעולה נכשלה — נסו שוב');
@@ -575,10 +582,25 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                     )}
                   </div>
                   {!summary.review.derived && (
-                    <button type="button" onClick={clearReview} disabled={reviewBusy}
-                      className="shrink-0 rounded-md bg-white px-2.5 py-1 text-[11.5px] font-medium text-purple-800 ring-1 ring-purple-300 hover:bg-purple-100 disabled:opacity-50">
-                      {reviewBusy ? '…' : 'בדקתי — תקין'}
-                    </button>
+                    summary.review.code === 'deposit_only_suspected' ? (
+                      /* The deposit question has exactly two honest answers —
+                         resolving records the verdict, not just "checked". */
+                      <span className="flex shrink-0 flex-col items-stretch gap-1">
+                        <button type="button" onClick={() => clearReview('confirmed_deposit')} disabled={reviewBusy}
+                          className="rounded-md bg-white px-2.5 py-1 text-[11.5px] font-medium text-amber-800 ring-1 ring-amber-300 hover:bg-amber-50 disabled:opacity-50">
+                          {reviewBusy ? '…' : 'מקדמה בלבד'}
+                        </button>
+                        <button type="button" onClick={() => clearReview('confirmed_full')} disabled={reviewBusy}
+                          className="rounded-md bg-white px-2.5 py-1 text-[11.5px] font-medium text-emerald-800 ring-1 ring-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
+                          {reviewBusy ? '…' : 'שולם במלואו'}
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => clearReview()} disabled={reviewBusy}
+                        className="shrink-0 rounded-md bg-white px-2.5 py-1 text-[11.5px] font-medium text-purple-800 ring-1 ring-purple-300 hover:bg-purple-100 disabled:opacity-50">
+                        {reviewBusy ? '…' : 'בדקתי — תקין'}
+                      </button>
+                    )
                   )}
                 </div>
               </div>
