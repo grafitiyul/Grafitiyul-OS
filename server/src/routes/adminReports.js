@@ -12,7 +12,7 @@ import { handle } from '../asyncHandler.js';
 import { parseListQuery } from './listPagination.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { loadTriggerContext } from '../communication/context.js';
-import { REPORTS, reportByNumber, renderReport, renderReportSample, reportGroup } from '../adminReports/registry.js';
+import { REPORTS, reportByNumber, renderReport, renderReportSample, renderReportBoth, hasEnglish, reportChannel, reportGroup } from '../adminReports/registry.js';
 import { destinationLabel } from '../adminReports/dispatch.js';
 
 const router = Router();
@@ -73,7 +73,13 @@ router.get('/', handle(async (req, res) => {
         waAccountId: config?.waAccountId || null,
         waChatId: config?.waChatId || null,
         destinationName: chat?.groupSubject || null,
+        // Both languages from the SAME renderers production uses — the screen
+        // never re-implements a preview.
         preview: renderReportSample(r.number),
+        previewBoth: renderReportBoth(r.number),
+        hasEnglish: hasEnglish(r),
+        channel: reportChannel(r),
+        sendInGuideLanguage: !!config?.sendInGuideLanguage,
         deliveryCount: countBy.get(r.number) || 0,
         lastSentAt: sentBy.get(r.number)?.sentAt || null,
         lastSentTo: sentBy.get(r.number)?.destinationLabel || null,
@@ -118,6 +124,9 @@ router.put('/:number/config', handle(async (req, res) => {
     ...(turningOn ? { activatedAt: new Date() } : {}),
     ...(waAccountId !== undefined ? { waAccountId } : {}),
     ...(waChatId !== undefined ? { waChatId } : {}),
+    // 'שלח בשפת המדריך' — reuses the report's existing renderEn; no second
+    // language mechanism.
+    ...(b.sendInGuideLanguage !== undefined ? { sendInGuideLanguage: !!b.sendInGuideLanguage } : {}),
     updatedById: req.adminAuth?.userId || null,
   };
   const config = await prisma.adminReportConfig.upsert({

@@ -127,19 +127,55 @@ export default function ManagementTasksPage() {
   );
 }
 
-/** One tour's cards. Summary on the right (leading in RTL), logistics beside it. */
+/**
+ * One TOUR, rendered as the visual container for its tasks.
+ *
+ * The relationship the operator has to read instantly is: "this tour has N
+ * independent management tasks". So the tour gets a real header — customer,
+ * guide, product, when — and the cards sit INSIDE it. Previously they were two
+ * loose cards in a grid and nothing said they belonged together.
+ *
+ * They stay completely independent: separate rows, separate handle buttons,
+ * separate dedupeKeys. The container is presentation only.
+ */
 function TourGroup({ group, status, busy, onAct }) {
   const cards = [...group.cards].sort((a, b) => {
-    // Summary first in reading order; the alert card sits next to it.
+    // Summary leads (right in RTL); the alert card sits beside it.
     if (a.kind === b.kind) return 0;
     return a.kind === 'tour_summary' ? -1 : 1;
   });
+  // Context is frozen identically on every card of a tour, so any card can
+  // describe the tour.
+  const d = cards[0]?.data || {};
+  const when = [d.tourDate, d.tourTime].filter(Boolean).join(' ');
+  const party = [d.customerName, d.orgName].filter(Boolean).join(' · ');
+  const product = [d.productName, d.variantName].filter(Boolean).join(' · ');
+  const hasAlert = cards.some((c) => c.tone === 'alert');
+
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      {cards.map((card) => (
-        <ReviewCard key={card.id} card={card} status={status} busy={busy} onAct={onAct} />
-      ))}
-    </div>
+    <section
+      className={`overflow-hidden rounded-2xl border bg-gray-50/70 ${
+        hasAlert ? 'border-red-200' : 'border-gray-200'
+      }`}
+    >
+      {/* Tour header — the container's identity */}
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-200/80 bg-white/60 px-4 py-2.5">
+        <h2 className="text-[14px] font-bold text-gray-900">{party || 'ללא לקוח'}</h2>
+        {when ? <span className="text-[12.5px] font-medium text-gray-600">{when}</span> : null}
+        {product ? <span className="text-[12px] text-gray-500">{product}</span> : null}
+        {d.guideName ? <span className="text-[12px] text-gray-500">· {d.guideName}</span> : null}
+        <span className="ms-auto text-[11.5px] text-gray-400">
+          {cards.length === 1 ? 'משימה אחת' : `${cards.length} משימות נפרדות`}
+        </span>
+      </header>
+
+      {/* The independent tasks */}
+      <div className="grid gap-3 p-3 lg:grid-cols-2">
+        {cards.map((card) => (
+          <ReviewCard key={card.id} card={card} status={status} busy={busy} onAct={onAct} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -150,9 +186,11 @@ function ReviewCard({ card, status, busy, onAct }) {
 
   return (
     <article className={`rounded-2xl border bg-white ${alert ? 'border-red-300 shadow-[0_0_0_1px_rgba(239,68,68,0.1)]' : 'border-gray-200'}`}>
-      <div className={`flex flex-wrap items-start gap-2 rounded-t-2xl px-4 py-2.5 ${alert ? 'bg-red-50' : 'bg-gray-50'}`}>
-        <span className={`text-[12px] font-semibold ${alert ? 'text-red-700' : 'text-gray-600'}`}>
-          {alert ? '⚠ ' : ''}{card.kindLabelHe}
+      <div className={`flex flex-wrap items-center gap-2 rounded-t-2xl px-4 py-2.5 ${alert ? 'bg-red-50' : 'bg-blue-50/70'}`}>
+        {/* Colour is the fastest signal: blue = read it, red = go do something. */}
+        <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${alert ? 'bg-red-500' : 'bg-blue-500'}`} />
+        <span className={`text-[13px] font-bold ${alert ? 'text-red-800' : 'text-blue-900'}`}>
+          {card.kindLabelHe}
         </span>
         {card.link ? (
           <Link to={card.link} className="ms-auto text-[12px] text-blue-600 hover:underline">פתיחת הסיור ↗</Link>
@@ -160,18 +198,10 @@ function ReviewCard({ card, status, busy, onAct }) {
       </div>
 
       <div className="px-4 py-3">
-        <h3 className="text-[14px] font-semibold text-gray-900">{card.title}</h3>
-
-        {/* Frozen context — what the manager needs without opening anything. */}
-        <dl className="mt-2 grid gap-x-4 gap-y-0.5 text-[12px] sm:grid-cols-2">
-          <Row label="מדריך" value={d.guideName} />
-          <Row label="לקוח" value={[d.customerName, d.orgName].filter(Boolean).join(' · ')} />
-          <Row label="מועד" value={[d.tourDate, d.tourTime].filter(Boolean).join(' ')} />
-          <Row label="מוצר" value={[d.productName, d.variantName].filter(Boolean).join(' · ')} />
-        </dl>
-
+        {/* The tour context lives on the group header — repeating it on every
+            card was noise that buried the actual content. */}
         {card.summary ? (
-          <p className={`mt-2 rounded-lg px-2.5 py-1.5 text-[12.5px] ${alert ? 'bg-red-50 text-red-800' : 'bg-gray-50 text-gray-700'}`}>
+          <p className={`rounded-lg px-2.5 py-1.5 text-[12.5px] ${alert ? 'bg-red-50 text-red-800' : 'bg-gray-50 text-gray-700'}`}>
             {card.summary}
           </p>
         ) : null}

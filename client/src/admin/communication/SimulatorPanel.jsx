@@ -101,9 +101,26 @@ export default function SimulatorPanel({ meta, message, draft, triggerType, onOp
         };
         if (mode === 'real') body.dealId = deal.id;
         else body.fields = fields;
-        const r = await api.communication.simulate(message.id, body);
+
+        // BOTH languages, through the SAME simulate endpoint — the preview must
+        // not be a second renderer. When the operator pins a language we run it
+        // once; otherwise we run he + en in parallel and show them side by side.
+        const langs = language ? [language] : ['he', 'en'];
+        const results = await Promise.all(
+          langs.map((l) => api.communication
+            .simulate(message.id, { ...body, language: l })
+            .then((r) => ({ lang: l, r }))
+            .catch((err) => ({ lang: l, err }))),
+        );
         if (seq.current !== mySeq) return;
-        setData(r);
+        const ok = results.find((x) => x.r);
+        if (!ok) throw results[0].err;
+        setData({
+          ...ok.r,
+          // lang → rendered (or an error for that language only).
+          byLang: Object.fromEntries(results.map((x) => [x.lang, x.r ? x.r.rendered : null])),
+          langs,
+        });
         setError(null);
       } catch (err) {
         if (seq.current === mySeq) { setError(err?.payload?.error || err.message); setData(null); }
@@ -138,10 +155,12 @@ export default function SimulatorPanel({ meta, message, draft, triggerType, onOp
           <h3 className="text-[13.5px] font-bold text-gray-900">🧪 סימולטור</h3>
           <p className="text-[11px] text-gray-400">אותו צינור בדיוק כמו שליחה אמיתית — בלי לשלוח</p>
         </div>
+        {/* Default shows BOTH languages side by side; pinning one is for
+            focusing, not for discovering that the other exists. */}
         <select value={language} onChange={(e) => setLanguage(e.target.value)} className={selectCls}>
-          <option value="">שפה לפי הנמען</option>
-          <option value="he">עברית</option>
-          <option value="en">English</option>
+          <option value="">עברית + אנגלית</option>
+          <option value="he">עברית בלבד</option>
+          <option value="en">English only</option>
         </select>
       </div>
 
@@ -310,37 +329,61 @@ export default function SimulatorPanel({ meta, message, draft, triggerType, onOp
               </Section>
             )}
 
-            {/* rendered message */}
+            {/* rendered message — one panel per language, side by side, so the
+                operator sees exactly what each recipient will receive without
+                switching anything. */}
             <Section title={isWa ? 'ההודעה כפי שתישלח' : 'המייל כפי שיישלח'}>
-              {!isWa && (
-                <div className="mb-1.5 text-[12px]">
-                  <span className="text-gray-400">נושא: </span>
-                  <span className="font-semibold text-gray-900">{data.rendered.subject || '—'}</span>
-                </div>
-              )}
-              {isWa ? (
-                <div className="rounded-lg bg-[#efe7dd] p-2">
-                  <div className="mr-auto max-w-full rounded-lg rounded-tr-sm bg-[#d9fdd3] px-2.5 py-1.5 shadow-sm">
-                    {(data.rendered.attachments || []).map((a) => (
-                      <div key={a.kind} className="mb-1 flex items-center gap-1.5 rounded bg-white/70 px-2 py-1 text-[11px]">
-                        📄 <span className="truncate font-medium">{a.filename || a.kind}</span>
-                      </div>
-                    ))}
-                    <div className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-gray-900"
-                      dir={data.language === 'en' ? 'ltr' : 'rtl'}
-                      // eslint-disable-next-line react/no-danger
-                      dangerouslySetInnerHTML={{ __html: waPreviewHtml(data.rendered.body || '') }} />
-                  </div>
-                </div>
-              ) : (
-                <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-100 bg-white p-2.5 text-[12px]"
-                  dir={data.language === 'en' ? 'ltr' : 'rtl'}
-                  // eslint-disable-next-line react/no-danger
-                  dangerouslySetInnerHTML={{ __html: data.rendered.body || '<span style="color:#9ca3af">אין תוכן</span>' }} />
-              )}
-              {(data.rendered.links || []).map((l) => (
-                <div key={l.kind} className="mt-1 truncate text-[11px] text-blue-700" dir="ltr">🔗 {l.url}</div>
-              ))}
+              <div className={`grid gap-2.5 ${(data.langs || ['he']).length > 1 ? 'lg:grid-cols-2' : ''}`}>
+                {(data.langs || ['he']).map((l) => {
+                  const rendered = (data.byLang || {})[l] || (l === data.language ? data.rendered : null);
+                  return (
+                    <div key={l} className="min-w-0">
+                      {(data.langs || []).length > 1 && (
+                        <div className="mb-1 text-[11px] font-semibold text-gray-500">
+                          {l === 'he' ? 'עברית' : 'English'}
+                        </div>
+                      )}
+                      {!rendered ? (
+                        <div className="rounded-lg border border-dashed border-gray-200 px-2.5 py-3 text-center text-[11.5px] text-gray-400">
+                          אין תוכן בשפה זו — יישלח בשפת ברירת המחדל
+                        </div>
+                      ) : (
+                        <>
+                          {!isWa && (
+                            <div className="mb-1.5 text-[12px]" dir={l === 'en' ? 'ltr' : 'rtl'}>
+                              <span className="text-gray-400">נושא: </span>
+                              <span className="font-semibold text-gray-900">{rendered.subject || '—'}</span>
+                            </div>
+                          )}
+                          {isWa ? (
+                            <div className="rounded-lg bg-[#efe7dd] p-2">
+                              <div className="mr-auto max-w-full rounded-lg rounded-tr-sm bg-[#d9fdd3] px-2.5 py-1.5 shadow-sm">
+                                {(rendered.attachments || []).map((a) => (
+                                  <div key={a.kind} className="mb-1 flex items-center gap-1.5 rounded bg-white/70 px-2 py-1 text-[11px]">
+                                    📄 <span className="truncate font-medium">{a.filename || a.kind}</span>
+                                  </div>
+                                ))}
+                                <div className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-gray-900"
+                                  dir={l === 'en' ? 'ltr' : 'rtl'}
+                                  // eslint-disable-next-line react/no-danger
+                                  dangerouslySetInnerHTML={{ __html: waPreviewHtml(rendered.body || '') }} />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-100 bg-white p-2.5 text-[12px]"
+                              dir={l === 'en' ? 'ltr' : 'rtl'}
+                              // eslint-disable-next-line react/no-danger
+                              dangerouslySetInnerHTML={{ __html: rendered.body || '<span style="color:#9ca3af">אין תוכן</span>' }} />
+                          )}
+                          {(rendered.links || []).map((lk) => (
+                            <div key={lk.kind} className="mt-1 truncate text-[11px] text-blue-700" dir="ltr">🔗 {lk.url}</div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </Section>
 
             <button type="button" onClick={() => onOpenTest?.(mode === 'real' ? { dealId: deal?.id } : { synthetic: fields })}

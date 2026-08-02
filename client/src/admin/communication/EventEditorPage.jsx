@@ -673,7 +673,6 @@ function ConditionsEditor({ meta, conditions, onChange }) {
 function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChange, onOpenTest }) {
   const [form, setForm] = useState(() => toForm(message));
   const [savedForm, setSavedForm] = useState(() => toForm(message));
-  const [lang, setLang] = useState('he');
   const [saving, setSaving] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [validationErrors, setValidationErrors] = useState(message.validationErrors || []);
@@ -763,7 +762,6 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChan
         const updated = await api.communication.translate(message.id, {});
         setForm((f) => ({ ...f, draftContent: updated.draftContent }));
         setSavedForm((f) => ({ ...f, draftContent: updated.draftContent }));
-        setLang('en');
         onChanged();
       } catch (err) {
         const code = err?.payload?.error;
@@ -794,7 +792,8 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChan
   }
 
   const isWa = message.channel === 'whatsapp';
-  const content = form.draftContent?.[lang] || {};
+  // Both languages are edited SIMULTANEOUSLY — no tab state, no hidden column.
+  const contentOf = (l) => form.draftContent?.[l] || {};
   const waAccount = meta.waAccounts.find((a) => a.id === form.waAccountId) || null;
   const activeWindow = meta.windows.find((w) => w.id === form.sendingWindowId) || null;
 
@@ -973,55 +972,51 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChan
         </div>
       </div>
 
-      {/* language + content */}
+      {/* language + content — BOTH languages visible and editable at once.
+          The tab model hid one language behind a click, which is how English
+          drifted out of date without anyone noticing. */}
       <div className={`${card} p-4`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <h3 className="text-[13.5px] font-bold text-gray-900">תוכן</h3>
-            <div className="flex overflow-hidden rounded-lg border border-gray-200">
-              {['he', 'en'].map((l) => {
-                const has = !!String(form.draftContent?.[l]?.body || '').replace(/<[^>]*>/g, '').trim();
-                return (
-                  <button key={l} type="button" onClick={() => setLang(l)}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 text-[13px] font-medium ${
-                      lang === l ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
-                    }`}>
-                    {l === 'he' ? 'עברית' : 'English'}
-                    <span className={`h-1.5 w-1.5 rounded-full ${has ? (l === 'en' && enState === 'ai_draft' ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-gray-300'}`} />
-                  </button>
-                );
-              })}
-            </div>
-            <select value={form.languagePolicy} onChange={(e) => patch({ languagePolicy: e.target.value })} className={selectCls}>
-              <option value="auto">שפה לפי הנמען</option>
-              <option value="he_only">עברית בלבד</option>
-              <option value="en_only">אנגלית בלבד</option>
-            </select>
-            {form.languagePolicy === 'auto' && (
+            {/* The checkbox IS languagePolicy — no second language field exists.
+                Checked → 'auto' (the recipient's own language, which for a guide
+                is their preferred language). Unchecked → force one language. */}
+            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.languagePolicy === 'auto'}
+                onChange={(e) => patch({
+                  languagePolicy: e.target.checked
+                    ? 'auto'
+                    : (form.fallbackLanguage === 'en' ? 'en_only' : 'he_only'),
+                })}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600"
+              />
+              {['assigned_guides', 'explicit_staff'].includes(form.audienceType)
+                ? 'שלח בשפת המדריך'
+                : 'שלח בשפת הנמען'}
+            </label>
+            {form.languagePolicy === 'auto' ? (
               <select value={form.fallbackLanguage} onChange={(e) => patch({ fallbackLanguage: e.target.value })} className={selectCls}>
-                <option value="he">ברירת מחדל: עברית</option>
-                <option value="en">ברירת מחדל: אנגלית</option>
+                <option value="he">כשלא ידועה שפה: עברית</option>
+                <option value="en">כשלא ידועה שפה: אנגלית</option>
+              </select>
+            ) : (
+              <select
+                value={form.languagePolicy}
+                onChange={(e) => patch({ languagePolicy: e.target.value })}
+                className={selectCls}
+              >
+                <option value="he_only">שולח תמיד עברית</option>
+                <option value="en_only">שולח תמיד אנגלית</option>
               </select>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {lang === 'en' && enState === 'ai_draft' && (
-              <>
-                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11.5px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                  ✨ נוצר על-ידי AI — ממתין לאישור
-                </span>
-                <button type="button"
-                  onClick={() => patch({ draftContent: { ...form.draftContent, enState: 'reviewed' } })}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-emerald-700">
-                  אושר לאחר בדיקה
-                </button>
-              </>
-            )}
-            <button type="button" onClick={translate} disabled={translating || !meta.translationConfigured}
-              className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12.5px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
-              {translating ? 'מתרגם…' : '✨ צור גרסה באנגלית'}
-            </button>
-          </div>
+          <button type="button" onClick={translate} disabled={translating || !meta.translationConfigured}
+            className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12.5px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
+            {translating ? 'מתרגם…' : '✨ צור גרסה באנגלית מהעברית'}
+          </button>
         </div>
 
         {!meta.translationConfigured && (
@@ -1033,29 +1028,63 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChan
           </div>
         )}
 
-        <div dir={lang === 'en' ? 'ltr' : 'rtl'}>
-          {isWa ? (
-            <WhatsAppBodyEditor
-              key={lang}
-              value={content.body || ''}
-              onChange={(html) => patchContent(lang, { body: html })}
-              variables={meta.variables}
-              categories={meta.variableCategories}
-              onInsertDocument={() => setDialog('docs')}
-              documents={(form.attachments || []).map((a) => ({ ...a, labelHe: meta.documentKinds.find((k) => k.kind === a.kind)?.labelHe || a.kind }))}
-            />
-          ) : (
-            <EmailBodyEditor
-              key={lang}
-              subject={content.subject || ''}
-              body={content.body || ''}
-              onSubjectChange={(v) => patchContent(lang, { subject: v })}
-              onBodyChange={(v) => patchContent(lang, { body: v })}
-              variables={meta.variables}
-              categories={meta.variableCategories}
-              onInsertDocument={() => setDialog('docs')}
-            />
-          )}
+        {/* Equal halves on wide screens; stacked on narrow ones so neither
+            language becomes an unreadable sliver. Each column keeps its own
+            writing direction. */}
+        <div className="grid gap-4 xl:grid-cols-2">
+          {['he', 'en'].map((l) => {
+            const content = contentOf(l);
+            const hasBody = !!String(content.body || '').replace(/<[^>]*>/g, '').trim();
+            return (
+              <div key={l} className="min-w-0">
+                <div className="mb-1.5 flex min-h-[26px] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-gray-600">
+                    {l === 'he' ? 'עברית' : 'English'}
+                  </span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${hasBody ? (l === 'en' && enState === 'ai_draft' ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-gray-300'}`} />
+                  {l === 'en' && enState === 'ai_draft' && (
+                    <>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                        ✨ תרגום AI — ממתין לאישור
+                      </span>
+                      <button type="button"
+                        onClick={() => patch({ draftContent: { ...form.draftContent, enState: 'reviewed' } })}
+                        className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11.5px] font-semibold text-white hover:bg-emerald-700">
+                        אושר
+                      </button>
+                    </>
+                  )}
+                  {l === 'en' && !hasBody && (
+                    <span className="text-[11px] text-gray-400">ריק — יישלח בעברית לנמענים באנגלית</span>
+                  )}
+                </div>
+                <div dir={l === 'en' ? 'ltr' : 'rtl'}>
+                  {isWa ? (
+                    <WhatsAppBodyEditor
+                      key={l}
+                      value={content.body || ''}
+                      onChange={(html) => patchContent(l, { body: html })}
+                      variables={meta.variables}
+                      categories={meta.variableCategories}
+                      onInsertDocument={() => setDialog('docs')}
+                      documents={(form.attachments || []).map((a) => ({ ...a, labelHe: meta.documentKinds.find((k) => k.kind === a.kind)?.labelHe || a.kind }))}
+                    />
+                  ) : (
+                    <EmailBodyEditor
+                      key={l}
+                      subject={content.subject || ''}
+                      body={content.body || ''}
+                      onSubjectChange={(v) => patchContent(l, { subject: v })}
+                      onBodyChange={(v) => patchContent(l, { body: v })}
+                      variables={meta.variables}
+                      categories={meta.variableCategories}
+                      onInsertDocument={() => setDialog('docs')}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* attachments summary */}

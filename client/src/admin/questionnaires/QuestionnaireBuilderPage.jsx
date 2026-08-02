@@ -538,18 +538,44 @@ export default function QuestionnaireBuilderPage() {
 // checkbox) is what lets the screen point out where intent and reality diverge
 // rather than silently reconciling them.
 
-/** Confirmation body for deleting a question — names the automations at risk. */
+/**
+ * Confirmation body for deleting a question.
+ *
+ * Three things an operator may need to know, most alarming first:
+ *   1. automations that will stop working (a real breakage);
+ *   2. historical answers that already exist — NOT a breakage, but a live form
+ *      has no publish step to catch a slip, so a destructive edit deserves a
+ *      moment. The wording is deliberately reassuring: past submissions are
+ *      safe, only future ones change;
+ *   3. a flagged-but-unused extension point.
+ */
 function deleteQuestionWarning(q, authoring, lx) {
   const title = lx.show(q.label) || 'ללא כותרת';
   const info = authoring?.questions?.[q.key];
   const auts = info?.automations || [];
-  if (!auts.length) {
-    return info?.flag
-      ? `למחוק את השאלה "${title}"?\n\nהשאלה מסומנת "משמשת באוטומציות". מחיקתה תאבד את מפתח השאלה לצמיתות — הוספה מחדש תיצור מפתח חדש.`
-      : `למחוק את השאלה "${title}"?`;
+  const answers = info?.historicalAnswers || 0;
+
+  const parts = [`למחוק את השאלה "${title}"?`];
+
+  if (auts.length) {
+    parts.push(
+      `⚠ האוטומציות הבאות תלויות בשאלה זו ויפסיקו לפעול:\n${
+        auts.map((a) => `• ${a.autId} · ${a.nameHe}`).join('\n')
+      }\n\nהוספת השאלה מחדש תיצור מפתח חדש ולא תשחזר את הקשר.`,
+    );
+  } else if (info?.flag) {
+    parts.push('השאלה מסומנת "משמשת באוטומציות". מחיקתה תאבד את מפתח השאלה לצמיתות — הוספה מחדש תיצור מפתח חדש.');
   }
-  const list = auts.map((a) => `• ${a.autId} · ${a.nameHe}`).join('\n');
-  return `למחוק את השאלה "${title}"?\n\n⚠ האוטומציות הבאות תלויות בשאלה זו ויפסיקו לפעול:\n${list}\n\nהוספת השאלה מחדש תיצור מפתח חדש ולא תשחזר את הקשר.`;
+
+  if (answers > 0) {
+    parts.push(
+      `לשאלה זו קיימות ${answers} תשובות היסטוריות.\n`
+      + 'מחיקתה תשפיע רק על שאלונים עתידיים.\n'
+      + 'התשובות שכבר נשלחו יישמרו כפי שהן.',
+    );
+  }
+
+  return parts.join('\n\n');
 }
 
 function AutomationPanel({ q, info, isDraft, onToggleFlag }) {

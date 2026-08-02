@@ -21,6 +21,31 @@ import TestSendDialog from './TestSendDialog.jsx';
 
 const card = 'rounded-xl border border-gray-200 bg-white shadow-sm';
 
+
+// One preview pane, WhatsApp-bubble styling. Shared by both languages so they
+// can never drift apart visually.
+function PreviewPane({ label, subject, text, dir }) {
+  return (
+    <div className="min-w-0">
+      {label ? <div className="mb-1 text-[11px] font-semibold text-gray-500">{label}</div> : null}
+      {subject ? (
+        <div className="mb-1 truncate text-[11.5px] text-gray-600" dir={dir}>
+          <span className="text-gray-400">נושא: </span>{subject}
+        </div>
+      ) : null}
+      <div className="rounded-xl bg-[#efe7dd] p-3"
+        style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.035) 1px, transparent 0)', backgroundSize: '14px 14px' }}>
+        <div
+          className="mr-auto max-w-[95%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-[#d9fdd3] px-3 py-2 text-[13px] leading-relaxed text-gray-900 shadow-sm"
+          dir={dir}
+        >
+          {text || '—'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CodeManagedNotifications({ group, emptyHe = 'אין התראות בקטגוריה הזו.' }) {
   const [data, setData] = useState(null);
   const [meta, setMeta] = useState(null);
@@ -182,18 +207,49 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
                   </div>
                 </div>
 
-                {/* preview — the SAME renderer production uses */}
+                {/* preview — the SAME renderers production uses, both
+                    languages at once. `previewBoth` comes from
+                    renderReportBoth(), so there is no second renderer here. */}
                 <div>
-                  <div className="mb-1 flex items-center justify-between">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[12.5px] font-semibold text-gray-700">תצוגה מקדימה (נתוני דוגמה)</span>
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">מנוהל בקוד</span>
-                  </div>
-                  <div className="rounded-xl bg-[#efe7dd] p-3"
-                    style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.035) 1px, transparent 0)', backgroundSize: '14px 14px' }}>
-                    <div className="mr-auto max-w-[95%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-[#d9fdd3] px-3 py-2 text-[13px] leading-relaxed text-gray-900 shadow-sm">
-                      {r.preview}
+                    <div className="flex items-center gap-2">
+                      {/* Applies wherever the report addresses a person whose
+                          language we know — a group chat has no preference. */}
+                      {r.audience === 'guides' && (
+                        <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={!!r.sendInGuideLanguage}
+                            onChange={(e) => saveConfig(r.number, { sendInGuideLanguage: e.target.checked })}
+                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                            disabled={!r.hasEnglish}
+                          />
+                          שלח בשפת המדריך
+                        </label>
+                      )}
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">מנוהל בקוד</span>
                     </div>
                   </div>
+
+                  <div className={`grid gap-2.5 ${r.previewBoth?.en ? 'lg:grid-cols-2' : ''}`}>
+                    <PreviewPane
+                      label={r.previewBoth?.en ? 'עברית' : null}
+                      subject={r.previewBoth?.subjectHe}
+                      text={r.previewBoth?.he ?? r.preview}
+                      dir="rtl"
+                    />
+                    {r.previewBoth?.en ? (
+                      <PreviewPane label="English" subject={r.previewBoth.subjectEn} text={r.previewBoth.en} dir="ltr" />
+                    ) : null}
+                  </div>
+
+                  {!r.hasEnglish && (
+                    <p className="mt-1.5 text-[11px] text-gray-500">
+                      לדיווח הזה אין עדיין גרסה באנגלית. עד שתתווסף, הוא נשלח בעברית לכל הנמענים —
+                      דיווח ללא תרגום עדיין חייב להגיע.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

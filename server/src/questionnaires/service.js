@@ -301,9 +301,22 @@ export async function getVersionAuthoring(versionId) {
   const refs = referencePayloadForTemplate(templateKey);
   const questions = {};
 
+  // How many SUBMITTED answers exist per question key — drives the delete
+  // confirmation. Draft answers are excluded: nothing historical is at stake
+  // until a form is actually submitted.
+  const answered = await prisma.questionnaireAnswer.groupBy({
+    by: ['questionKey'],
+    where: {
+      submission: { templateId: version.templateId, status: { in: ['submitted', 'reviewed'] } },
+    },
+    _count: { _all: true },
+  });
+  const answersByKey = Object.fromEntries(answered.map((a) => [a.questionKey, a._count._all]));
+
   for (const q of flatQuestions(structureOf(version))) {
     const ref = refs[q.key] || null;
     questions[q.key] = {
+      historicalAnswers: answersByKey[q.key] || 0,
       // Fully-qualified stable reference — what an operator copies and what an
       // automation definition names. The template scope matters: a key is only
       // unique inside its own template.
