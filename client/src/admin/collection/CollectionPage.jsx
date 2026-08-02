@@ -3,7 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
-import { COLLECTION_STATUS_LABELS, COLLECTION_STATUS_STYLES } from './collectionConfig.js';
+import {
+  COLLECTION_STATUS_LABELS,
+  COLLECTION_STATUS_STYLES,
+  COLLECTION_REVIEW_STATUS_LABELS,
+  COLLECTION_REVIEW_STATUS_STYLES,
+} from './collectionConfig.js';
+import AdvancedFilterButton from '../common/filters/AdvancedFilterButton.jsx';
+import { evaluateTree, normalizeTree, emptyGroup } from '../common/filters/advancedFilterCore.js';
+import { COLLECTION_FILTER_FIELDS, COLLECTION_FILTER_FIELDS_BY_KEY } from './collectionFilterFields.js';
 import { dealPath } from '../deals/config.js';
 
 // גבייה — the main Collection screen: every WON deal whose money has not fully
@@ -39,6 +47,24 @@ function saveFilters(f) {
   } catch {
     /* storage unavailable — non-fatal */
   }
+}
+
+// The operational badge. Shown wherever collection status is shown, so a
+// historical deal is never mistaken for outstanding work.
+export function ReviewStatusBadge({ status, className = '' }) {
+  if (!status) return null;
+  return (
+    <span
+      title={status === 'likely_paid_legacy'
+        ? 'עסקה היסטורית שיובאה מהמערכת הקודמת — ההנחה העסקית היא שהיא כבר שולמה שם. היתרה החשבונאית מוצגת כפי שהיא.'
+        : 'עסקה שדורשת טיפול גבייה'}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-medium ring-1 ${
+        COLLECTION_REVIEW_STATUS_STYLES[status] || 'bg-gray-100 text-gray-600 ring-gray-200'
+      } ${className}`}
+    >
+      {COLLECTION_REVIEW_STATUS_LABELS[status] || status}
+    </span>
+  );
 }
 
 function StatusChip({ status }) {
@@ -103,6 +129,9 @@ const COLUMNS = [
       ) },
   { key: 'status', label: 'סטטוס גבייה', def: true, sortVal: (d) => d.status,
     render: (d) => <StatusChip status={d.status} /> },
+  { key: 'reviewStatus', label: 'טיפול בגבייה', def: false,
+    sortVal: (d) => d.collectionReviewStatus || '',
+    render: (d) => <ReviewStatusBadge status={d.collectionReviewStatus} /> },
   { key: 'tourDate', label: 'תאריך סיור', def: true, dir: 'ltr',
     sortVal: (d) => d.tourDate || '', cls: 'text-gray-500 tabular-nums',
     render: (d) => fmtDate(d.tourDate) },
@@ -136,10 +165,15 @@ export default function CollectionPage() {
   const [status, setStatus] = useState(saved.status ?? 'all');
   // Default sort: the biggest outstanding balance first — that's the work.
   const [sort, setSort] = useState({ key: 'balance', dir: 'desc' });
+  // THE work-queue tab. Default = only deals someone should be chasing; the
+  // historical population stays one click away, never silently gone.
+  const [queue, setQueue] = useState(saved.queue ?? 'active_collection');
+  const [counts, setCounts] = useState({});
+  const [advanced, setAdvanced] = useState(() => normalizeTree(saved.advanced) || emptyGroup());
 
   useEffect(() => {
-    saveFilters({ search, status });
-  }, [search, status]);
+    saveFilters({ search, status, queue, advanced });
+  }, [search, status, queue, advanced]);
 
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
@@ -148,8 +182,11 @@ export default function CollectionPage() {
     let cancelled = false;
     (async () => {
       try {
-        const { deals } = await api.collection.deals();
-        if (!cancelled) setRows(deals);
+        const res = await api.collection.deals({ reviewStatus: queue });
+        if (!cancelled) {
+          setRows(res.deals || []);
+          setCounts(res.counts || {});
+        }
       } catch (e) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -159,7 +196,7 @@ export default function CollectionPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [queue]);
 
   const summary = useMemo(() => {
     const s = { count: rows.length, balance: 0, unpaid: 0, partial: 0, review: 0 };
@@ -176,6 +213,9 @@ export default function CollectionPage() {
     const q = search.trim().toLowerCase();
     let out = rows.filter((r) => {
       if (status !== 'all' && r.status !== status) return false;
+      // The SHARED advanced-filter engine — same component and evaluator the
+      // Tours screen uses, over the rows already loaded.
+      if (!evaluateTree(advanced, r, COLLECTION_FILTER_FIELDS_BY_KEY)) return false;
       if (q) {
         const hay = [r.title, r.organization?.name, r.organizationUnit?.name, r.primaryContactName]
           .filter(Boolean)
@@ -197,7 +237,7 @@ export default function CollectionPage() {
       });
     }
     return out;
-  }, [rows, search, status, sort]);
+  }, [rows, search, status, sort, advanced]);
 
   function onSort(key) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
@@ -230,6 +270,37 @@ export default function CollectionPage() {
         <SummaryCard label="דורש בדיקה" value={summary.review} tone="purple" icon="⚑" />
       </div>
 
+      {/* THE work queue switch. The default view is the actionable queue; the
+          historical population is one click away and its size is always shown,
+          so nothing is hidden without saying so. */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        {[
+          ['active_collection', 'בגבייה פעילה'],
+          ['likely_paid_legacy', 'ככל הנראה שולם במערכת קודמת'],
+          ['all', 'הכול'],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setQueue(k)}
+            className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
+              queue === k ? 'bg-gray-900 text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            {label}
+            {counts[k] != null && <span className="ms-1.5 opacity-70">({counts[k]})</span>}
+            {k === 'all' && counts.active_collection != null && counts.likely_paid_legacy != null && (
+              <span className="ms-1.5 opacity-70">({counts.active_collection + counts.likely_paid_legacy})</span>
+            )}
+          </button>
+        ))}
+        {queue === 'likely_paid_legacy' && (
+          <span className="text-[12px] text-gray-500">
+            עסקאות היסטוריות שיובאו מהמערכת הקודמת — ההנחה העסקית היא שכבר שולמו. היתרות מוצגות כפי שהן.
+          </span>
+        )}
+      </div>
+
       {/* Filter bar */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3">
         <div className="flex flex-wrap items-center gap-2.5">
@@ -251,6 +322,13 @@ export default function CollectionPage() {
               <option key={val} value={val}>{lbl}</option>
             ))}
           </select>
+          <AdvancedFilterButton
+            fields={COLLECTION_FILTER_FIELDS}
+            fieldsByKey={COLLECTION_FILTER_FIELDS_BY_KEY}
+            tree={advanced}
+            onChange={setAdvanced}
+            rows={rows}
+          />
           <div className="ms-auto">
             <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
           </div>

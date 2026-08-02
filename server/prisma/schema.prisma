@@ -1192,6 +1192,24 @@ model Deal {
   // while it is set, INSTEAD of pretending it knows the answer — the numbers it
   // computed are still returned alongside so the operator can see them.
   collectionReview      Json?
+  // ── Operational collection WORK QUEUE (not accounting) ──────────────────
+  // Whether this deal still needs collection WORK today. It exists because the
+  // Collection screen was listing every historical unpaid migration — 3,250
+  // deals — which made it a report nobody could act on rather than a queue.
+  //
+  // Deliberately PERSISTED rather than computed: it records a business decision
+  // ("we assume the previous system already settled this"), it must be
+  // filterable and reportable like any other field, and it must not be
+  // re-inferred on every request. The ACCOUNTING answer is untouched —
+  // computeCollection() remains the only source of paid / balance / status.
+  //   'active_collection'  — someone should chase this money
+  //   'likely_paid_legacy' — historical, assumed settled in the old system
+  collectionReviewStatus       String?
+  // Who decided. 'migration:*' is machine-set and a later, better-informed run
+  // may correct it; 'operator' is a human decision and is never overwritten.
+  collectionReviewStatusSource String?
+  collectionReviewStatusAt     DateTime?
+  collectionReviewStatusBy     String?
   customPaymentLinks    DealCustomPaymentLink[]
   paymentRequests       PaymentRequest[]
   tasks                 Task[]
@@ -1231,6 +1249,8 @@ model Deal {
   // Serves the Deals list DEFAULT sort (ORDER BY lastMeaningfulActivityAt DESC)
   // so a paginated take-50 reads an ordered index instead of sorting the table.
   @@index([lastMeaningfulActivityAt])
+  // Serves the Collection work queue default view.
+  @@index([status, collectionReviewStatus])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────

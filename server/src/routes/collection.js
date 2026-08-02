@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { dealCollection, collectionDeals, companyCollectionTotals } from '../collection.js';
 import { listQueue, queueCounts, resolveQueueItem } from '../collectionReviewQueue.js';
+import { COLLECTION_REVIEW_STATUS, COLLECTION_REVIEW_STATUS_VALUES } from '../collectionWorkQueue.js';
 import {
   recordEvidence,
   reverseEvidence,
@@ -144,10 +145,25 @@ dealCollectionRouter.post(
 );
 
 export const collectionRouter = Router();
+// The work queue.  narrows it to the deals someone should be
+// chasing; the default is the ACTIVE queue rather than every historical unpaid
+// migration. 'all' asks for the full accounting picture, unchanged.
 collectionRouter.get(
   '/deals',
-  handle(async (_req, res) => {
-    res.json({ deals: await collectionDeals(prisma) });
+  handle(async (req, res) => {
+    const raw = String(req.query.reviewStatus || COLLECTION_REVIEW_STATUS.ACTIVE);
+    const reviewStatus = raw === 'all' ? null : COLLECTION_REVIEW_STATUS_VALUES.includes(raw) ? raw : COLLECTION_REVIEW_STATUS.ACTIVE;
+    const [deals, counts] = await Promise.all([
+      collectionDeals(prisma, { reviewStatus }),
+      // Counts across the WHOLE queue, so the tabs are honest about what is
+      // hidden — computed from the persisted field, not from the money.
+      prisma.deal.groupBy({ by: ['collectionReviewStatus'], where: { status: 'won' }, _count: { _all: true } }),
+    ]);
+    res.json({
+      deals,
+      reviewStatus: reviewStatus || 'all',
+      counts: Object.fromEntries(counts.map((c) => [c.collectionReviewStatus || 'unclassified', c._count._all])),
+    });
   }),
 );
 

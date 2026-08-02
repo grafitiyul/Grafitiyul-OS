@@ -424,13 +424,39 @@ export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {})
 // The Collection screen's rows: every WON deal that still requires collection.
 // Two bulk queries for the whole population (no N+1), and the SAME
 // computeCollection the Deal card uses — the two surfaces cannot disagree.
-export async function collectionDeals(prisma) {
+// `reviewStatus` filters the OPERATIONAL work queue — which deals a human
+// should be chasing. It changes nothing about the money: every row's numbers
+// still come from computeCollection() below, and requiresCollection() still
+// decides what "not settled" means. Passing null returns the full accounting
+// picture, exactly as before this filter existed.
+export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
   const deals = await prisma.deal.findMany({
-    where: { status: 'won' },
+    where: {
+      status: 'won',
+      ...(reviewStatus ? { collectionReviewStatus: reviewStatus } : {}),
+    },
     orderBy: { wonAt: 'desc' },
     include: {
       organization: { select: { id: true, name: true } },
       organizationUnit: { select: { id: true, name: true } },
+      // Operational context the work queue filters on. Read-only — none of it
+      // enters the collection math.
+      product: { select: { id: true, nameHe: true } },
+      productVariant: { select: { id: true, nameHe: true } },
+      location: { select: { id: true, nameHe: true } },
+      // The guide is a property of the TOUR, reached through the deal's live
+      // booking — the same canonical relationship the Tours module uses.
+      bookings: {
+        where: { status: 'active' },
+        select: {
+          tourEvent: {
+            select: {
+              date: true,
+              assignments: { select: { role: true, person: { select: { displayName: true } } } },
+            },
+          },
+        },
+      },
       contacts: {
         where: { isPrimary: true },
         take: 1,
@@ -466,6 +492,26 @@ export async function collectionDeals(prisma) {
         organization: deal.organization,
         organizationUnit: deal.organizationUnit,
         primaryContactName: contactName || null,
+        // ── Operational context for the work queue's filters ───────────────
+        // Presentation/filtering only; none of it touches the numbers below.
+        collectionReviewStatus: deal.collectionReviewStatus || null,
+        collectionReviewStatusSource: deal.collectionReviewStatusSource || null,
+        activityType: deal.activityType || null,
+        product: deal.product ? { id: deal.product.id, name: deal.product.nameHe } : null,
+        productVariant: deal.productVariant ? { id: deal.productVariant.id, name: deal.productVariant.nameHe } : null,
+        city: deal.location ? { id: deal.location.id, name: deal.location.nameHe } : null,
+        // Business when an organisation is linked (the canonical rule — a
+        // linked org IS the classification SSOT) or when explicitly classified.
+        customerKind: deal.organizationId || deal.activityType === 'business' ? 'business' : 'private',
+        guides: [
+          ...new Set(
+            (deal.bookings || [])
+              .flatMap((b) => b.tourEvent?.assignments || [])
+              .map((a) => a.person?.displayName)
+              .filter(Boolean),
+          ),
+        ],
+        createdAt: deal.createdAt,
         ...summary,
         // The screen's table does not need the full evidence payload.
         payments: undefined,

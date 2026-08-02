@@ -23,6 +23,20 @@ export const COLLECTION_STATUS_STYLES = {
   review: 'bg-purple-50 text-purple-700',
 };
 
+// ── Operational work-queue status (NOT accounting) ──────────────────────────
+// Whether anyone should be chasing this money today. The accounting status
+// above is a separate question and is unaffected by it: a deal can be
+// "טרם שולם" and still be historical.
+export const COLLECTION_REVIEW_STATUS_LABELS = {
+  active_collection: 'בגבייה פעילה',
+  likely_paid_legacy: 'ככל הנראה שולם במערכת קודמת',
+};
+
+export const COLLECTION_REVIEW_STATUS_STYLES = {
+  active_collection: 'bg-blue-50 text-blue-700 ring-blue-200',
+  likely_paid_legacy: 'bg-slate-100 text-slate-600 ring-slate-300',
+};
+
 // What the operator should actually DO about a review flag. A banner that only
 // states a problem leaves the work undone; each of these names the next step,
 // using the controls that exist in the גבייה panel.

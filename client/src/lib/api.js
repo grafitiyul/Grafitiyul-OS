@@ -771,7 +771,10 @@ export const api = {
   },
   // ── Collection (גבייה) — WON deals that still require collection ──
   collection: {
-    deals: () => request('/api/collection/deals'),
+    // The work queue. reviewStatus: 'active_collection' (default) | 'likely_paid_legacy' | 'all'.
+    // The operational work queue.
+    // reviewStatus: 'active_collection' (default) | 'likely_paid_legacy' | 'all'.
+    deals: (params) => request(`/api/collection/deals${qs(params)}`),
     // Company-level totals. A DIFFERENT question from the per-deal one: a shared
     // historical document settles several deals but is counted ONCE here, so
     // linking it can never inflate revenue.
