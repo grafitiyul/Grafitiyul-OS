@@ -587,6 +587,8 @@ export const api = {
       request(`/api/deals/${id}/icount/link-document`, { method: 'POST', body: JSON.stringify(data) }),
     // "חבר מסמך קיים מ־iCount" — resolve ONE document (by number, type or a
     // pasted iCount link) and get every safety signal before confirming.
+    // "פתח מסמך" — resolve the viewer URL for a linked document (read-only).
+    icountDocumentUrl: (id, params) => request(`/api/deals/${id}/icount/document-url${qs(params)}`),
     icountResolveDocument: (id, params) =>
       request(`/api/deals/${id}/icount/resolve-document${qs(params)}`),
     // Custom-description payment links (/pay/c/<token>).

@@ -52,6 +52,13 @@ export const REVIEW_GUIDANCE = {
 // in for money an accounting document proves.
 export const EVIDENCE_CLASS_BADGE = {
   verified: { label: 'מאומת באייקאונט', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  // One accounting document that settles several deals (historical cutover
+  // policy). It must say so wherever it appears: the deal is settled, and the
+  // document is counted once company-wide, not once per deal.
+  shared: { label: 'מסמך היסטורי משותף', cls: 'bg-purple-50 text-purple-700 ring-purple-200' },
   provider: { label: 'סליקה אוטומטית', cls: 'bg-sky-50 text-sky-700 ring-sky-200' },
   manual: { label: 'נרשם ידנית', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
+  // An external file the operator uploaded as proof — evidence, never an
+  // accounting document.
+  upload: { label: 'מסמך תומך שהועלה', cls: 'bg-gray-100 text-gray-700 ring-gray-300' },
 };

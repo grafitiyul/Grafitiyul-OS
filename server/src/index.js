@@ -774,6 +774,19 @@ app.listen(port, () => {
     .then(({ repairDeal26354Vat }) => repairDeal26354Vat(prisma, { log: console }))
     .catch((e) => console.warn('[maintenance] deal 26354 VAT repair failed:', e?.message));
 
+  // Recover "פתח מסמך" links from the ORIGINAL office notes: doc/search never
+  // returns doc_url, so reconstructed document links landed without one. Free —
+  // no API call — and idempotent.
+  import('./maintenance/backfillIcountDocUrls.js')
+    .then(({ backfillIcountDocUrls }) => backfillIcountDocUrls(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] iCount doc-url backfill failed:', e?.message));
+
+  // Fill NULL product/variant/location/date on migrated deals from the tour they
+  // are actually booked on. Only fills blanks — an operator's value always wins.
+  import('./maintenance/repairDealTourContext.js')
+    .then(({ repairDealTourContext }) => repairDealTourContext(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] deal tour-context repair failed:', e?.message));
+
   // Durable one-time backfill: legacy org finance scalars → canonical finance
   // Contacts (phone/email identity matching, membership link, designation,
   // timeline). Idempotent; summary lands on the MaintenanceJob row.

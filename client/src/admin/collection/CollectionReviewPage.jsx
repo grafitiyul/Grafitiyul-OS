@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
 import { dealPath } from '../deals/config.js';
+import { OpenDocumentButton } from '../deals/DealCollectionCard.jsx';
 
 // התאמות גבייה לבדיקה — the operator queue for second-stage matches.
 //
@@ -89,12 +90,11 @@ function CandidateCard({ dealRow, cand, onResolve, busy }) {
             {cand.reasons.map((r, i) => <ReasonChip key={i} reason={r} />)}
           </div>
         </div>
-        {doc?.docUrl && (
-          <a href={doc.docUrl} target="_blank" rel="noopener noreferrer"
-            className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1 text-[12px] text-gray-700 hover:bg-gray-50">
-            פתח מסמך
-          </a>
-        )}
+        {/* The operator must be able to LOOK at the candidate before deciding —
+            resolved read-only through the canonical iCount integration. */}
+        <span className="shrink-0">
+          <OpenDocumentButton dealId={dealRow.dealId} row={{ ...cand, docUrl: doc?.docUrl }} label />
+        </span>
       </div>
 
       {/* Competitors — the whole reason this is a question and not a link. */}

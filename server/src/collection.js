@@ -82,19 +82,39 @@ function documentMoneyMinor(d) {
 //   provider  — an iCount document captured from a provider webhook (Cardcom/Woo
 //               settle through iCount, so they arrive as documents)
 //   manual    — operator-attested money, no accounting document behind it
+// What attaching this document MEANS, in business language — the one thing an
+// operator cannot infer from a document number alone.
+function paymentMeaning(doctype, cancelled) {
+  if (cancelled) return 'מסמך מבוטל — אינו נספר';
+  if (doctype === REFUND_DOCTYPE) return 'זיכוי — מופחת מהגבייה';
+  if (RECEIPT_DOCTYPES.includes(doctype)) return 'הוכחת תשלום';
+  return 'מסמך חיוב — אינו הוכחת תשלום';
+}
+
 function documentRow(d) {
   const isMoney = COLLECTION_DOCTYPES.includes(d.doctype);
+  const cancelled = d.status === 'cancelled';
   return {
     id: d.id,
     rowType: 'document',
-    evidenceClass: d.source === 'webhook' ? 'provider' : 'verified',
+    evidenceClass: d.sharedHistorical
+      ? 'shared'
+      : d.source === 'webhook'
+        ? 'provider'
+        : 'verified',
     doctype: d.doctype,
     doctypeLabel: DOC_TYPE_LABELS[d.doctype] || d.doctype,
     docnum: d.docnum || null,
-    counts: isMoney,
+    // Everything the panel must show beside the number.
+    issuedAt: d.issuedAt || null,
+    status: d.status,
+    cancelled,
+    paymentMeaning: paymentMeaning(d.doctype, cancelled),
+    clientVatId: d.clientVatId || null,
+    counts: isMoney && !cancelled,
     direction: d.doctype === REFUND_DOCTYPE ? 'out' : 'in',
     amountMinor: Math.abs(num(d.amountMinor)),
-    countedMinor: isMoney ? documentMoneyMinor(d) : 0,
+    countedMinor: isMoney && !cancelled ? documentMoneyMinor(d) : 0,
     currency: d.currency || 'ILS',
     clientName: d.clientName || null,
     docUrl: d.docUrl || null,

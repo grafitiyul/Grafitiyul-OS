@@ -91,6 +91,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   // bug where a "לפני מע״מ" builder read the next typed amount as VAT-inclusive).
   // null = never chosen → the price list decides. Resolution: shared/vatMode.mjs.
   const [vatMode, setVatMode] = useState(null);
+  // Set when the server answered with a FROZEN imported version (a migrated deal
+  // with no working quote). Read-only: the Builder shows the historical record
+  // and refuses to save over it.
+  const [historicalMode, setHistoricalMode] = useState(null);
   const [ctx, setCtx] = useState(context);
   // The context the CURRENT lines were calculated against. Line edits recompute
   // totals against THIS snapshot; it advances only when חישוב אוטומטי runs, so
@@ -183,6 +187,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       .then(async (r) => {
         if (!live) return;
         setVatMode(r?.vatMode || null);
+        // A migrated deal has no working version — the server answers with its
+        // FROZEN imported version, read-only. The Builder shows the real
+        // historical commercial record instead of a blank sheet, and cannot save
+        // over it: the import stays evidence, not a live editable quote.
+        setHistoricalMode(r?.readOnly ? { source: r.source, importedAt: r.importedAt, versionId: r.versionId } : null);
         const saved = Array.isArray(r?.lines) ? r.lines.map(normalize) : [];
         // Seed a default line ONLY for a brand-new working version. An existing
         // deal may legitimately have zero lines.
@@ -435,6 +444,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   }
 
   async function save() {
+    // A frozen imported version is historical EVIDENCE, not a live quote. It is
+    // never saved over — which is also what guarantees that opening a completed
+    // deal's Builder cannot reprice it, touch its registrations or its tour.
+    // Changing anything means deliberately starting a new working quote.
+    if (historicalMode) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -486,6 +500,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     <>
       {headerExtra}
       <div className="space-y-7 px-2 py-2 min-h-[60vh] flex flex-col">
+        {/* A migrated deal's commercial record, shown as it was agreed. Read-only
+            on purpose: this is the historical evidence of what the customer was
+            charged, not a quote to re-price from today's catalogue. */}
+        {historicalMode && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5">
+            <p className="text-[13px] font-semibold text-amber-900">
+              🗄️ הזמנה היסטורית שיובאה מפייפדרייב — לצפייה בלבד
+            </p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-amber-800">
+              זהו הפירוט המסחרי כפי שסוכם בפועל, כפי שיובא מהמערכת הקודמת. הוא נשמר כראיה היסטורית ואינו ניתן
+              לעריכה: אי אפשר לשמור עליו, לתמחר אותו מחדש לפי המחירון הנוכחי, או לשנות דרכו כרטיסים, הרשמות
+              או סיור שכבר התקיים. כדי לבצע שינוי מסחרי — יש לפתוח הצעת מחיר חדשה לעסקה.
+            </p>
+          </div>
+        )}
         {/* In-app error (no native alert). */}
         {saveError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
@@ -660,14 +689,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             </button>
           </>
         ) : (
-          <>
-            <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
-              ביטול
+          historicalMode ? (
+            // No save button at all: the only honest action on a frozen record.
+            <button type="button" onClick={onClose} className="bg-blue-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-blue-700">
+              סגור
             </button>
-            <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
-              {saving ? 'שומר…' : 'שמור וסגור'}
-            </button>
-          </>
+          ) : (
+            <>
+              <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
+                ביטול
+              </button>
+              <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
+                {saving ? 'שומר…' : 'שמור וסגור'}
+              </button>
+            </>
+          )
         )
       }
     >

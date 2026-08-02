@@ -1464,20 +1464,86 @@ router.delete(
 router.get(
   '/:id/price-lines',
   handle(async (req, res) => {
-    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true, valueMinor: true } });
     if (!deal) return res.status(404).json({ error: 'not_found' });
     // `created` lets the client seed a default line for a brand-new deal while
     // letting an existing deal legitimately have zero lines (user deleted them).
     let version = await prisma.quoteVersion.findFirst({ where: { dealId: req.params.id, isWorking: true } });
     let created = false;
+
     if (!version) {
+      // A MIGRATED deal has no working version — its commercial record is the
+      // frozen Pipedrive import. Minting an empty working version here (which is
+      // what this route used to do on a mere READ) produced the empty Builder on
+      // 8,010 historical deals: the blank new version became the deal's quote and
+      // hid the imported one. A read must not create commercial state.
+      //
+      // So: surface the frozen version READ-ONLY instead. The deal keeps no
+      // working version until someone deliberately starts one, which is what
+      // keeps 15,689 imported versions historical evidence rather than live
+      // editable quotes.
+      const frozen = await prisma.quoteVersion.findFirst({
+        where: {
+          dealId: req.params.id,
+          isWorking: false,
+          lines: { some: { active: true } },
+        },
+        orderBy: [{ sourceKind: 'asc' }, { createdAt: 'desc' }],
+      });
+      if (frozen) {
+        const lines = await prisma.quoteLine.findMany({
+          where: { quoteVersionId: frozen.id },
+          orderBy: { sortOrder: 'asc' },
+        });
+        return res.json({
+          versionId: frozen.id,
+          created: false,
+          readOnly: true,
+          mode: 'historical_import',
+          source: frozen.sourceKind || 'import',
+          importedAt: frozen.createdAt,
+          vatMode: frozen.vatMode || null,
+          lines: lines.map(toClientLine),
+        });
+      }
       version = await prisma.quoteVersion.create({ data: { dealId: req.params.id, isWorking: true, status: 'draft' } });
       created = true;
     }
+
     const lines = await prisma.quoteLine.findMany({
       where: { quoteVersionId: version.id },
       orderBy: { sortOrder: 'asc' },
     });
+
+    // A deal whose working version is empty but which HAS an imported record is
+    // the same story seen one step later (the blank version already exists, from
+    // before this route stopped creating them). Show the history rather than a
+    // blank sheet — the working version stays untouched and takes over the moment
+    // it has a line of its own.
+    if (!lines.some((l) => l.active)) {
+      const frozen = await prisma.quoteVersion.findFirst({
+        where: { dealId: req.params.id, isWorking: false, lines: { some: { active: true } } },
+        orderBy: [{ sourceKind: 'asc' }, { createdAt: 'desc' }],
+      });
+      if (frozen) {
+        const frozenLines = await prisma.quoteLine.findMany({
+          where: { quoteVersionId: frozen.id },
+          orderBy: { sortOrder: 'asc' },
+        });
+        return res.json({
+          versionId: frozen.id,
+          workingVersionId: version.id,
+          created: false,
+          readOnly: true,
+          mode: 'historical_import',
+          source: frozen.sourceKind || 'import',
+          importedAt: frozen.createdAt,
+          vatMode: frozen.vatMode || null,
+          lines: frozenLines.map(toClientLine),
+        });
+      }
+    }
+
     // The order-level VAT mode travels WITH the lines — it is what they mean.
     res.json({ versionId: version.id, created, vatMode: version.vatMode || null, lines: lines.map(toClientLine) });
   }),

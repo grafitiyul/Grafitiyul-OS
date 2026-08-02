@@ -84,69 +84,146 @@ function fmtDay(v) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('he-IL');
 }
 
+// "פתח מסמך" — opens the REAL iCount document.
+//
+// The URL is resolved server-side (stored → recovered from the original office
+// note → doc/get_doc_url, cached). Read-only: nothing is issued, emailed or
+// modified. A document iCount no longer serves says so instead of offering a
+// dead link.
+export function OpenDocumentButton({ dealId, row, label }) {
+  const [busy, setBusy] = useState(false);
+  const [gone, setGone] = useState(false);
+
+  async function open() {
+    if (busy || gone) return;
+    // A URL we already hold opens immediately, in the same user gesture.
+    if (row.docUrl) {
+      window.open(row.docUrl, '_blank', 'noopener');
+      return;
+    }
+    setBusy(true);
+    try {
+      const { url } = await api.deals.icountDocumentUrl(dealId, { doctype: row.doctype, docnum: row.docnum });
+      if (url) window.open(url, '_blank', 'noopener');
+      else setGone(true);
+    } catch {
+      setGone(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (gone) {
+    return (
+      <span title="אייקאונט אינו מספק כרגע קישור למסמך הזה" className="px-1 text-[10.5px] text-gray-400">
+        לא זמין
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={busy}
+      title="פתח מסמך"
+      className={`rounded p-1 text-gray-400 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50 ${
+        label ? 'inline-flex items-center gap-1 px-2 text-[12px]' : ''
+      }`}
+    >
+      {label && <span>{busy ? 'פותח…' : 'פתח מסמך'}</span>}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <path d="M15 3h6v6M10 14 21 3" />
+      </svg>
+    </button>
+  );
+}
+
 // One money row. Every row states HOW it was established — a verified iCount
 // document, an automatic clearing capture, or money an operator typed in. That
 // distinction is a product requirement: the balance may be identical, but the
 // trust behind it is not, and the panel must never blur the two.
-function PaymentRow({ row, onReverse }) {
+function PaymentRow({ row, onReverse, dealId }) {
   const out = row.direction === 'out';
   const manual = row.evidenceClass === 'manual';
   const badge = EVIDENCE_CLASS_BADGE[row.evidenceClass] || EVIDENCE_CLASS_BADGE.verified;
 
   const title = manual
     ? row.kindLabel
-    : `${row.doctypeLabel}${row.docnum ? ` ${row.docnum}` : ''}`;
-  const subtitle = manual
-    ? [row.reference, row.note, row.createdByName].filter(Boolean).join(' · ')
-    : [row.clientName, row.linkReason ? null : undefined].filter(Boolean).join(' · ');
+    : `${row.doctypeLabel} מס׳ ${row.docnum || '—'}`;
 
-  const body = (
-    <>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] text-gray-800">{title}</span>
-          <span className={`shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium ring-1 ${badge.cls}`}>
-            {badge.label}
-          </span>
-        </span>
-        <span className="block truncate text-[11px] text-gray-400">
-          {[subtitle, fmtDay(row.occurredAt)].filter(Boolean).join(' · ')}
-        </span>
-        {/* Why a historical/linked document is on this deal — the audit line. */}
-        {row.linkReason && (
-          <span className="block truncate text-[10.5px] text-gray-400">{row.linkReason}</span>
-        )}
-      </span>
-      <span
-        dir="ltr"
-        className={`shrink-0 text-[13px] font-medium tabular-nums ${out ? 'text-red-600' : 'text-emerald-700'}`}
-      >
-        {out ? '−' : ''}{formatMinor(row.amountMinor, row.currency)}
-      </span>
-    </>
-  );
-  const cls = 'flex items-start justify-between gap-3 rounded-lg px-2 py-1.5';
   return (
-    <div className="group/row flex items-start gap-1">
-      {row.docUrl ? (
-        <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} flex-1 hover:bg-gray-50`}>
-          {body}
-        </a>
-      ) : (
-        <div className={`${cls} flex-1`}>{body}</div>
-      )}
-      {manual && onReverse && (
-        <button
-          type="button"
-          onClick={() => onReverse(row)}
-          title="ביטול הרישום הידני"
-          className="mt-1.5 shrink-0 rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
-          </svg>
-        </button>
-      )}
+    <div className="group/row rounded-lg px-2 py-1.5 hover:bg-gray-50/70">
+      <div className="flex items-start justify-between gap-3">
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="truncate text-[13px] font-medium text-gray-800">{title}</span>
+            <span className={`shrink-0 rounded-full px-1.5 py-px text-[9.5px] font-medium ring-1 ${badge.cls}`}>
+              {badge.label}
+            </span>
+            {row.cancelled && (
+              <span className="shrink-0 rounded-full bg-gray-200 px-1.5 py-px text-[9.5px] font-medium text-gray-700">
+                מבוטל
+              </span>
+            )}
+          </span>
+
+          {/* Never a bare number: date · customer · currency, then what the
+              document MEANS for the money. */}
+          <span className="block truncate text-[11px] text-gray-500">
+            {[fmtDay(row.occurredAt), row.clientName, row.currency].filter(Boolean).join(' · ')}
+          </span>
+          {!manual && row.paymentMeaning && (
+            <span
+              className={`block truncate text-[10.5px] ${
+                row.counts ? 'text-emerald-700' : 'text-gray-400'
+              }`}
+            >
+              {row.paymentMeaning}
+            </span>
+          )}
+          {manual && [row.reference, row.note, row.createdByName].filter(Boolean).length > 0 && (
+            <span className="block truncate text-[10.5px] text-gray-400">
+              {[row.reference, row.note, row.createdByName].filter(Boolean).join(' · ')}
+            </span>
+          )}
+          {/* A shared document settles this deal by the deal's own amount — say
+              what the document itself is worth, so "paid" is never mysterious. */}
+          {row.sharedHistorical && row.documentAmountMinor !== row.amountMinor && (
+            <span className="block truncate text-[10.5px] text-purple-700">
+              המסמך כולו: {formatMinor(row.documentAmountMinor, row.currency)} · סוגר גם עסקאות אחרות · נספר פעם אחת בדוחות
+            </span>
+          )}
+          {/* Why this document is on this deal — the audit line. */}
+          {row.linkReason && (
+            <span className="block truncate text-[10.5px] text-gray-400" title={row.linkReason}>
+              {row.linkReason}
+            </span>
+          )}
+        </span>
+
+        <span className="flex shrink-0 items-start gap-1">
+          <span
+            dir="ltr"
+            className={`text-[13px] font-medium tabular-nums ${out ? 'text-red-600' : row.counts ? 'text-emerald-700' : 'text-gray-400'}`}
+          >
+            {out ? '−' : ''}{formatMinor(row.amountMinor, row.currency)}
+          </span>
+          {!manual && row.docnum && <OpenDocumentButton dealId={dealId} row={row} />}
+          {manual && onReverse && (
+            <button
+              type="button"
+              onClick={() => onReverse(row)}
+              title="ביטול הרישום הידני"
+              className="rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+              </svg>
+            </button>
+          )}
+        </span>
+      </div>
     </div>
   );
 }
@@ -154,22 +231,19 @@ function PaymentRow({ row, onReverse }) {
 // Billing paper the deal holds (חשבון עסקה / חשבונית מס). Shown deliberately
 // APART from the payment rows: a customer holding an invoice is useful context,
 // but it is not money and must never read like it is.
-function BillingRow({ row }) {
-  const body = (
-    <>
+function BillingRow({ row, dealId }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1 hover:bg-gray-50/70">
       <span className="min-w-0 flex-1 truncate text-[12px] text-gray-500">
-        {row.doctypeLabel}{row.docnum ? ` ${row.docnum}` : ''} · {fmtDay(row.occurredAt)}
+        {row.doctypeLabel} מס׳ {row.docnum || '—'} · {fmtDay(row.occurredAt)} · {row.paymentMeaning}
       </span>
-      <span dir="ltr" className="shrink-0 text-[12px] tabular-nums text-gray-400">
-        {formatMinor(row.amountMinor, row.currency)}
+      <span className="flex shrink-0 items-center gap-1">
+        <span dir="ltr" className="text-[12px] tabular-nums text-gray-400">
+          {formatMinor(row.amountMinor, row.currency)}
+        </span>
+        {row.docnum && <OpenDocumentButton dealId={dealId} row={row} />}
       </span>
-    </>
-  );
-  const cls = 'flex items-center justify-between gap-3 rounded-lg px-2 py-1';
-  return row.docUrl ? (
-    <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-gray-50`}>{body}</a>
-  ) : (
-    <div className={cls}>{body}</div>
+    </div>
   );
 }
 
@@ -510,7 +584,7 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                 <p className="px-2 text-[12px] text-gray-400">עדיין לא התקבלו תשלומים לעסקה זו.</p>
               ) : (
                 summary.payments.map((row) => (
-                  <PaymentRow key={row.id} row={row} onReverse={setReverseTarget} />
+                  <PaymentRow key={row.id} row={row} dealId={deal.id} onReverse={setReverseTarget} />
                 ))
               )}
             </div>
@@ -540,7 +614,7 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
             {summary.billingDocuments?.length > 0 && (
               <div className="border-t border-gray-100 pt-2">
                 <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">מסמכי חיוב (אינם תשלום)</div>
-                {summary.billingDocuments.map((row) => <BillingRow key={row.id} row={row} />)}
+                {summary.billingDocuments.map((row) => <BillingRow key={row.id} row={row} dealId={deal.id} />)}
               </div>
             )}
 

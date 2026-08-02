@@ -12,7 +12,7 @@ import {
   linkExternalDocument,
   resolveDocumentForLinking,
 } from '../icountDocs.js';
-import { sendDocByEmail, getDocUrl } from '../icount.js';
+import { sendDocByEmail, getDocUrl, isIcountConfigured } from '../icount.js';
 import { sendSimpleEmail, getSendAccount } from '../email/simpleSend.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
@@ -92,6 +92,58 @@ router.get(
       const code = err?.code || 'search_failed';
       const status = code === 'phone_search_unsupported' ? 400 : providerErrorStatus(code);
       return res.status(status).json({ error: code, reason: err?.reason || null });
+    }
+  }),
+);
+
+// "פתח מסמך" — the viewer URL for a document already linked to this deal.
+//
+// Read-only by construction: the only provider call reachable from here is
+// doc/get_doc_url. Nothing is issued, emailed or modified.
+//
+// Resolution order:
+//   1. the URL stored on the link (documents GOS issued itself carry one)
+//   2. a URL the original office note recorded for the same document — free,
+//      and the reason 1,694 historical deals can be opened without any API call
+//   3. doc/get_doc_url, cached back onto the row so it costs one call ever
+// A document iCount no longer serves returns an honest unavailable state rather
+// than a dead link.
+router.get(
+  '/:id/icount/document-url',
+  handle(async (req, res) => {
+    const doctype = String(req.query.doctype || '');
+    const docnum = String(req.query.docnum || '').trim();
+    if (!DOC_TYPE_LABELS[doctype] || !docnum) return res.status(400).json({ error: 'document_required' });
+
+    const row = await prisma.icountDocument.findFirst({
+      where: { dealId: req.params.id, doctype, docnum },
+    });
+    if (!row) return res.status(404).json({ error: 'not_linked_to_deal' });
+    if (row.docUrl) return res.json({ url: row.docUrl, source: 'stored' });
+
+    // The ledger mirror may already have it (a previous doc/info enrichment).
+    const ledger = await prisma.icountLedgerDoc.findUnique({
+      where: { doctype_docnum: { doctype, docnum } },
+      select: { docUrl: true },
+    });
+    if (ledger?.docUrl) {
+      await prisma.icountDocument.update({ where: { id: row.id }, data: { docUrl: ledger.docUrl } });
+      return res.json({ url: ledger.docUrl, source: 'ledger' });
+    }
+
+    if (!isIcountConfigured()) return res.status(422).json({ error: 'icount_not_configured' });
+    try {
+      const url = await getDocUrl(doctype, docnum);
+      if (!url) return res.status(404).json({ error: 'document_unavailable' });
+      // Cached on BOTH rows: the next open on any surface costs nothing.
+      await Promise.all([
+        prisma.icountDocument.updateMany({ where: { doctype, docnum }, data: { docUrl: url } }),
+        prisma.icountLedgerDoc.updateMany({ where: { doctype, docnum }, data: { docUrl: url } }),
+      ]);
+      res.json({ url, source: 'icount' });
+    } catch (err) {
+      const code = err?.code || 'document_unavailable';
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
     }
   }),
 );

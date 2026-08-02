@@ -83,15 +83,20 @@ export async function repairDeal26354Vat(client, { log = console, dryRun = false
     return { skipped: 'would_not_match_deal_value', plan };
   }
 
-  const alreadyRepaired = version.vatMode === 'included' && version.isWorking && plan.lineIds.length === 0;
+  const alreadyRepaired = version.vatMode === 'included' && !version.isWorking && plan.lineIds.length === 0;
   if (alreadyRepaired) return { skipped: 'already_repaired', plan };
 
   if (dryRun) return { dryRun: true, plan, currentVatMode: version.vatMode, isWorking: version.isWorking };
 
   await client.$transaction(async (tx) => {
+    // vatMode ONLY. The version stays isWorking=false: it is an imported
+    // historical record, and the Builder now renders exactly this version
+    // read-only when a deal has no working quote. Marking it working would turn
+    // historical evidence into a live editable quote — the very thing the
+    // architecture separates.
     await tx.quoteVersion.update({
       where: { id: version.id },
-      data: { vatMode: 'included', isWorking: true },
+      data: { vatMode: 'included', isWorking: false },
     });
     // Drop per-line overrides so the ORDER owns the decision — a line that keeps
     // its own 'excluded' would defeat the order mode and reintroduce the bug.
