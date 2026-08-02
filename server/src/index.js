@@ -26,6 +26,7 @@ import portalTrainingRouter from './routes/portalTraining.js';
 import guideStationAccessRouter from './routes/guideStationAccess.js';
 import portalGalleryRouter from './routes/portalGallery.js';
 import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
+import accountingDocSettingsRouter from './routes/accountingDocSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
 import adminUsersRouter from './routes/adminUsers.js';
 import navRouter from './routes/nav.js';
@@ -470,6 +471,10 @@ app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
 // Guide Portal permissions — the server-backed singleton behind Settings →
 // Tours → הרשאות מדריכים. Enforced by the /api/portal guide routes.
 app.use('/api/guide-portal-settings', requireAdminAuth, guidePortalSettingsRouter);
+// Accounting document default notes — the server-backed singleton behind
+// Settings → כספים → פרטי בנק גרפיטיול (bank details + cancellation policy
+// blocks composed into iCount document notes).
+app.use('/api/accounting-doc-settings', requireAdminAuth, accountingDocSettingsRouter);
 // Questionnaire Engine (generic — blueprint: docs/architecture/questionnaire-
 // engine-design.md). Admin builder + staff submission flows. Public
 // token-link routes are a separate, later-mounted public router (Slice 3).

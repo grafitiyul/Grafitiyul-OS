@@ -13,6 +13,7 @@ import {
   resolveDocumentForLinking,
 } from '../icountDocs.js';
 import { sendDocByEmail, getDocUrl, isIcountConfigured } from '../icount.js';
+import { getAccountingDocSettings, buildNotesByDoctype } from '../accountingDocNotes.js';
 import { sendSimpleEmail, getSendAccount } from '../email/simpleSend.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
@@ -49,7 +50,15 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    res.json(buildDocumentDefaults(deal));
+    const defaults = buildDocumentDefaults(deal);
+    // Default Notes per document type — composed from AccountingDocSettings
+    // (Finance Settings → פרטי בנק גרפיטיול) with the deal's real values. The
+    // modal swaps the suggestion when the type changes; the operator's edited
+    // text is what gets sent, verbatim.
+    const settings = await getAccountingDocSettings(prisma);
+    defaults.notesByDoctype = buildNotesByDoctype(settings, deal);
+    defaults.notes = defaults.notesByDoctype.deal || '';
+    res.json(defaults);
   }),
 );
 
@@ -67,10 +76,18 @@ router.get(
 router.get(
   '/:id/icount/base-document',
   handle(async (req, res) => {
-    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    // Full include (not just id): the notes composition below resolves deal
+    // variables (group / date / participants) for the follow-up's defaults.
+    const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
     try {
-      res.json(await fetchBaseDocumentPrefill(prisma, deal, String(req.query.doctype || ''), String(req.query.docnum || '')));
+      const prefill = await fetchBaseDocumentPrefill(prisma, deal, String(req.query.doctype || ''), String(req.query.docnum || ''));
+      // Suggested Notes per target doctype: the base document's own
+      // customer-facing notes (inherited verbatim) + any default blocks
+      // enabled for that type and not already present in the inherited text.
+      const settings = await getAccountingDocSettings(prisma);
+      prefill.notesByDoctype = buildNotesByDoctype(settings, deal, { inheritedNotes: prefill.notes || '' });
+      res.json(prefill);
     } catch (err) {
       const code = err?.code || 'base_prefill_failed';
       return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });

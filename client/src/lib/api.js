@@ -1423,6 +1423,15 @@ export const api = {
     get: () => request('/api/bank-catalog'),
   },
 
+  // Accounting document default notes — server-backed singleton (Settings →
+  // כספים → פרטי בנק גרפיטיול): structured bank fields + the template blocks
+  // composed into iCount document notes.
+  accountingDocSettings: {
+    get: () => request('/api/accounting-doc-settings'),
+    update: (data) =>
+      request('/api/accounting-doc-settings', { method: 'PUT', body: JSON.stringify(data) }),
+  },
+
   // Guide Portal permissions — server-backed singleton (Settings → Tours →
   // הרשאות מדריכים). Enforced by the /api/portal guide routes.
   guidePortalSettings: {

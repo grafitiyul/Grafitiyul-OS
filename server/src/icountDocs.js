@@ -46,7 +46,8 @@ export function allocationThresholdIls() {
 
 // Everything the defaults/issue flows need on the deal row.
 export const ICOUNT_DEAL_INCLUDE = {
-  product: { select: { nameHe: true } },
+  product: { select: { nameHe: true, nameEn: true } },
+  location: { select: { nameHe: true, nameEn: true } },
   organization: { select: { name: true, taxId: true, address: true, financeEmail: true } },
   organizationUnit: { select: { name: true, taxId: true, address: true, financeEmail: true } },
   paymentMethodRef: { select: { nameHe: true } },
@@ -229,6 +230,11 @@ export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
     rows,
     amountIls,
     clientName: info?.client_name || local?.clientName || null,
+    // The source document's customer-facing notes (hwc — the exact field GOS
+    // sends on doc/create; verified live 2026-08-02 that doc/info returns it).
+    // Deliberately NOT `internal_comments` — internal/provider metadata never
+    // reaches a follow-up document.
+    notes: String(info?.hwc || '').trim() || null,
   };
 }
 

@@ -1551,6 +1551,41 @@ model IcountLedgerDoc {
   @@index([clientId])
 }
 
+// ── Accounting document default notes (Finance Settings → פרטי בנק גרפיטיול) ─
+// ONE canonical home for the customer-facing default content of iCount
+// document notes (hwc): structured bank fields + three template blocks
+// (deal-info / bank details / cancellation policy), each with independent
+// default-inclusion flags per document type (חשבון עסקה / חשבונית מס).
+// Singleton row (id='singleton'), lazily seeded on first read with the
+// approved standard wording (recovered verbatim from live iCount documents,
+// 2026-08-02). Templates carry {{tokens}}: bank_* resolve from the structured
+// fields on this row; deal tokens resolve through the canonical communication
+// variable registry. Changing this row affects FUTURE documents only — issued
+// iCount documents are immutable.
+model AccountingDocSettings {
+  id                String   @id @default("singleton")
+  // Structured bank fields — the SSOT the bank_* template tokens resolve from.
+  bankAccountHolder String   @default("")
+  bankName          String   @default("")
+  bankNumber        String   @default("")
+  bankBranchName    String   @default("")
+  bankBranchNumber  String   @default("")
+  bankAccountNumber String   @default("")
+  // Template blocks (plain text + {{tokens}}; iCount hwc is plain text).
+  dealInfoTemplate     String @default("")
+  bankTemplate         String @default("")
+  cancellationTemplate String @default("")
+  // Independent default-inclusion flags per document type.
+  dealInfoIncludeDeal        Boolean @default(true)
+  dealInfoIncludeInvoice     Boolean @default(false)
+  bankIncludeDeal            Boolean @default(true)
+  bankIncludeInvoice         Boolean @default(false)
+  cancellationIncludeDeal    Boolean @default(true)
+  cancellationIncludeInvoice Boolean @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
 // ── Manual collection evidence ("תשלום ידני") ────────────────────────────────
 // Money that GOS knows about but iCount did not record as a document reachable
 // from this deal: a bank transfer confirmed by the operator, a historical

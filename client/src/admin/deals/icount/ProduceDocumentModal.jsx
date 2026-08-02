@@ -56,6 +56,13 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   const [client, setClient] = useState({ name: '', vatId: '', email: '', phone: '', address: '' });
   const [rows, setRows] = useState([]);
   const [notes, setNotes] = useState('');
+  // Per-doctype Notes suggestions, composed SERVER-side (AccountingDocSettings
+  // blocks + the deal's real values; after a base selection — the base
+  // document's inherited notes + only the missing enabled blocks). Swapping
+  // doctype/base replaces the notes ONLY while the operator hasn't typed —
+  // an operator edit is never silently erased, only offered a reset.
+  const [notesMap, setNotesMap] = useState(null);
+  const [notesEdited, setNotesEdited] = useState(false);
   const [payments, setPayments] = useState([]);
   const [baseDoc, setBaseDoc] = useState(null); // { doctype, docnum }
   const [baseLoading, setBaseLoading] = useState(false);
@@ -101,6 +108,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
         });
         setRows(d.rows.map((r) => ({ ...r })));
         setNotes(d.notes || '');
+        setNotesMap(d.notesByDoctype || null);
+        setNotesEdited(false);
         setPayments([]);
         setBaseDoc(null);
         setBaseError(null);
@@ -175,11 +184,15 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
     if (baseDoc && def?.baseTypes?.includes(baseDoc.doctype)) {
       // Base stays; inherited rows stay; payments follow the inherited total.
       setPayments(def?.paymentsAllowed ? [newPayment(grossIls)] : []);
+      if (!notesEdited) setNotes(notesMap?.[key] ?? '');
       return;
     }
     setBaseDoc(null);
     setBaseNote(null);
     setBaseError(null);
+    // Base cleared → back to the deal's own per-doctype suggestions.
+    setNotesMap(defaults?.notesByDoctype || null);
+    if (!notesEdited) setNotes(defaults?.notesByDoctype?.[key] ?? '');
     // Docs that record money received start with one payment row over the total.
     setPayments(def?.paymentsAllowed ? [newPayment(grossIls)] : []);
   }
@@ -193,6 +206,9 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       setBaseNote(null);
       const restored = (defaults?.rows || []).map((r) => ({ ...r }));
       setRows(restored);
+      // No base → back to the deal's own per-doctype Notes suggestions.
+      setNotesMap(defaults?.notesByDoctype || null);
+      if (!notesEdited) setNotes(defaults?.notesByDoctype?.[forDoctype] ?? '');
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
       const restoredGross = restored.reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0), 0);
       setPayments(def?.paymentsAllowed ? [newPayment(Math.round(restoredGross * 100) / 100)] : []);
@@ -202,6 +218,14 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
     setBaseLoading(true);
     try {
       const prefill = await api.deals.icountBaseDocument(dealId, sel.doctype, sel.docnum);
+      // Notes: the base document's inherited customer-facing notes + the
+      // target type's missing default blocks (composed server-side, per
+      // doctype) — applied even when the rows are unreadable, the inheritance
+      // is independent of the item lines.
+      if (prefill.notesByDoctype) {
+        setNotesMap(prefill.notesByDoctype);
+        if (!notesEdited) setNotes(prefill.notesByDoctype[forDoctype] ?? '');
+      }
       if (prefill.rows.length === 0) {
         // A base with no readable items: the accounting link is kept but the
         // rows are the user's to provide — never a synthesized line.
@@ -212,7 +236,9 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       setRows(prefill.rows.map((r) => ({ ...r })));
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
       setPayments(def?.paymentsAllowed ? [newPayment(prefill.amountIls)] : []);
-      setBaseNote(`שורות המסמך המקורי נטענו מ${prefill.doctypeLabel} מס׳ ${prefill.docnum} (ניתן לערוך)`);
+      setBaseNote(
+        `שורות המסמך המקורי נטענו מ${prefill.doctypeLabel} מס׳ ${prefill.docnum}${prefill.notes ? ' — כולל הערות המסמך' : ''} (ניתן לערוך)`,
+      );
     } catch (e) {
       // Base stays selected (the accounting link matters) — rows stay editable.
       setBaseNote(null);
@@ -628,10 +654,28 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             </div>
           )}
 
-          {/* Notes + send */}
+          {/* Notes + send. The field shows the EXACT text that will be sent to
+              iCount (hwc) — nothing is appended after confirmation. */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-            <label className={LABEL}>הערות (יופיעו במסמך)
-              <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={`mt-1 ${FIELD} resize-y`} />
+            <label className={LABEL}>
+              <span className="flex items-center justify-between">
+                <span>הערות (יופיעו במסמך)</span>
+                {notesMap && notes !== (notesMap[doctype] ?? '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setNotes(notesMap[doctype] ?? ''); setNotesEdited(false); }}
+                    className="text-[11.5px] font-medium text-blue-700 hover:underline"
+                  >
+                    איפוס לנוסח ברירת המחדל
+                  </button>
+                )}
+              </span>
+              <textarea
+                rows={Math.min(10, Math.max(3, notes.split('\n').length + 1))}
+                value={notes}
+                onChange={(e) => { setNotes(e.target.value); setNotesEdited(true); }}
+                className={`mt-1 ${FIELD} resize-y leading-relaxed`}
+              />
             </label>
             {!sendFlow && (
               <label className="flex items-center gap-2 pb-1 text-[13px] text-gray-700">

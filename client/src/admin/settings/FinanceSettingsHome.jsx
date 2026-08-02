@@ -25,6 +25,12 @@ export default function FinanceSettingsHome() {
           title="סוגי תוספת כללית"
           description="ישיבת צוות, עבודה משרדית, הדרכה… ברירות מחדל למחיר וכמות."
         />
+        <CategoryCard
+          to="/admin/settings/finance/bank-details"
+          icon="🏦"
+          title="פרטי בנק גרפיטיול"
+          description="פרטי חשבון הבנק, פרטי הפעילות ותנאי הביטול שמופיעים בהערות מסמכי הנהלת החשבונות."
+        />
       </CategoryGrid>
     </div>
   );
