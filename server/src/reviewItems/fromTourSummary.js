@@ -45,7 +45,10 @@ async function loadContext(tourEventId, actorScope, db) {
       select: {
         id: true, date: true, startTime: true,
         product: { select: { nameHe: true } },
-        variant: { select: { nameHe: true, isHome: true } },
+        // A variant has no name of its own — it IS its city (the same rule the
+        // tours calendar and the guide digest use). `isHomeLocation` is the
+        // canonical home flag; there is no `isHome` on the variant.
+        productVariant: { select: { locationId: true, location: { select: { nameHe: true, isHomeLocation: true } } } },
         location: { select: { nameHe: true } },
         bookings: {
           where: { status: { not: 'cancelled' } },
@@ -80,8 +83,11 @@ async function loadContext(tourEventId, actorScope, db) {
     tourDate: tour.date,
     tourTime: tour.startTime,
     productName: tour.product?.nameHe || null,
-    // Variant only when it is meaningful — a home-location variant adds nothing.
-    variantName: tour.variant && !tour.variant.isHome ? tour.variant.nameHe : null,
+    // The variant is named only when it says something — the home city adds
+    // nothing to a report a Tel Aviv office reads.
+    variantName: tour.productVariant?.location && !tour.productVariant.location.isHomeLocation
+      ? tour.productVariant.location.nameHe
+      : null,
     cityName: tour.location?.nameHe || null,
     dealId: deal?.id || null,
     dealOrderNo: deal?.orderNo ?? null,
