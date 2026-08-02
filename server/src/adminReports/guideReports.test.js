@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportByNumber, reportsInGroup } from './registry.js';
+import { REPORTS, renderReport, renderReportSample, reportByNumber, reportsInGroup } from './registry.js';
 import { statusIcon, dayLabel, cityChip, hebrewWeekday } from './guideReports.js';
 import { coordinationSendMs, GUIDE_SEND_HOUR, SUMMARY_REMINDERS } from './tourSweeps.js';
 import { israelLocalToMs } from '../communication/windows.js';
@@ -84,14 +84,14 @@ test('#12 for a private tour names the customer, org, product and headcount', ()
     guideNotice: {
       openTour: false, contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
       productName: 'סיור גרפיטי', participants: 24,
-      portalUrl: 'https://x/p/T/tour/t1',
+      formUrl: 'https://x/f/SCOPEDTOKEN',
     },
   });
   assert.ok(text.startsWith('☎️ זמן לשיחת תיאום!'));
   assert.match(text, /👤 דנה לוי/);
   assert.match(text, /🏢 עיריית תל אביב/);
   assert.match(text, /👥 24/);
-  assert.ok(text.endsWith('לפתיחת הסיור:\n\nhttps://x/p/T/tour/t1'));
+  assert.ok(text.endsWith('לפתיחת הסיור:\n\nhttps://x/f/SCOPEDTOKEN'));
   assert.ok(!text.includes('סיור פתוח'));
 });
 
@@ -105,7 +105,7 @@ test('#12 for an open tour is ONE message listing every booking', () => {
         { label: 'רות לוי', count: 1 },
         { label: 'חברת ABC', count: 8 },
       ] },
-      portalUrl: 'https://x/p/T/tour/t1',
+      formUrl: 'https://x/f/SCOPEDTOKEN',
     },
   });
   assert.match(text, /🎫 סיור פתוח/);
@@ -119,7 +119,7 @@ test('#12 for an open tour is ONE message listing every booking', () => {
 
 test('#13 announces the joiner and their count', () => {
   const text = renderReport(13, {
-    guideNotice: { newCustomerName: 'משפחת כהן', newCustomerCount: 2, tourDate: '2026-08-04', tourTime: '10:00', portalUrl: 'https://x' },
+    guideNotice: { newCustomerName: 'משפחת כהן', newCustomerCount: 2, tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x' },
   });
   assert.ok(text.startsWith('➕ הצטרף משתתף חדש לסיור פתוח'));
   assert.match(text, /👤 משפחת כהן \(2\)/);
@@ -128,7 +128,7 @@ test('#13 announces the joiner and their count', () => {
 test('the summary ladder greets by FIRST name and names the customer', () => {
   const ctx = {
     recipient: { name: 'יואב כהן', firstName: 'יואב' },
-    guideNotice: { customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00', portalUrl: 'https://x' },
+    guideNotice: { customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x' },
   };
   const first = renderReport(14, ctx);
   assert.ok(first.startsWith('📝 הגיע הזמן למלא סיכום סיור'));
@@ -147,7 +147,7 @@ test('the summary ladder greets by FIRST name and names the customer', () => {
 });
 
 test('a guide with no known first name is still greeted, never with "undefined"', () => {
-  const text = renderReport(14, { guideNotice: { customerName: 'א', portalUrl: 'https://x' } });
+  const text = renderReport(14, { guideNotice: { customerName: 'א', formUrl: 'https://x' } });
   assert.match(text, /היי מדריך,/);
 });
 
@@ -217,9 +217,40 @@ test('#12 for an open tour with no registrations says so, never a blank gap', ()
   const text = renderReport(12, {
     guideNotice: {
       openTour: true, productName: 'סיור גרפיטי', tourDate: '2026-07-30', tourTime: '18:00',
-      participants: { total: 0, customers: [] }, portalUrl: 'https://x',
+      participants: { total: 0, customers: [] }, formUrl: 'https://x',
     },
   });
   assert.match(text, /👥 משתתפים:\n• עדיין אין נרשמים/);
   assert.ok(!text.includes('\n\n\n'));
+});
+
+// ── SECURITY REGRESSION GUARD ────────────────────────────────────────────────
+// Messages #12-#16 once linked guides to /p/<portalToken>/tour/<id>, which is
+// the whole-portal token with a path appended: truncate the path and you have
+// the entire portal. This test exists so that link shape can never come back.
+
+test('NO guide notification may ever contain a portal link', () => {
+  const guideNumbers = REPORTS.filter((r) => r.audience === 'guides').map((r) => r.number);
+  assert.ok(guideNumbers.length >= 5, 'expected the guide notification family');
+
+  for (const number of guideNumbers) {
+    const text = renderReportSample(number);
+    assert.ok(text, `#${number} renders`);
+    // The portal surface is /p/<token>. A form link is /f/<token>.
+    assert.equal(/\/p\/[A-Za-z0-9_-]+/.test(text), false,
+      `#${number} contains a guide-portal link:\n${text}`);
+    assert.equal(text.includes('/tour/'), false,
+      `#${number} contains a portal tour deep link:\n${text}`);
+  }
+});
+
+test('every form-invitation message carries a FORM-scoped link', () => {
+  // The replacement must actually be PRESENT — a message with no link would
+  // pass the portal guard above while being useless. #11 is excluded: it is a
+  // daily status list, not an invitation to fill anything.
+  for (const number of [12, 13, 14, 15, 16]) {
+    const text = renderReportSample(number);
+    assert.ok(/\/f\/[A-Za-z0-9_-]+/.test(text) || text.includes('—'),
+      `#${number} has neither a form link nor an honest dash:\n${text}`);
+  }
 });

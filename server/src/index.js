@@ -118,6 +118,7 @@ import { startReservationWorker } from './reservations/worker.js';
 import { startReconcileOpenTourProducts } from './maintenance/reconcileOpenTourProducts.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
+import staffFormRouter from './routes/staffForm.js';
 import publicReservationsRouter from './routes/publicReservations.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
@@ -280,6 +281,10 @@ app.use('/api/public', publicQuoteRouter);
 // Public questionnaire fill (coordination forms etc.) — token-gated
 // (QuestionnaireLink.token), no auth. Same capability-URL philosophy.
 app.use('/api/public', publicQuestionnaireRouter);
+// Staff form fill — token-gated, unauthenticated, ONE form per token. Kept
+// beside the public form router because it is the same class of surface: a
+// high-entropy capability, no session, no id enumeration.
+app.use('/api/staff-form', staffFormRouter);
 // PUBLIC travel-agent reservation form (token = capability; eligibility
 // re-checked per request). Slice 2: intake only — no Deal creation.
 app.use('/api/public', publicReservationsRouter);

@@ -18,7 +18,9 @@ import { israelLocalToMs } from '../communication/windows.js';
 import { loadBlockingHolidays, sendDateForLeadDays } from '../lib/businessCalendar.js';
 import { tourEndMs } from '../tours/tourTime.js';
 import { notifiableGuides, guideFirstName, guideFullName, GUIDE_ASSIGNMENT_SELECT } from '../tours/guides.js';
-import { guideTourUrl } from '../tours/guidePortal/links.js';
+// SECURITY: guide-portal deep links are NEVER sent in operational messages —
+// they are the whole-portal token with a path appended. Scoped form links only.
+import { staffFormLinkUrl } from '../questionnaires/staffLinks.js';
 import { COORDINATION_LEAD_DAYS, DONE_STATUSES } from './coordination.js';
 import { fireAdminReport } from './dispatch.js';
 import { openTourParticipants, tourNotificationFacts } from './tourFacts.js';
@@ -90,6 +92,21 @@ const SWEEP_TOUR_SELECT = {
   },
 };
 
+/** The Tour Summary form link for ONE guide on ONE tour (perActor purpose). */
+const summaryFormUrl = (tourEventId, externalPersonId, client, log) => staffFormLinkUrl({
+  purpose: 'tour_summary',
+  subjectType: 'tour_event',
+  subjectId: tourEventId,
+  actorScope: externalPersonId,
+}, { db: client, log });
+
+/** Customer label for a booking — the person the guide is calling. */
+const bookingCustomerName = (b) => {
+  const c = b?.deal?.contacts?.[0]?.contact;
+  const name = c ? [c.firstNameHe, c.lastNameHe].filter(Boolean).join(' ').trim() : '';
+  return name || b?.deal?.organization?.name || null;
+};
+
 const recipientOf = (a) => ({
   personRefId: a.personRef?.id || null,
   phone: a.personRef?.phone || null,
@@ -140,25 +157,47 @@ export async function sweepCoordinationCalls({ nowMs = Date.now(), client = pris
       ? { openTour: true, ...tourNotificationFacts(tour), participants: await openTourParticipants(tour.id, client) }
       : { openTour: false, ...tourNotificationFacts(tour) };
 
-    for (const a of guides) {
-      const recipient = recipientOf(a);
-      const r = await fireAdminReport({
-        number: 12,
-        idempotencyKey: `coord_call:${tour.id}:${a.externalPersonId}`,
-        tourEventId: tour.id,
-        dealId: isOpen ? null : tour.bookings[0]?.dealId || null,
-        recipient,
-        data: {
-          guideNotice: {
-            ...facts,
-            portalUrl: guideTourUrl(a.personRef, tour.id),
-            sendDate: due.date,
-            movedDays: due.movedDays,
-            moveReasons: due.reasons,
+    // COORDINATION IS PER CUSTOMER, not per tour. An open tour with three
+    // bookings needs three coordination calls, three forms and three messages —
+    // one per customer. The previous key was coord_call:<tour>:<guide>, so a
+    // guide got ONE message for a tour with several unrelated customers, and
+    // there was no way to track them independently.
+    //
+    // The coordination FORM was already per booking (subjectType 'booking');
+    // only the message was collapsed to the tour. This aligns them.
+    for (const booking of tour.bookings) {
+      for (const a of guides) {
+        const recipient = recipientOf(a);
+        // The link authorizes exactly THIS booking's coordination form. Minted
+        // once and reused by every retry and later reminder.
+        const formUrl = await staffFormLinkUrl({
+          purpose: 'coordination',
+          subjectType: 'booking',
+          subjectId: booking.id,
+        }, { db: client, log });
+
+        const r = await fireAdminReport({
+          number: 12,
+          // Business identity: this customer's coordination, for this guide.
+          idempotencyKey: `coord_call:${tour.id}:${booking.id}:${a.externalPersonId}`,
+          tourEventId: tour.id,
+          dealId: booking.dealId || null,
+          recipient,
+          data: {
+            guideNotice: {
+              ...facts,
+              // One customer per message, so the guide knows who to call.
+              customerName: bookingCustomerName(booking),
+              participants: booking.deal?.participants ?? facts.participants,
+              formUrl,
+              sendDate: due.date,
+              movedDays: due.movedDays,
+              moveReasons: due.reasons,
+            },
           },
-        },
-      }, log);
-      if (r?.ok) fired.push({ number: 12, tourEventId: tour.id, guide: recipient.name });
+        }, log);
+        if (r?.ok) fired.push({ number: 12, tourEventId: tour.id, bookingId: booking.id, guide: recipient.name });
+      }
     }
   }
   return fired;
@@ -208,7 +247,11 @@ export async function sweepTourSummaries({ nowMs = Date.now(), client = prisma, 
           tourEventId: tour.id,
           dealId: tour.bookings[0]?.dealId || null,
           recipient,
-          data: { guideNotice: { ...facts, portalUrl: guideTourUrl(a.personRef, tour.id) } },
+          // TOUR SUMMARY IS PER GUIDE (perActor), never per customer: 20
+          // participants on one tour still means ONE summary for this guide.
+          // The key is already tour+guide, which is correct — only the link
+          // changes, from a portal deep link to a form-scoped one.
+          data: { guideNotice: { ...facts, formUrl: await summaryFormUrl(tour.id, a.externalPersonId, client, log) } },
         }, log);
         if (r?.ok) fired.push({ number: step.number, tourEventId: tour.id, guide: recipient.name });
       }

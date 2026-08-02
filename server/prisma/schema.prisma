@@ -4762,6 +4762,17 @@ model QuestionnaireLink {
   subjectId   String?
   purpose     String
 
+  // WHO this link is for. 'public' = a customer link (the /q surface).
+  // 'staff'  = a guide/staff form link: it authorizes exactly ONE questionnaire
+  // instance and nothing else. Staff links exist because the alternative — a
+  // guide-portal deep link — hands over the whole portal to anyone who
+  // forwards the message.
+  audience   String    @default("public")
+  // For perActor purposes (tour_summary): the guide's externalPersonId this
+  // link belongs to. Joins the submission's singleton scope, so guide A's link
+  // can never open guide B's summary.
+  actorScope String?
+
   token      String    @unique
   // Force a language (e.g. from TourEvent.tourLanguage); null → resolve chain.
   language   String?
@@ -4778,6 +4789,7 @@ model QuestionnaireLink {
 
   @@index([subjectType, subjectId, purpose])
   @@index([templateId])
+  @@unique([purpose, subjectType, subjectId, actorScope, audience], name: "staff_form_link_identity")
 }
 
 // Which template serves a business purpose (settings surface: the tour

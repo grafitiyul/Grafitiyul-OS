@@ -64,7 +64,8 @@ export function cityChip(item) {
 }
 
 const guideFirst = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'מדריך';
-const portal = (ctx) => ctx.guideNotice?.portalUrl || '—';
+// The DIRECT link to this one form. Never a portal link — see staffLinks.js.
+const formLink = (ctx) => ctx.guideNotice?.formUrl || '—';
 const dateTimeLine = (f) => `${formatDateHe(f.tourDate) || '—'} | ${f.tourTime || '—'}`;
 
 // ── the catalog entries ──────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ export const GUIDE_REPORTS = [
           '',
           'לפתיחת הסיור:',
           '',
-          portal(ctx),
+          formLink(ctx),
         ]);
       }
       return lines([
@@ -175,7 +176,7 @@ export const GUIDE_REPORTS = [
         '',
         'לפתיחת הסיור:',
         '',
-        portal(ctx),
+        formLink(ctx),
       ]);
     },
     sample: () => ({
@@ -184,7 +185,7 @@ export const GUIDE_REPORTS = [
         openTour: false, contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
         productName: 'סיור וסדנת גרפיטי', participants: 24,
         tourDate: '2026-08-04', tourTime: '10:00',
-        portalUrl: 'https://app.grafitiyul.co.il/p/TOKEN/tour/te_sample',
+        formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
   },
@@ -209,7 +210,7 @@ export const GUIDE_REPORTS = [
         '',
         'לפתיחת הסיור:',
         '',
-        portal(ctx),
+        formLink(ctx),
       ]);
     },
     sample: () => ({
@@ -217,7 +218,7 @@ export const GUIDE_REPORTS = [
       guideNotice: {
         newCustomerName: 'משפחת כהן', newCustomerCount: 2,
         tourDate: '2026-08-04', tourTime: '10:00',
-        portalUrl: 'https://app.grafitiyul.co.il/p/TOKEN/tour/te_sample',
+        formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
   },
@@ -244,14 +245,14 @@ export const GUIDE_REPORTS = [
         '',
         'הנה הטופס למילוי סיכום הסיור:',
         '',
-        portal(ctx),
+        formLink(ctx),
       ]);
     },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
-        portalUrl: 'https://app.grafitiyul.co.il/p/TOKEN/tour/te_sample',
+        formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
   },
@@ -277,14 +278,14 @@ export const GUIDE_REPORTS = [
         '',
         'יאללה, עכשיו כשזה עדיין חם 😊',
         '',
-        portal(ctx),
+        formLink(ctx),
       ]);
     },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
-        portalUrl: 'https://app.grafitiyul.co.il/p/TOKEN/tour/te_sample',
+        formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
   },
@@ -310,14 +311,14 @@ export const GUIDE_REPORTS = [
         '',
         'בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏',
         '',
-        portal(ctx),
+        formLink(ctx),
       ]);
     },
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
-        portalUrl: 'https://app.grafitiyul.co.il/p/TOKEN/tour/te_sample',
+        formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
   },

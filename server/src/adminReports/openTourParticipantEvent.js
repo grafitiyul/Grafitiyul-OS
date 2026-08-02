@@ -14,7 +14,7 @@
 import { prisma } from '../db.js';
 import { fireAdminReport } from './dispatch.js';
 import { notifiableGuides, guideFirstName, guideFullName, GUIDE_ASSIGNMENT_SELECT } from '../tours/guides.js';
-import { guideTourUrl } from '../tours/guidePortal/links.js';
+import { staffFormLinkUrl } from '../questionnaires/staffLinks.js';
 
 /** Has the coordination-call notification already gone out to this guide? */
 export async function coordinationNoticeSent(tourEventId, externalPersonId, client = prisma) {
@@ -49,6 +49,21 @@ export async function reportOpenTourParticipant(
   // Open tours only, and never for a tour that is off.
   if (!tour || tour.kind !== 'group_slot' || tour.status === 'cancelled') return { skipped: 'not_live_open_tour' };
 
+  // #13 announces a NEW customer, so its link must open THAT customer's
+  // coordination form. A registration identifies the customer via its deal; the
+  // booking is that deal's participation in this tour. No booking (a
+  // registration not yet converted) → no link rather than a wrong one.
+  const registration = await client.ticketRegistration.findUnique({
+    where: { id: registrationId },
+    select: { dealId: true },
+  });
+  const booking = registration?.dealId
+    ? await client.booking.findFirst({
+      where: { tourEventId: tour.id, dealId: registration.dealId, status: { not: 'cancelled' } },
+      select: { id: true },
+    })
+    : null;
+
   const fired = [];
   for (const a of notifiableGuides(tour.assignments)) {
     if (!(await coordinationNoticeSent(tour.id, a.externalPersonId, client))) continue;
@@ -69,7 +84,11 @@ export async function reportOpenTourParticipant(
           tourDate: tour.date,
           tourTime: tour.startTime,
           tourEventId: tour.id,
-          portalUrl: guideTourUrl(a.personRef, tour.id),
+          // #13 announces a NEW customer on an open tour, so it links to THAT
+          // customer's coordination form.
+          formUrl: booking ? await staffFormLinkUrl({
+            purpose: 'coordination', subjectType: 'booking', subjectId: booking.id,
+          }, { db: client, log }) : null,
         },
       },
     }, log);
