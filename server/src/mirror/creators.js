@@ -22,6 +22,7 @@ import { defaultFields, validateContactNames } from '../migration/review/nameCle
 import { tourStatusOf } from '../migration/import/tourImport.js';
 import { normalizeCoordRow } from '../migration/import/tourNormalize.js';
 import { CHILD_TABLES } from './sources/airtableTourChildren.js';
+import { fireExternalLeadAutomations } from '../automations/sources/leadCreated.js';
 
 const t = (v) => { const s = String(v ?? '').trim(); return s === '' ? null : s; };
 const pid = (v) => (v && typeof v === 'object' ? v.value ?? v.id : v) ?? null;
@@ -231,7 +232,7 @@ export async function createDeal(db, normalized, row) {
     return { reason: 'deal_not_plannable', detail: `planDealImport produced no create payload for deal ${row.externalId} (${JSON.stringify(stats).slice(0, 120)})` };
   }
 
-  return atomicCreate(db, {
+  const made = await atomicCreate(db, {
     sourceType: 'deal',
     sourceId: row.externalId,
     writes: async (tx) => {
@@ -277,6 +278,20 @@ export async function createDeal(db, normalized, row) {
       return { entityType: 'Deal', entityId: id, fieldsWritten: { orderNo: p.orderNo, stage: p.dealStageKey ?? null } };
     },
   });
+
+  // Pipedrive is the create-only EXTERNAL lead bridge — a genuinely NEW open
+  // deal here is a new incoming lead, so the lead-created automations fire
+  // (detached, post-commit). Replays/races (`alreadyExisted`), deferred
+  // creates and non-open deals never notify; the batch/cutover importers do
+  // not go through this creator at all, so history can never emit.
+  if (made?.entityId && !made.alreadyExisted && !made.reason && p.status === 'open') {
+    fireExternalLeadAutomations({
+      dealId: made.entityId,
+      origin: 'pipedrive:lead_bridge',
+      eventRef: `pipedrive:deal:${row.externalId}`,
+    });
+  }
+  return made;
 }
 
 // ── note → immutable TimelineEntry ───────────────────────────────────────────

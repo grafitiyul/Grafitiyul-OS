@@ -26,10 +26,17 @@ import { referencedKeys } from '../../../shared/questionnaire/conditions.mjs';
 
 const DEFS = new Map();
 
-// ONE trigger kind, by approved scope. `domain_event` and `schedule` existed
-// only to adopt existing GOS behaviour into a general engine; that programme was
-// declined, and the workers keep owning their own scheduling.
-export const TRIGGER_KINDS = ['questionnaire_submitted'];
+// Trigger kinds, by approved scope. The generic `domain_event`/`schedule`
+// programme (adopting every existing GOS behaviour into the engine) was
+// declined, and the workers keep owning their own scheduling. Kinds are added
+// one at a time, each for an explicitly approved business event:
+//   * questionnaire_submitted — the original scope (slices 0-1);
+//   * external_lead_created   — a genuinely NEW deal born from an EXTERNAL
+//     intake origin (ingress pipeline / Pipedrive lead bridge). Fired by the
+//     intake code itself, never inferred from which screen created the deal —
+//     internal creation paths (manual, WhatsApp, Email, duplication,
+//     migration) can never reach it.
+export const TRIGGER_KINDS = ['questionnaire_submitted', 'external_lead_created'];
 
 export const CATEGORIES = {
   tours: 'סיורים',
@@ -189,6 +196,9 @@ export function automationsForTrigger({ kind, templateKey = null, purpose = null
   return listAutomations().filter((def) => {
     const t = def.trigger;
     if (t.kind !== kind) return false;
+    // Non-questionnaire kinds match on the kind alone — the event IS the
+    // business identity; there is no template/purpose sub-binding.
+    if (t.kind !== 'questionnaire_submitted') return true;
     // PURPOSE is the canonical binding when a definition declares one: the
     // office decides which template serves 'tour_summary' via the purpose
     // config, and template keys are auto-generated (tpl_<hex>), so matching on

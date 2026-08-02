@@ -13,6 +13,7 @@
 
 import { contactPhone, contactEmail, contactFullName } from './context.js';
 import { adminDisplayName } from '../admin/displayName.js';
+import { ingressLabel } from '../deals/marketing.js';
 import {
   TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
 } from './format.js';
@@ -91,6 +92,33 @@ export const VARIABLES = [
     resolve: (ctx, lang) => {
       const type = ctx.deal?.organizationId ? 'business' : ctx.deal?.activityType;
       return type ? ACTIVITY_TYPE_LABELS[lang === 'en' ? 'en' : 'he'][type] || null : null;
+    } },
+  { key: 'lead_source', labelHe: 'מקור הליד', labelEn: 'Lead source', category: 'deal', contexts: ['deal'],
+    // The REAL recorded source, never fabricated: the deal's source catalog
+    // entry, else the canonical write-once ingress provenance label
+    // (DealMarketing.originalIngressSource), else the free-text source detail.
+    resolve: (ctx) =>
+      ctx.deal?.dealSource?.label
+      || ingressLabel(ctx.deal?.marketing?.originalIngressSource)
+      || ctx.deal?.source
+      || null },
+  // ── OPTIONAL whole-line variables (manager lead alert) ──
+  // `optional: true` — an absent value renders as NOTHING instead of blocking
+  // the delivery. Each resolves to a full labelled line WITH its own trailing
+  // newline, so the template never shows an empty label or a blank line: place
+  // the token at the start of the line that follows it.
+  { key: 'lead_org_line', labelHe: 'שורת ארגון (אם קיים)', labelEn: 'Organization line (if present)', category: 'org', contexts: ['org', 'deal'], optional: true,
+    resolve: (ctx, lang) => {
+      const name = ctx.org?.name || null;
+      if (!name) return '';
+      return lang === 'en' ? `Organization: ${name}\n` : `ארגון: ${name}\n`;
+    } },
+  { key: 'lead_interest_line', labelHe: 'שורת תחום עניין (אם ידוע)', labelEn: 'Interest line (if known)', category: 'deal', contexts: ['deal'], optional: true,
+    resolve: (ctx, lang) => {
+      const p = ctx.deal?.product;
+      const name = (lang === 'en' ? p?.nameEn || p?.nameHe : p?.nameHe || p?.nameEn) || null;
+      if (!name) return '';
+      return lang === 'en' ? `Interest: ${name}\n` : `עניין: ${name}\n`;
     } },
 
   // ── tour ──
@@ -226,6 +254,13 @@ export function resolveVariables(keys, ctx, lang = 'he', opts = undefined) {
     if (!def) { unknown.push(key); continue; }
     let v = null;
     try { v = def.resolve(ctx, lang, opts); } catch { v = null; }
+    // An OPTIONAL variable with no value substitutes as nothing rather than
+    // blocking the send — declared per-variable in the registry (whole-line
+    // variables like lead_org_line), never inferred.
+    if (def.optional) {
+      values[key] = v ?? '';
+      continue;
+    }
     values[key] = v ?? null;
     if (v == null || v === '') missing.push(key);
   }

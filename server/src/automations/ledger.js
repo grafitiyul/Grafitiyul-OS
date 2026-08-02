@@ -30,6 +30,7 @@ export const ALLOCATED = [
   'AUT-001', // התקבל תשלום בסיכום סיור
   'AUT-002', // כרטיסי בקרה לסיכום סיור
   'AUT-003', // דו"ח לוגיסטי בסיכום סיור
+  'AUT-004', // ליד חדש — עדכון מנהלים בווטסאפ
 ];
 
 /** Ids whose definition has been removed. They remain visible as "הוסרה". */

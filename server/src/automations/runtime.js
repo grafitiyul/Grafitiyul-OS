@@ -39,7 +39,9 @@ export const RUN_STATUS = { ran: 'ran', skipped: 'skipped', failed: 'failed' };
  * written (disabled, not a first submit, or an idempotency hit).
  */
 export async function runAutomation(def, event, { db = prisma, log = console } = {}) {
-  const { submission, answers = {}, refs = {}, firstSubmit = true } = event;
+  // `submission` exists only for questionnaire-triggered events; a domain
+  // event (external_lead_created) carries its business identity in `refs`.
+  const { submission = null, answers = {}, refs = {}, firstSubmit = true } = event;
 
   // 1. An edit is not a new business event.
   const firstOnly = def.trigger?.firstSubmitOnly !== false;
@@ -50,7 +52,7 @@ export async function runAutomation(def, event, { db = prisma, log = console } =
   if (!resolveEnabled(def, state)) return { recorded: false, status: 'disabled' };
 
   // 3. Idempotency claim — the row IS the lock.
-  const idempotencyKey = def.idempotency({ ...refs, submissionId: submission.id, answers });
+  const idempotencyKey = def.idempotency({ ...refs, submissionId: submission?.id ?? null, answers });
   const startedAt = new Date();
   let run;
   try {
@@ -60,9 +62,9 @@ export async function runAutomation(def, event, { db = prisma, log = console } =
         idempotencyKey,
         status: RUN_STATUS.ran, // provisional; finalised below
         input: {
-          submissionId: submission.id,
-          templateKey: submission.template?.key || null,
-          purpose: submission.purpose,
+          submissionId: submission?.id ?? null,
+          templateKey: submission?.template?.key || null,
+          purpose: submission?.purpose ?? null,
           // Only the answers the automation actually reads are frozen — a full
           // answer dump would put questionnaire content into an audit table.
           answers: relevantAnswers(def, answers),
@@ -70,7 +72,7 @@ export async function runAutomation(def, event, { db = prisma, log = console } =
         },
         dealId: refs.dealId || null,
         tourEventId: refs.tourEventId || null,
-        submissionId: submission.id,
+        submissionId: submission?.id ?? null,
         startedAt,
       },
     });

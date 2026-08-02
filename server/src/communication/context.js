@@ -31,6 +31,8 @@ const DEAL_INCLUDE = {
   productVariant: true,
   location: true,
   dealSource: true,
+  // Write-once ingress provenance — the lead_source variable's fallback.
+  marketing: true,
   contacts: {
     include: { contact: { include: { phones: true, emails: true } } },
     orderBy: { isPrimary: 'desc' },
