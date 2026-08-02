@@ -542,7 +542,7 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="text-[12px] text-gray-500">סך העסקה</span>
           <span dir="ltr" className="text-[17px] font-bold text-gray-900 tabular-nums">
-            {totalMinor ? formatMinor(totalMinor, deal.currency) : '—'}
+            {formatMinor(totalMinor || 0, deal.currency)}
           </span>
         </div>
 

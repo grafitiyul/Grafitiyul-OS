@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import { minorToInput } from '../../../lib/money.js';
+import { formatMinor } from '../../../lib/money.js';
 import { productContextFor, locationContextFor } from '../tourContext.js';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 
@@ -140,7 +140,7 @@ export default function OfferContextBar({ offerNo, isPrimary, seed, valueMinor, 
             title="פתח את בונה המחיר של הצעה זו"
             className="h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-right text-sm font-bold text-gray-900 hover:bg-gray-50 disabled:opacity-50"
           >
-            <span dir="ltr">{valueMinor ? `₪${minorToInput(valueMinor)}` : '—'}</span>
+            <span dir="ltr">{formatMinor(valueMinor || 0)}</span>
             <span className="ms-1 text-[11px] font-normal text-blue-700">ערוך ↗</span>
           </button>
         </div>

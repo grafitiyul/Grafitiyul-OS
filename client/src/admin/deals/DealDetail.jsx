@@ -169,7 +169,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
   const [leaveHref, setLeaveHref] = useState(null);
 
+  // Monotonic request epoch — the STALE-RESPONSE guard. Every refresh (initial
+  // load, deal→deal navigation, child onRefresh, realtime invalidation) claims
+  // a new epoch; a response may write state ONLY while its epoch is still the
+  // newest. Without this, navigating deal A → deal B left both fetches alive
+  // and whichever landed later overwrote the screen — and together with the
+  // canonical-URL rewrite below, the two deals re-navigated to each other in a
+  // loop (the "deal flickering" production bug).
+  const refreshEpoch = useRef(0);
+
   const refresh = useCallback(async () => {
+    const epoch = ++refreshEpoch.current;
+    const stale = () => epoch !== refreshEpoch.current;
     setError(null);
     try {
       const [d, s, o, st, ty] = await Promise.all([
@@ -179,6 +190,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         api.organizationSubtypes.list(),
         api.organizationTypes.list(),
       ]);
+      if (stale()) return;
       setDeal(d);
       setStages(s);
       setOrgs(o);
@@ -227,6 +239,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       if (d.productId) {
         try {
           const p = await api.products.get(d.productId);
+          if (stale()) return;
           setVariants(p.variants || []);
           // Legacy deals saved before Deal.locationId existed: derive the city from
           // the saved variant so the selector isn't blank (patch baseline too → not dirty).
@@ -239,6 +252,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             }
           }
         } catch {
+          if (stale()) return;
           setVariants([]);
         }
       } else {
@@ -247,14 +261,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       // The header's org hover card needs the org's type label.
       if (d.organizationId) {
         const full = await api.organizations.get(d.organizationId);
+        if (stale()) return;
         setOrgType(full.organizationType || null);
       } else {
         setOrgType(null);
       }
     } catch (e) {
-      setError(e.message);
+      if (!stale()) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!stale()) setLoading(false);
     }
   }, [id]);
 
@@ -277,9 +292,17 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // replaced with the business-facing "מספר הזמנה" URL (dealPath). Old cuid
   // links keep working (the server accepts both); embedded drawer usage
   // (dealIdProp) has no URL of its own to rewrite.
+  //
+  // GUARD: rewrite ONLY when the loaded deal IS the one the URL points at
+  // (routeId === the deal's cuid — the legacy-link case this rewrite exists
+  // for). During deal→deal navigation `deal` briefly still holds the PREVIOUS
+  // deal while routeId already names the next one; the old `routeId !==
+  // orderNo` test read that as "wrong URL" and navigated BACK to the previous
+  // deal, which — combined with both fetches racing — bounced the page between
+  // the two deals until a hard refresh.
   useEffect(() => {
     if (dealIdProp || !deal?.orderNo) return;
-    if (routeId !== String(deal.orderNo)) navigate(dealPath(deal), { replace: true });
+    if (routeId === deal.id) navigate(dealPath(deal), { replace: true });
   }, [dealIdProp, deal, routeId, navigate]);
 
   function set(field, v) {
@@ -807,32 +830,43 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                   Row 3: City · Tour Language · Groups
                 (RTL reading of row 3: Location → Language → Groups.) */}
             <div className="grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 gap-y-3">
-              {/* Row 1 — the unified commercial row. Product and Price are BOTH
-                  owned by the Builder (the product name is the working version's
-                  primary product line, mirrored onto the Deal on save; the price
-                  is the Builder gross). There is deliberately no inline editing
-                  here — every commercial edit happens inside the canonical
-                  Builder, which this entire row opens. */}
-              <div className="col-span-3 flex items-center gap-1 min-w-0">
-                <span title="מוצר ומחיר" className={`shrink-0 inline-flex cursor-default ${FIELD_EMOJI}`}>📦</span>
-                <button
-                  type="button"
-                  onClick={() => setPriceBuilderOpen(true)}
-                  title="מוצר ומחיר — פתיחת בונה המחיר"
-                  className="flex-1 min-w-0 text-right rounded-md px-1 min-h-[34px] flex items-center gap-2 transition-colors hover:bg-gray-50"
-                >
-                  <span className="truncate text-[15px] font-semibold text-gray-900">
-                    {deal.product?.nameHe || products.find((p) => p.id === deal.productId)?.nameHe || (
-                      <span className="font-normal text-gray-400">בחר מוצר</span>
+              {/* Row 1 — Product + Price. Both values are owned by the Builder
+                  (the product name mirrors the working version's primary product
+                  line via the Builder save path; the price is the Builder gross),
+                  so there is no inline editing here. The values keep their
+                  ORIGINAL positions and look — the only change is interaction:
+                  the ENTIRE row is one invisible button that opens the Builder.
+                  Nothing visually suggests two controls, and no edit label is
+                  shown. The commercial amount always renders through the
+                  canonical money formatter — a deal with no amount shows ₪0,
+                  never a dash. */}
+              <button
+                type="button"
+                onClick={() => setPriceBuilderOpen(true)}
+                title="מוצר ומחיר — פתיחת בונה המחיר"
+                className="col-span-3 text-right rounded-md min-w-0 grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 items-center transition-colors hover:bg-gray-50"
+              >
+                <span className="col-span-2 min-w-0 flex items-center gap-1">
+                  <span title="מוצר" className={`shrink-0 inline-flex ${FIELD_EMOJI}`}>📦</span>
+                  <span className="flex-1 min-w-0 px-1 min-h-[34px] flex items-center">
+                    {deal.product?.nameHe || products.find((p) => p.id === deal.productId)?.nameHe ? (
+                      <span className="truncate text-[15px] font-medium text-gray-900">
+                        {deal.product?.nameHe || products.find((p) => p.id === deal.productId)?.nameHe}
+                      </span>
+                    ) : (
+                      <span className="truncate text-[15px] text-gray-300">בחר מוצר</span>
                     )}
                   </span>
-                  <span className="shrink-0 text-gray-300">·</span>
-                  <span className="shrink-0 text-[15px] font-bold text-gray-900 tabular-nums" dir="ltr">
-                    {deal.valueMinor ? formatMinor(deal.valueMinor, deal.currency) : '—'}
+                </span>
+                <span className="flex items-center gap-1 min-w-0">
+                  <span title="מחיר" className={`shrink-0 inline-flex ${FIELD_EMOJI}`}>💰</span>
+                  <span className="flex-1 min-w-0 px-1 min-h-[34px] flex items-center">
+                    <span className="truncate text-[15px] font-bold text-gray-900 tabular-nums" dir="ltr">
+                      {formatMinor(deal.valueMinor || 0, deal.currency)}
+                    </span>
                   </span>
-                  <span className="ms-auto shrink-0 text-[11px] font-medium text-blue-700">ערוך ↗</span>
-                </button>
-              </div>
+                </span>
+              </button>
 
               {/* Row 2 */}
               <InlineDatePicker id="f-date" icon={<span className={FIELD_EMOJI}>📅</span>} label="תאריך"
