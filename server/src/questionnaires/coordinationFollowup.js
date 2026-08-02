@@ -65,7 +65,10 @@ async function guideFor(actorScope, db) {
  */
 export async function coordinationFollowups(
   { submission, questions = [], answers = {} },
-  { db = prisma, log = console } = {},
+  // `fire` is injectable ONLY so an integration test can prove this wiring
+  // without messaging a real customer. Production always uses the canonical
+  // dispatcher — there is no second sender.
+  { db = prisma, log = console, fire = fireAdminReport } = {},
 ) {
   const out = { participantChange: null, meetingPoint: null, restaurants: null };
   if (submission?.purpose !== 'coordination' || submission?.subjectType !== 'booking') return out;
@@ -139,8 +142,8 @@ export async function coordinationFollowups(
       if (card.created) {
         const data = { participantChange: { ...frozen, reviewItemId: card.item.id } };
         await Promise.allSettled([
-          fireAdminReport({ number: 21, idempotencyKey: `participant_change:${submission.id}`, ...ctxBase, data }, log),
-          fireAdminReport({ number: 22, idempotencyKey: `participant_change:${submission.id}`, ...ctxBase, data }, log),
+          fire({ number: 21, idempotencyKey: `participant_change:${submission.id}`, ...ctxBase, data }, log),
+          fire({ number: 22, idempotencyKey: `participant_change:${submission.id}`, ...ctxBase, data }, log),
         ]);
       }
     }
@@ -170,7 +173,7 @@ export async function coordinationFollowups(
       } else if (!recipient) {
         out.meetingPoint = { sent: false, reason: 'no_recipient' };
       } else {
-        const r = await fireAdminReport({
+        const r = await fire({
           number: 23,
           idempotencyKey: `coordination_meeting_point:${submission.id}`,
           ...ctxBase,
@@ -192,7 +195,7 @@ export async function coordinationFollowups(
   try {
     const asked = roleAnswered(questions, answers, 'send_restaurant_recommendations');
     if (asked.yes && recipient) {
-      const r = await fireAdminReport({
+      const r = await fire({
         number: 24,
         idempotencyKey: `coordination_restaurants:${submission.id}`,
         ...ctxBase,
