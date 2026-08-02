@@ -2074,7 +2074,7 @@ function OrgHoverCard({ org, orgTypeLabel, subtypeLabel, onEdit }) {
 // page.) The real group action (שבץ/החלף סיור) renders above these; private/
 // business tours are created automatically on WON, so they have no manual
 // creation entry.
-const TOUR_PLACEHOLDER_ACTIONS = ['טופס שיחת תיאום', 'הסר הרשמה מסיור', 'שליחת מייל אישור'];
+const TOUR_PLACEHOLDER_ACTIONS = ['שליחת מייל אישור'];
 
 // Disabled "coming soon" menu entry — the same visual language as the header
 // ⋮'s "איחוד דילים" placeholder, so unbuilt actions are never mistaken for live.
