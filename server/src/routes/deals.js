@@ -11,6 +11,7 @@ import {
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
 import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef, splitBuilderPatch, updateOfferContext } from '../quote/quoteOffers.js';
+import { loadVatDefault, seedWorkingFromFrozen } from '../quote/importedBuilderSeed.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin, buildPaymentSnapshot, PAYMENT_DEAL_INCLUDE } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { normalizeClassification } from '../deals/classification.js';
@@ -193,6 +194,10 @@ const CONTACT_SELECT = {
 
 const DEAL_INCLUDE = {
   dealStage: true,
+  // The Deal's primary commercial product — the persisted mirror of the working
+  // Builder's product line (written only by the Builder save path). Display
+  // surfaces read THIS; there is no second product source of truth.
+  product: { select: { id: true, nameHe: true, nameEn: true } },
   organization: {
     select: { id: true, orgNo: true, name: true, organizationTypeId: true, organizationType: { select: { id: true, label: true } } },
   },
@@ -1499,6 +1504,10 @@ router.get(
           versionId: frozen.id,
           created: false,
           readOnly: true,
+          // Read-only is a VIEW, never a permanent lock: the client offers an
+          // explicit "start editing" action (POST /price-lines/start-editing)
+          // that seeds a working copy while this frozen record stays evidence.
+          canStartEditing: true,
           mode: 'historical_import',
           source: frozen.sourceKind || 'import',
           importedAt: frozen.createdAt,
@@ -1515,12 +1524,16 @@ router.get(
       orderBy: { sortOrder: 'asc' },
     });
 
-    // A deal whose working version is empty but which HAS an imported record is
+    // A deal whose working version is EMPTY but which HAS an imported record is
     // the same story seen one step later (the blank version already exists, from
     // before this route stopped creating them). Show the history rather than a
     // blank sheet — the working version stays untouched and takes over the moment
     // it has a line of its own.
-    if (!lines.some((l) => l.active)) {
+    //
+    // "Empty" means ZERO lines — not "no active line". A working version whose
+    // lines were all toggled inactive is operator work in progress; falling back
+    // to the frozen view here used to trap it read-only with no way back.
+    if (lines.length === 0) {
       const frozen = await prisma.quoteVersion.findFirst({
         where: { dealId: req.params.id, isWorking: false, lines: { some: { active: true } } },
         orderBy: [{ sourceKind: 'asc' }, { createdAt: 'desc' }],
@@ -1535,6 +1548,7 @@ router.get(
           workingVersionId: version.id,
           created: false,
           readOnly: true,
+          canStartEditing: true,
           mode: 'historical_import',
           source: frozen.sourceKind || 'import',
           importedAt: frozen.createdAt,
@@ -1546,6 +1560,46 @@ router.get(
 
     // The order-level VAT mode travels WITH the lines — it is what they mean.
     res.json({ versionId: version.id, created, vatMode: version.vatMode || null, lines: lines.map(toClientLine) });
+  }),
+);
+
+// EXPLICIT operator action: make this deal's Builder editable. This is the ONE
+// deliberate write that GET deliberately refuses to perform — reads stay
+// side-effect free, and becoming editable is an operator decision.
+//
+// Universal-editability invariant: EVERY deal can enter an editable working
+// state. The frozen historical version (when one exists) is copied verbatim
+// into a working version through the shared seeding mechanism
+// (quote/importedBuilderSeed.js — the same path the unpaid-unlock runner uses);
+// with no evidence at all the deal simply gets an empty working version.
+//
+// Never: mutates a frozen version, marks it working, overwrites a working
+// version that already has lines (re-checked in-transaction), touches
+// Deal fields / tours / registrations / timeline / lastMeaningfulActivityAt.
+router.post(
+  '/:id/price-lines/start-editing',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, valueMinor: true },
+    });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const vatDefault = await loadVatDefault(prisma);
+    const result = await seedWorkingFromFrozen(prisma, deal, {
+      vatDefault,
+      execute: true,
+      // Operator mode: seed as-imported even when no VAT interpretation
+      // reproduces Deal.valueMinor (the operator is about to review the lines),
+      // and even when the deal has no agreed amount.
+      allowUnproven: true,
+      auditContext: { rule: 'operator_start_editing', by: req.adminAuth?.userId || null },
+    });
+    if (result.outcome === 'no_evidence') {
+      // No frozen commercial evidence — an empty editable Builder is the honest
+      // starting point. Nothing is invented.
+      await ensureWorkingVersion(prisma, req.params.id);
+    }
+    res.json({ ok: true, outcome: result.outcome, unverified: result.unverified || false });
   }),
 );
 
@@ -1589,6 +1643,18 @@ router.put(
     const inputLines = Array.isArray(b.lines) ? b.lines : [];
     const rows = inputLines.map((ln, i) => lineToData(ln, i));
     const origin = await userOrigin(req.adminAuth?.userId);
+
+    // INVARIANT — at most ONE primary product line per working version.
+    // Two non-frozen `kind:'product'` lines double-count the engine base price
+    // (builderCompose prices each from the same product resolution). Frozen
+    // agent-reservation lines are exempt: a reservation legitimately snapshots
+    // several accepted base rows as product lines, all `overridden`, never
+    // engine-priced. Group-ticket builders carry zero product lines and are
+    // unaffected.
+    const primaryCount = rows.filter((r) => r.kind === 'product' && r.sourceKind !== 'agent_reservation').length;
+    if (primaryCount > 1) {
+      return res.status(422).json({ error: 'multiple_primary_products' });
+    }
 
     // WAIVER pre-check: a deal registered without payment carries a canonical
     // waiver. Editing that keeps the builder commercial, but an INCREASE (more of

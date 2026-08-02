@@ -66,9 +66,22 @@ export async function loadVatDefault(client) {
 
 // Seed the working version of `deal` ({ id, valueMinor }) from its frozen
 // imported evidence. Returns a result descriptor; writes only when `execute`.
-export async function seedWorkingFromFrozen(client, deal, { vatDefault, execute = true, auditContext = {} }) {
+//
+// `allowUnproven` (the EXPLICIT-OPERATOR mode, used by the start-editing
+// endpoint): the automated boot runner refuses to guess — no proven VAT
+// interpretation or no agreed amount means no silent seed. An operator who
+// explicitly asked to edit is different: they are about to review every line,
+// so the frozen evidence is copied AS IMPORTED (amounts + own vatMode
+// verbatim, the frozen version's order-level vatMode carried over) even when
+// the composed gross does not reproduce Deal.valueMinor, and even when the
+// deal has no agreed amount at all. Nothing is invented either way.
+export async function seedWorkingFromFrozen(
+  client,
+  deal,
+  { vatDefault, execute = true, allowUnproven = false, auditContext = {} },
+) {
   const value = deal.valueMinor == null ? 0 : Number(deal.valueMinor);
-  if (value <= 0) return { outcome: 'no_value' };
+  if (value <= 0 && !allowUnproven) return { outcome: 'no_value' };
 
   const working = await client.quoteVersion.findFirst({
     where: { dealId: deal.id, isWorking: true },
@@ -78,46 +91,72 @@ export async function seedWorkingFromFrozen(client, deal, { vatDefault, execute 
 
   // Evidence: the frozen imported breakdown. pipedrive_import (real line
   // breakdown) preferred; historical_fallback (the one aggregated agreed-total
-  // line built for breakdown-less migrated deals) accepted second.
+  // line built for breakdown-less migrated deals) accepted second. In
+  // explicit-operator mode, ANY frozen version with active lines is acceptable
+  // last — matched with the same orderBy the read route uses, so the operator
+  // always starts from exactly what the read-only Builder was showing.
+  const FROZEN_SELECT = { id: true, sourceKind: true, vatMode: true, lines: { orderBy: { sortOrder: 'asc' } } };
   const frozen =
     (await client.quoteVersion.findFirst({
       where: { dealId: deal.id, isWorking: false, sourceKind: 'pipedrive_import' },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, sourceKind: true, lines: { orderBy: { sortOrder: 'asc' } } },
+      select: FROZEN_SELECT,
     })) ||
     (await client.quoteVersion.findFirst({
       where: { dealId: deal.id, isWorking: false, sourceKind: 'historical_fallback' },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, sourceKind: true, lines: { orderBy: { sortOrder: 'asc' } } },
-    }));
+      select: FROZEN_SELECT,
+    })) ||
+    (allowUnproven
+      ? await client.quoteVersion.findFirst({
+          where: { dealId: deal.id, isWorking: false, lines: { some: { active: true } } },
+          orderBy: [{ sourceKind: 'asc' }, { createdAt: 'desc' }],
+          select: FROZEN_SELECT,
+        })
+      : null);
   if (!frozen || !frozen.lines.length) return { outcome: 'no_evidence' };
 
-  const choice = chooseVatInterpretation(frozen.lines, value, vatDefault);
+  let choice = chooseVatInterpretation(frozen.lines, value, vatDefault);
+  let unverified = false;
   if (!choice) {
-    return {
-      outcome: 'ambiguous',
-      candidates: {
-        asImported: grossOf(frozen.lines, vatDefault, null),
-        asGross: grossOf(frozen.lines, vatDefault, 'included'),
-        asNet: grossOf(frozen.lines, vatDefault, 'excluded'),
-      },
-    };
+    if (!allowUnproven) {
+      return {
+        outcome: 'ambiguous',
+        candidates: {
+          asImported: grossOf(frozen.lines, vatDefault, null),
+          asGross: grossOf(frozen.lines, vatDefault, 'included'),
+          asNet: grossOf(frozen.lines, vatDefault, 'excluded'),
+        },
+      };
+    }
+    unverified = true;
+    choice = { forceMode: null, why: 'as-imported (unverified against deal value)', gross: grossOf(frozen.lines, vatDefault, null) };
   }
-  if (!execute) return { outcome: 'would_seed', frozenVersionId: frozen.id, ...choice };
+  if (!execute) return { outcome: 'would_seed', frozenVersionId: frozen.id, unverified, ...choice };
 
   let workingVersionId = null;
   await client.$transaction(async (tx) => {
     // Re-check inside the tx — never overwrite a builder someone just filled.
     let target = await tx.quoteVersion.findFirst({
       where: { dealId: deal.id, isWorking: true },
-      select: { id: true, _count: { select: { lines: true } } },
+      select: { id: true, vatMode: true, _count: { select: { lines: true } } },
     });
     if (target && target._count.lines > 0) return;
     if (!target) {
       target = await tx.quoteVersion.create({
-        data: { dealId: deal.id, isWorking: true, status: 'draft' },
-        select: { id: true, _count: { select: { lines: true } } },
+        data: {
+          dealId: deal.id,
+          isWorking: true,
+          status: 'draft',
+          // Unverified as-imported copies keep the frozen order-level VAT mode
+          // so the lines mean exactly what the historical view showed. Proven
+          // seeds keep the original behavior (forceMode lives on the lines).
+          ...(unverified && frozen.vatMode ? { vatMode: frozen.vatMode } : {}),
+        },
+        select: { id: true, vatMode: true, _count: { select: { lines: true } } },
       });
+    } else if (unverified && frozen.vatMode && !target.vatMode) {
+      await tx.quoteVersion.update({ where: { id: target.id }, data: { vatMode: frozen.vatMode } });
     }
     workingVersionId = target.id;
     await tx.quoteLine.createMany({
@@ -158,7 +197,7 @@ export async function seedWorkingFromFrozen(client, deal, { vatDefault, execute 
     });
   });
   return workingVersionId
-    ? { outcome: 'seeded', frozenVersionId: frozen.id, workingVersionId, ...choice }
+    ? { outcome: 'seeded', frozenVersionId: frozen.id, workingVersionId, unverified, ...choice }
     : { outcome: 'already_editable' };
 }
 

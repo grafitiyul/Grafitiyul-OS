@@ -17,7 +17,7 @@ import GroupRegistrationModal from './GroupRegistrationModal.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
-import { minorToInput } from '../../lib/money.js';
+import { minorToInput, formatMinor } from '../../lib/money.js';
 import { useDirtyForm, useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
 import {
   ACTIVITY_TYPES,
@@ -669,7 +669,6 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const cityOptions = [];
   if (recommendedLocs.length) cityOptions.push({ label: 'מומלץ למוצר זה', options: recommendedLocs });
   cityOptions.push({ label: recommendedLocs.length ? 'מיקומים נוספים' : 'מיקומים', options: otherLocs });
-  const productOptions = products.map((p) => ({ value: p.id, label: p.nameHe }));
   const tourLangOptions = TOUR_LANGS.map((l) => ({ value: l.key, label: l.label }));
   const locNotConfigured = !!deal.productId && !!deal.locationId && !recLocIds.has(deal.locationId);
   // Visual-only reminder: a home location is configured AND this deal's city is a
@@ -694,16 +693,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const FIELD_EMOJI = 'text-[14px] leading-none';
 
   // Per-field inline save: persist ONLY that field, then refresh → back to read.
+  // NOTE: there is deliberately no saveProduct here anymore — the product is
+  // commercial state owned by the Price Builder (the unified מוצר ומחיר row
+  // opens it); Deal.productId is written only by the Builder save path.
   const saveField = (patch) => api.deals.update(id, patch).then(refresh);
-  async function saveProduct(productId) {
-    if (!productId) return saveField({ productId: null, productVariantId: null, locationId: null });
-    const d = await productContextFor(productId);
-    return saveField({
-      productId,
-      productVariantId: d.productVariantId || null,
-      locationId: d.locationId || null,
-    });
-  }
   function saveLocation(locationId) {
     const d = locationContextFor(variants, locationId);
     return saveField({ locationId: d.locationId || null, productVariantId: d.productVariantId || null });
@@ -809,28 +802,35 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 identifier; hover = field name) tightly attached to its clickable
                 value. Clicking the value edits inline exactly as before; the icon is
                 not clickable.
-                  Row 1: Product (cols 1-2) · Price (col 3)
+                  Row 1: Product + Price — ONE unified row, the whole row opens the Builder
                   Row 2: Date · Time · Participants
                   Row 3: City · Tour Language · Groups
                 (RTL reading of row 3: Location → Language → Groups.) */}
             <div className="grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 gap-y-3">
-              {/* Row 1 — min-w-0 on grid items so inner truncation can engage
-                  (grid items otherwise refuse to shrink below content width). */}
-              <div className="col-span-2 min-w-0">
-                <InlineField id="f-product" iconInline icon={<span className={FIELD_EMOJI}>📦</span>} label="מוצר"
-                  type="dropdown" value={deal.productId || ''} options={productOptions} editFirst={editFirst}
-                  readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
-                  placeholder="בחר מוצר" onSave={(v) => saveProduct(v)} />
-              </div>
-              <div className="flex items-center gap-1 min-w-0">
-                <span title="מחיר" className={`shrink-0 inline-flex cursor-default ${FIELD_EMOJI}`}>💰</span>
+              {/* Row 1 — the unified commercial row. Product and Price are BOTH
+                  owned by the Builder (the product name is the working version's
+                  primary product line, mirrored onto the Deal on save; the price
+                  is the Builder gross). There is deliberately no inline editing
+                  here — every commercial edit happens inside the canonical
+                  Builder, which this entire row opens. */}
+              <div className="col-span-3 flex items-center gap-1 min-w-0">
+                <span title="מוצר ומחיר" className={`shrink-0 inline-flex cursor-default ${FIELD_EMOJI}`}>📦</span>
                 <button
                   type="button"
                   onClick={() => setPriceBuilderOpen(true)}
-                  title="פתח בונה מחיר"
-                  className="flex-1 min-w-0 text-right rounded-md px-1 min-h-[34px] flex items-center transition-colors hover:bg-gray-50"
+                  title="מוצר ומחיר — פתיחת בונה המחיר"
+                  className="flex-1 min-w-0 text-right rounded-md px-1 min-h-[34px] flex items-center gap-2 transition-colors hover:bg-gray-50"
                 >
-                  <span className="truncate text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
+                  <span className="truncate text-[15px] font-semibold text-gray-900">
+                    {deal.product?.nameHe || products.find((p) => p.id === deal.productId)?.nameHe || (
+                      <span className="font-normal text-gray-400">בחר מוצר</span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-gray-300">·</span>
+                  <span className="shrink-0 text-[15px] font-bold text-gray-900 tabular-nums" dir="ltr">
+                    {deal.valueMinor ? formatMinor(deal.valueMinor, deal.currency) : '—'}
+                  </span>
+                  <span className="ms-auto shrink-0 text-[11px] font-medium text-blue-700">ערוך ↗</span>
                 </button>
               </div>
 

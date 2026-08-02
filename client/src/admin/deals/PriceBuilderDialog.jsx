@@ -95,6 +95,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   // with no working quote). Read-only: the Builder shows the historical record
   // and refuses to save over it.
   const [historicalMode, setHistoricalMode] = useState(null);
+  // Bumped by the explicit "start editing" action to re-run the load effect.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [startEditBusy, setStartEditBusy] = useState(false);
   const [ctx, setCtx] = useState(context);
   // The context the CURRENT lines were calculated against. Line edits recompute
   // totals against THIS snapshot; it advances only when חישוב אוטומטי runs, so
@@ -216,9 +219,19 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           if (live && dp) {
             const idx = next.findIndex((l) => l.kind === 'product');
             const name = dp.nameHe || '';
-            if (idx === -1) {
+            // A builder seeded from FROZEN IMPORTED evidence carries the full
+            // agreed amounts as manual lines and has no product line at all.
+            // Prepending an engine-priced product line here would ADD the
+            // current catalogue base price on top of the imported total —
+            // double-counting money nobody agreed. The imported lines stay the
+            // one commercial content; an explicit חישוב אוטומטי remains the way
+            // to deliberately reprice such a deal from today's catalogue.
+            const importedEvidence = next.some(
+              (l) => l.sourceKind === 'pipedrive_import' || l.sourceKind === 'historical_fallback',
+            );
+            if (idx === -1 && !importedEvidence) {
               next = [normalize({ kind: 'product', label: name, refId: context.productVariantId || null }), ...next];
-            } else if (next[idx].sourceKind !== 'agent_reservation') {
+            } else if (idx !== -1 && next[idx].sourceKind !== 'agent_reservation') {
               next = next.map((l, i) => {
                 if (i !== idx) return l;
                 const productChanged = l.label !== name;
@@ -257,7 +270,24 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, deal?.id]);
+  }, [open, deal?.id, reloadKey]);
+
+  // EXPLICIT unlock: seed a working version from the frozen evidence (the
+  // server copies it verbatim; the frozen record stays untouched in history)
+  // and reload — the same GET now answers editable. Never automatic: reading
+  // stays side-effect free, editing is an operator decision.
+  async function startEditing() {
+    if (startEditBusy) return;
+    setStartEditBusy(true);
+    try {
+      await api.deals.startPriceLinesEditing(deal.id);
+      setReloadKey((k) => k + 1);
+    } catch {
+      /* the reload below simply shows the unchanged read-only state */
+    } finally {
+      setStartEditBusy(false);
+    }
+  }
 
   // Recompute totals whenever LINES change — against the context of the LAST
   // calculation (appliedCtx). Context edits (product, groups, card, participants,
@@ -325,6 +355,32 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
   function updateLine(id, patch) {
     setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+  // ONE primary product per builder. Picking a product from the item dropdown
+  // always targets THE primary product line: if one exists it is REPLACED
+  // (same semantics as a product change from the Deal — label refreshed,
+  // manual price dropped so the engine reprices the new product); if none
+  // exists the picked row becomes it. A second product line is never created.
+  // Frozen agent-reservation product lines are not primaries — they are
+  // accepted snapshot rows and are never retargeted by a pick.
+  function pickProduct(rowId, product) {
+    if (!product) return;
+    setLines((ls) => {
+      const primaryIdx = ls.findIndex((l) => l.kind === 'product' && l.sourceKind !== 'agent_reservation');
+      const targetIdx = primaryIdx !== -1 ? primaryIdx : ls.findIndex((l) => l.id === rowId);
+      if (targetIdx === -1) return ls;
+      return ls.map((l, i) => {
+        if (i !== targetIdx) return l;
+        const changed = l.label !== (product.nameHe || '');
+        return {
+          ...l,
+          kind: 'product',
+          label: product.nameHe || '',
+          refId: null,
+          ...(changed ? { overridden: false } : {}),
+        };
+      });
+    });
   }
   function removeLine(id) {
     setLines((ls) => ls.filter((l) => l.id !== id));
@@ -509,10 +565,18 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               🗄️ הזמנה היסטורית שיובאה מפייפדרייב — לצפייה בלבד
             </p>
             <p className="mt-0.5 text-[12px] leading-relaxed text-amber-800">
-              זהו הפירוט המסחרי כפי שסוכם בפועל, כפי שיובא מהמערכת הקודמת. הוא נשמר כראיה היסטורית ואינו ניתן
-              לעריכה: אי אפשר לשמור עליו, לתמחר אותו מחדש לפי המחירון הנוכחי, או לשנות דרכו כרטיסים, הרשמות
-              או סיור שכבר התקיים. כדי לבצע שינוי מסחרי — יש לפתוח הצעת מחיר חדשה לעסקה.
+              זהו הפירוט המסחרי כפי שסוכם בפועל, כפי שיובא מהמערכת הקודמת. הוא נשמר כראיה היסטורית ולא ישתנה.
+              לחיצה על "פתח לעריכה" תיצור גרסת עבודה חדשה שמתחילה מהפירוט הזה — הרשומה ההיסטורית נשארת
+              בדיוק כפי שהיא, וכל שינוי מסחרי נעשה בגרסת העבודה בלבד.
             </p>
+            <button
+              type="button"
+              onClick={startEditing}
+              disabled={startEditBusy}
+              className="mt-2 h-9 rounded-lg bg-amber-600 px-4 text-[13px] font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {startEditBusy ? 'פותח…' : 'פתח לעריכה'}
+            </button>
           </div>
         )}
         {/* In-app error (no native alert). */}
@@ -611,6 +675,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                   onToggleNote={() => toggleNote(line.id)}
                   onRemove={() => removeLine(line.id)}
                   onSetFree={(on) => setFree(line.id, on)}
+                  onPickProduct={(p) => pickProduct(line.id, p)}
                 />
               )}
             />
@@ -690,10 +755,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           </>
         ) : (
           historicalMode ? (
-            // No save button at all: the only honest action on a frozen record.
-            <button type="button" onClick={onClose} className="bg-blue-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-blue-700">
-              סגור
-            </button>
+            // A frozen record cannot be saved over — but it is never a dead
+            // end: the explicit action seeds a working copy and unlocks.
+            <>
+              <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
+                סגור
+              </button>
+              <button
+                type="button"
+                onClick={startEditing}
+                disabled={startEditBusy}
+                className="bg-amber-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-amber-700 disabled:opacity-50"
+              >
+                {startEditBusy ? 'פותח…' : 'פתח לעריכה'}
+              </button>
+            </>
           ) : (
             <>
               <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
@@ -714,7 +790,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
 const FIELD = 'w-full h-10 rounded-md border border-gray-300 px-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
 
-function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree }) {
+function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree, onPickProduct }) {
   const isProduct = line.kind === 'product';
   const isAddon = line.kind === 'addon';
   const disabled = !line.active;
@@ -770,7 +846,10 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
     } else if (v.startsWith('p:')) {
       onSetFree(false);
       const p = products.find((x) => x.id === v.slice(2));
-      onChange({ label: p?.nameHe || '', kind: isProduct ? 'product' : 'manual', refId: isProduct ? line.refId : null });
+      // Delegates to the dialog-level single-primary handler: replaces the
+      // existing primary product line (or promotes this row when none exists) —
+      // never adds a second product line.
+      onPickProduct(p || null);
     } else if (v.startsWith('a:')) {
       onSetFree(false);
       const a = addons.find((x) => x.id === v.slice(2));

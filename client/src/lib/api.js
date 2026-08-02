@@ -525,6 +525,12 @@ export const api = {
     // Price Builder lines — canonical QuoteVersion/QuoteLine storage (one working
     // version per deal). get ensures the version exists and returns its lines.
     getPriceLines: (id) => request(`/api/deals/${id}/price-lines`),
+    // EXPLICIT operator action: make the Builder editable. Seeds a working
+    // version from the frozen historical evidence (verbatim copy — the frozen
+    // version itself stays untouched and visible in history), or an empty
+    // working version when the deal has no commercial evidence at all.
+    startPriceLinesEditing: (id) =>
+      request(`/api/deals/${id}/price-lines/start-editing`, { method: 'POST', body: '{}' }),
     // A group-deal builder edit re-derives the registered tour's operational
     // product (server: resyncDealGroupTours), so a successful save is a
     // tour-changed signal — the Tours table/modal refetch. Harmless no-op for a
