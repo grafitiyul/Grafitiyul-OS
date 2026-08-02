@@ -1,5 +1,7 @@
 import { createDoc, docInfo, searchDocs, findClient, upsertClient, isIcountConfigured } from './icount.js';
 import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.js';
+import { resolveBuilderVatMode, effectiveLineVatMode } from '../../shared/vatMode.mjs';
+import { normalizeDocumentVatMode, documentRowCalc, documentTotals } from '../../shared/documentVat.mjs';
 
 // iCount document production — the domain logic behind "הפק מסמך".
 //
@@ -84,36 +86,57 @@ function contactFullName(c) {
   );
 }
 
-// A quote line's price normalized to VAT-INCLUSIVE major units. Lines priced
-// "excluded" get VAT added at the line's own rate (fallback: current default);
-// "included"/"inherit" pass through (deal totals are gross by convention);
-// "exempt" passes through unchanged and is flagged for the UI.
-function lineUnitPriceInclIls(line) {
-  const major = Number(line.unitPriceMinor) / 100;
-  if (line.vatMode === 'excluded') {
-    const rate = Number.isFinite(line.vatRate) && line.vatRate != null ? Number(line.vatRate) : vatRatePercent();
-    return Math.round(major * (1 + rate / 100) * 100) / 100;
-  }
-  return major;
-}
-
 // GET-defaults payload: everything the modal prefills, straight from the Deal.
-// `deal` must be loaded with ICOUNT_DEAL_INCLUDE.
-export function buildDocumentDefaults(deal) {
+// `deal` must be loaded with ICOUNT_DEAL_INCLUDE. `vatDefault` is the Builder's
+// PriceList fallback ({ mode, rate }, see loadVatDefault) — the same fallback
+// the Builder itself resolves with, so the document opens on EXACTLY the VAT
+// interpretation the Builder shows.
+export function buildDocumentDefaults(deal, { vatDefault = null } = {}) {
   const contact = deal.contacts?.[0]?.contact || null;
   const org = deal.organizationUnit || deal.organization || null;
   const orgName = deal.organization?.name || null;
   const unitName = deal.organizationUnit?.name || null;
   const organizationName = orgName && unitName ? `${orgName} — ${unitName}` : orgName || unitName;
 
-  const quoteLines = deal.quoteVersions?.[0]?.lines || [];
+  // ── Rows + document VAT mode — the canonical Builder interpretation ───────
+  // The document opens in the working Builder's ORDER-level VAT mode (resolved
+  // exactly like the Builder: version.vatMode → PriceList default → included;
+  // shared/vatMode.mjs). Row amounts are carried AS THE BUILDER STORES THEM —
+  // net stays net under an excluded order, and the mode is sent alongside so
+  // the dialog reads them the same way the Builder does. A line whose own
+  // explicit mode differs from the order is normalized INTO the document mode
+  // (net↔gross at its own rate) so the dialog stays single-mode; an exempt
+  // line survives as the per-row vatExempt flag. Discount/credit lines carry
+  // their Builder sign (negative) — a discount must reduce the document.
+  const workingVersion = deal.quoteVersions?.[0] || null;
+  const quoteLines = workingVersion?.lines || [];
+  const fallbackRate = vatDefault?.rate != null ? Number(vatDefault.rate) : vatRatePercent();
+  const docVatMode = quoteLines.length
+    ? resolveBuilderVatMode(workingVersion?.vatMode, vatDefault?.mode)
+    : 'included'; // Deal.valueMinor is gross by canonical convention
   const rows = quoteLines.length
-    ? quoteLines.map((l) => ({
-        description: l.label || deal.product?.nameHe || deal.title,
-        quantity: l.quantity || 1,
-        unitPriceIls: lineUnitPriceInclIls(l),
-        vatExempt: l.vatMode === 'exempt',
-      }))
+    ? quoteLines.map((l) => {
+        const effMode = effectiveLineVatMode(l.vatMode, docVatMode);
+        const rate = l.vatRate != null ? Number(l.vatRate) : fallbackRate;
+        const sign = l.kind === 'discount' || l.kind === 'credit' ? -1 : 1;
+        let unitPriceIls = (sign * Number(l.unitPriceMinor)) / 100;
+        if (effMode !== docVatMode && effMode !== 'exempt') {
+          // Explicit per-line override in the OTHER money semantics — convert
+          // into the document mode's semantics ('included' rows are gross;
+          // 'excluded'/'exempt' rows are net) so one mode describes every row.
+          if (docVatMode === 'included' && effMode === 'excluded') {
+            unitPriceIls = Math.round(unitPriceIls * (1 + rate / 100) * 100) / 100; // net → gross
+          } else if (docVatMode !== 'included' && effMode === 'included') {
+            unitPriceIls = Math.round((unitPriceIls / (1 + rate / 100)) * 100) / 100; // gross → net
+          }
+        }
+        return {
+          description: l.label || deal.product?.nameHe || deal.title,
+          quantity: l.quantity || 1,
+          unitPriceIls,
+          vatExempt: effMode === 'exempt',
+        };
+      })
     : [
         {
           description: deal.product?.nameHe || deal.title,
@@ -124,6 +147,7 @@ export function buildDocumentDefaults(deal) {
       ];
 
   return {
+    vatMode: docVatMode,
     docTypes: DOC_TYPES,
     vatRate: vatRatePercent(),
     allocationThresholdIls: allocationThresholdIls(),
@@ -182,11 +206,15 @@ export function normalizeBaseDocItems(rawItems) {
         const rate = Number(it.tax_rate);
         unitPriceIls = round2(exempt || !Number.isFinite(rate) ? net : net * (1 + rate / 100));
       }
+      const exempt = it.tax_exempt === '1' || it.tax_exempt === 1 || it.tax_exempt === true;
       return {
         description: String(it.description ?? it.desc ?? '').trim(),
         details: String(it.long_description ?? '').trim() || null,
         quantity,
         unitPriceIls,
+        // The base item's exemption must survive onto the follow-up document —
+        // a closing invoice of an exempt חשבון עסקה must not suddenly charge VAT.
+        vatExempt: exempt,
       };
     })
     .filter((r) => r.description && r.quantity > 0);
@@ -304,20 +332,22 @@ async function persistClientVatId(prisma, deal, clientMode, vatId) {
   }
 }
 
-// Totals for a set of edited rows (major units, VAT-inclusive).
-export function totalsForRows(rows, vatRate) {
-  const grossIls = round2(rows.reduce((s, r) => s + Number(r.quantity) * Number(r.unitPriceIls), 0));
-  const beforeVatIls = round2(grossIls / (1 + vatRate / 100));
-  return { grossIls, beforeVatIls };
+// Totals for a set of edited rows (major units) under a document VAT mode —
+// delegates to THE shared calculation (shared/documentVat.mjs) the modal's
+// preview uses, so recorded amount / allocation math equal the preview exactly.
+// Default mode 'included' keeps every legacy caller's semantics (rows gross).
+export function totalsForRows(rows, vatRate, vatMode = 'included') {
+  const { netIls, grossIls } = documentTotals(rows, vatMode, vatRate);
+  return { grossIls, beforeVatIls: netIls };
 }
 
 // ITA allocation-number precondition: a tax-invoice document at/above the
 // threshold (before VAT) must carry the customer's tax id — iCount would
 // reject the allocation request without it, so GOS blocks the issue upfront.
 // Returns null when OK, else { required: true, missing: [...] }.
-export function allocationRequirement({ doctype, rows, vatId }) {
+export function allocationRequirement({ doctype, rows, vatId, vatMode = 'included' }) {
   if (!ALLOCATION_DOCTYPES.has(doctype)) return null;
-  const { beforeVatIls } = totalsForRows(rows, vatRatePercent());
+  const { beforeVatIls } = totalsForRows(rows, vatRatePercent(), vatMode);
   if (beforeVatIls < allocationThresholdIls()) return null;
   const missing = [];
   if (!/^\d{8,9}$/.test(String(vatId || '').trim())) missing.push('vatId');
@@ -428,6 +458,11 @@ export async function issueDocument(prisma, deal, input, userId) {
   const clientName = String(client.name || '').trim();
   if (!clientName) throw codedError('client_name_required');
 
+  // The document's VAT mode — how the row amounts are to be read (canonical
+  // enum, shared/vatMode.mjs). The modal sends the mode it displayed; legacy /
+  // automated callers (Cardcom, older clients) omit it → 'included', the
+  // gross-rows semantics they have always used.
+  const vatMode = normalizeDocumentVatMode(input.vatMode);
   const rows = (input.rows || [])
     .map((r) => ({
       description: String(r.description || '').trim(),
@@ -446,7 +481,7 @@ export async function issueDocument(prisma, deal, input, userId) {
   if (basedOn && !typeDef.baseTypes.includes(basedOn.doctype)) throw codedError('base_document_type_invalid');
 
   // Allocation-number precondition (ITA) — hard block before any iCount call.
-  const alloc = allocationRequirement({ doctype, rows, vatId: client.vatId });
+  const alloc = allocationRequirement({ doctype, rows, vatId: client.vatId, vatMode });
   if (alloc && alloc.missing.length) {
     const err = codedError('allocation_fields_missing');
     err.details = alloc;
@@ -486,15 +521,21 @@ export async function issueDocument(prisma, deal, input, userId) {
     ...(client.email ? { email: String(client.email).trim() } : {}),
     ...(client.phone ? { client_phone: String(client.phone).trim() } : {}),
     ...(client.address ? { client_address: String(client.address).trim() } : {}),
-    items: rows.map((r) => ({
-      description: r.description,
-      quantity: r.quantity,
-      unitprice_incl: r.unitPriceIls,
-      // VAT treatment inherited from the Deal pricing (e.g. export → exempt).
-      ...(r.vatExempt ? { tax_exempt: 1 } : {}),
-      // Row details from an inherited base document (doc_info item schema).
-      ...(r.details ? { long_description: r.details } : {}),
-    })),
+    items: rows.map((r) => {
+      // THE shared calc (also the modal's preview) converts the row into the
+      // proven unitprice_incl shape: excluded-mode rows get VAT added at the
+      // unit level; exempt rows (document mode or per-row flag) pass net.
+      const calc = documentRowCalc(r, vatMode, vatRatePercent());
+      return {
+        description: r.description,
+        quantity: r.quantity,
+        unitprice_incl: calc.unitPriceInclIls,
+        // VAT treatment inherited from the Deal pricing (e.g. export → exempt).
+        ...(calc.exempt ? { tax_exempt: 1 } : {}),
+        // Row details from an inherited base document (doc_info item schema).
+        ...(r.details ? { long_description: r.details } : {}),
+      };
+    }),
     ...(String(input.notes || '').trim() ? { hwc: String(input.notes).trim() } : {}),
     ...(input.sendEmail && client.email ? { send_email: 1 } : {}),
     ...payments,
@@ -510,7 +551,7 @@ export async function issueDocument(prisma, deal, input, userId) {
 
   const { docId, docnum, docUrl, raw } = await createDoc(body);
 
-  const { grossIls } = totalsForRows(rows, vatRatePercent());
+  const { grossIls } = totalsForRows(rows, vatRatePercent(), vatMode);
   const amountMinor = BigInt(Math.round(grossIls * 100));
 
   // Origin/source overridable so automated issuers (e.g. Cardcom post-payment)

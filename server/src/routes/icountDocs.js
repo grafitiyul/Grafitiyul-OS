@@ -13,6 +13,7 @@ import {
   resolveDocumentForLinking,
 } from '../icountDocs.js';
 import { sendDocByEmail, getDocUrl, isIcountConfigured } from '../icount.js';
+import { loadVatDefault } from '../quote/importedBuilderSeed.js';
 import { getAccountingDocSettings, buildNotesByDoctype } from '../accountingDocNotes.js';
 import { sendSimpleEmail, getSendAccount } from '../email/simpleSend.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -50,7 +51,10 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    const defaults = buildDocumentDefaults(deal);
+    // The Builder's own PriceList fallback — the document's VAT mode must
+    // resolve exactly like the Builder resolves it (shared/vatMode.mjs).
+    const vatDefault = await loadVatDefault(prisma);
+    const defaults = buildDocumentDefaults(deal, { vatDefault });
     // Default Notes per document type — composed from AccountingDocSettings
     // (Finance Settings → פרטי בנק גרפיטיול) with the deal's real values. The
     // modal swaps the suggestion when the type changes; the operator's edited

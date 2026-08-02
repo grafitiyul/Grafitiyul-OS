@@ -5,6 +5,7 @@ import { emitDealTasksChanged } from '../tasks/taskEvents.js';
 import LinkExternalDocumentPanel from './LinkExternalDocumentPanel.jsx';
 import { friendlyIcountError } from './icountErrors.js';
 import { DateField } from '../../common/pickers/DateTimeFields.jsx';
+import { documentTotals } from '../../../../../shared/documentVat.mjs';
 
 // "הפק מסמך" — produce an iCount accounting document from a Deal.
 //
@@ -28,6 +29,15 @@ import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 
 const FIELD = 'w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
 const LABEL = 'block text-[12px] text-gray-600';
+
+// The canonical VAT modes (shared/vatMode.mjs enum) — how the row amounts are
+// read. Initialized from the Deal's working Builder; editable for THIS document
+// only (the Builder is never mutated from here).
+const VAT_MODES = [
+  { key: 'included', label: 'כולל מע״מ', rowsHint: 'מחירים כולל מע״מ' },
+  { key: 'excluded', label: 'לפני מע״מ', rowsHint: 'מחירים לפני מע״מ' },
+  { key: 'exempt', label: 'פטור ממע״מ', rowsHint: 'מחירים ללא מע״מ' },
+];
 
 const PAYMENT_METHODS = [
   { key: 'banktransfer', label: 'העברה בנקאית' },
@@ -55,6 +65,11 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   const [clientMode, setClientMode] = useState('organization');
   const [client, setClient] = useState({ name: '', vatId: '', email: '', phone: '', address: '' });
   const [rows, setRows] = useState([]);
+  // Document-level VAT mode — starts as the working Builder's canonical mode
+  // (server-resolved). Editing it reinterprets the SAME row amounts for this
+  // document only; base-inherited rows are real iCount gross prices, so a
+  // selected base locks the mode to 'included'.
+  const [vatMode, setVatMode] = useState('included');
   const [notes, setNotes] = useState('');
   // Per-doctype Notes suggestions, composed SERVER-side (AccountingDocSettings
   // blocks + the deal's real values; after a base selection — the base
@@ -109,6 +124,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           address: d.customer.address || '',
         });
         setRows(d.rows.map((r) => ({ ...r })));
+        setVatMode(d.vatMode || 'included');
         setNotes(d.notes || '');
         setNotesMap(d.notesByDoctype || null);
         setNotesEdited(false);
@@ -134,11 +150,15 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   );
 
   const vatRate = defaults?.vatRate ?? 18;
-  const grossIls = useMemo(
-    () => Math.round(rows.reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0), 0) * 100) / 100,
-    [rows],
-  );
-  const beforeVatIls = useMemo(() => Math.round((grossIls / (1 + vatRate / 100)) * 100) / 100, [grossIls, vatRate]);
+  // THE shared document calculation (shared/documentVat.mjs) — the same
+  // function the server runs on issue, so this preview IS the iCount payload.
+  const totals = useMemo(() => documentTotals(rows, vatMode, vatRate), [rows, vatMode, vatRate]);
+  const grossIls = totals.grossIls;
+  const beforeVatIls = totals.netIls;
+  const builderVatMode = defaults?.vatMode || 'included';
+  // Base rows are real iCount VAT-inclusive prices → mode locked; a base whose
+  // rows could not be read leaves the deal's rows (and mode) editable.
+  const vatModeLocked = !!baseDoc && !baseError;
 
   // ITA allocation precondition — mirrors the server check exactly.
   const allocationDoc = ['invoice', 'invrec', 'refund'].includes(doctype);
@@ -208,12 +228,14 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       setBaseNote(null);
       const restored = (defaults?.rows || []).map((r) => ({ ...r }));
       setRows(restored);
-      // No base → back to the deal's own per-doctype Notes suggestions.
+      // No base → back to the deal's own rows AND the Builder's VAT mode.
+      const restoredMode = defaults?.vatMode || 'included';
+      setVatMode(restoredMode);
       setNotesMap(defaults?.notesByDoctype || null);
       if (!notesEdited) setNotes(defaults?.notesByDoctype?.[forDoctype] ?? '');
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
-      const restoredGross = restored.reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0), 0);
-      setPayments(def?.paymentsAllowed ? [newPayment(Math.round(restoredGross * 100) / 100)] : []);
+      const restoredGross = documentTotals(restored, restoredMode, defaults?.vatRate ?? 18).grossIls;
+      setPayments(def?.paymentsAllowed ? [newPayment(restoredGross)] : []);
       return;
     }
     setBaseDoc({ doctype: sel.doctype, docnum: sel.docnum });
@@ -236,6 +258,9 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
         return;
       }
       setRows(prefill.rows.map((r) => ({ ...r })));
+      // Inherited rows are the base document's REAL prices — VAT-inclusive by
+      // iCount's own accounting (exempt items arrive flagged per-row).
+      setVatMode('included');
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
       setPayments(def?.paymentsAllowed ? [newPayment(prefill.amountIls)] : []);
       setBaseNote(
@@ -320,6 +345,9 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           phone: client.phone.trim() || null,
           address: client.address.trim() || null,
         },
+        // The displayed VAT interpretation travels with the rows — the server
+        // runs the SAME shared calc to build the iCount payload.
+        vatMode,
         rows: rows
           .filter((r) => r.description && Number(r.quantity) > 0)
           .map((r) => ({
@@ -327,6 +355,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             details: r.details || null,
             quantity: Number(r.quantity),
             unitPriceIls: Number(r.unitPriceIls) || 0,
+            vatExempt: !!r.vatExempt,
           })),
         notes: notes.trim() || null,
         payments: typeDef.paymentsAllowed ? payments : [],
@@ -577,9 +606,36 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             </div>
           )}
 
-          {/* Rows */}
+          {/* Rows + VAT mode. The mode control reuses the canonical Builder
+              enum; changing it reinterprets the SAME amounts for this document
+              only — the saved Builder is never touched from here. */}
           <div className="rounded-xl border border-gray-200 p-3">
-            <p className="text-[12px] font-semibold text-gray-500">שורות המסמך (מחירים כולל מע״מ)</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12px] font-semibold text-gray-500">
+                שורות המסמך ({(VAT_MODES.find((m) => m.key === vatMode) || VAT_MODES[0]).rowsHint})
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-400">מצב מע״מ</span>
+                <div className="flex rounded-lg border border-gray-300 p-0.5 text-[12px]">
+                  {VAT_MODES.map((m) => (
+                    <button key={m.key} type="button" disabled={vatModeLocked}
+                      onClick={() => setVatMode(m.key)}
+                      title={vatModeLocked ? 'השורות ירשו ממסמך מקור — מחירים כולל מע״מ' : undefined}
+                      className={`rounded-md px-2.5 py-1 transition ${
+                        vatMode === m.key ? 'bg-blue-600 text-white' : 'text-gray-600 disabled:opacity-40'
+                      }`}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {vatMode !== builderVatMode && !vatModeLocked && (
+              <p className="mt-1 text-[11.5px] text-amber-700">
+                מצב המע״מ שונה מהבילדר של הדיל ({(VAT_MODES.find((m) => m.key === builderVatMode) || VAT_MODES[0]).label}) —
+                הבחירה כאן משפיעה על מסמך זה בלבד, הבילדר לא ישתנה.
+              </p>
+            )}
             <div className="mt-2 space-y-1.5">
               <div className="grid grid-cols-[1fr_4.5rem_6.5rem_6.5rem_2rem] items-center gap-2 text-[11px] text-gray-400">
                 <span>תיאור</span><span>כמות</span><span>מחיר יח׳</span><span>סה״כ</span><span />
@@ -594,6 +650,10 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
                     <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} title="הסרת שורה"
                       className="text-gray-400 hover:text-red-600">✕</button>
                   </div>
+                  {/* Per-row exemption inherited from the Deal pricing / base document */}
+                  {r.vatExempt && vatMode !== 'exempt' && (
+                    <p className="mt-0.5 pr-1 text-[11px] font-medium text-emerald-700">שורה פטורה ממע״מ</p>
+                  )}
                   {/* Row details inherited from a base document (long_description) */}
                   {r.details && (
                     <p className="mt-0.5 pr-1 text-[11.5px] text-gray-500" dir="auto">{r.details}</p>
@@ -606,7 +666,10 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
                 className="text-[12.5px] font-medium text-blue-700 hover:underline">+ הוספת שורה</button>
               <div className="text-left text-[13px]">
                 <div className="text-gray-500">לפני מע״מ: <span dir="ltr">{fmtIls(beforeVatIls)}</span></div>
-                <div className="font-semibold text-gray-900">סה״כ כולל מע״מ ({vatRate}%): <span dir="ltr">{fmtIls(grossIls)}</span></div>
+                <div className="text-gray-500">
+                  מע״מ{vatMode === 'exempt' ? ' (פטור)' : ` (${vatRate}%)`}: <span dir="ltr">{fmtIls(totals.vatIls)}</span>
+                </div>
+                <div className="font-semibold text-gray-900">סה״כ כולל מע״מ: <span dir="ltr">{fmtIls(grossIls)}</span></div>
               </div>
             </div>
           </div>

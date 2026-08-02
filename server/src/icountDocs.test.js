@@ -97,6 +97,130 @@ test('defaults: quote lines become rows; excluded-VAT lines are normalized to in
   assert.equal(d.rows[1].unitPriceIls, 118); // 100 + 18% VAT
 });
 
+// ── Order-level VAT mode (the Deal #25972 production bug) ────────────────────
+// A working Builder saved as "לפני מע״מ" with inherit-mode lines: the document
+// must open in 'excluded' with the NET amounts as stored — never re-read as
+// gross. Line override → order mode → PriceList default, exactly like the
+// Builder (shared/vatMode.mjs).
+test('defaults: excluded ORDER mode — net amounts pass through with vatMode=excluded', () => {
+  const d = buildDocumentDefaults(
+    {
+      ...baseDeal,
+      quoteVersions: [
+        {
+          vatMode: 'excluded',
+          lines: [
+            { kind: 'product', label: 'סדנת גרפיטי', quantity: 1, unitPriceMinor: 490000n, vatMode: 'inherit', vatRate: null },
+            { kind: 'manual', label: '', quantity: 1, unitPriceMinor: 190000n, vatMode: 'inherit', vatRate: null },
+          ],
+        },
+      ],
+    },
+    { vatDefault: { mode: 'included', rate: 18 } },
+  );
+  assert.equal(d.vatMode, 'excluded');
+  assert.deepEqual(d.rows.map((r) => r.unitPriceIls), [4900, 1900]); // net, as the Builder stores them
+  assert.deepEqual(d.rows.map((r) => r.vatExempt), [false, false]);
+  const { grossIls, beforeVatIls } = totalsForRows(d.rows, 18, d.vatMode);
+  assert.equal(beforeVatIls, 6800);
+  assert.equal(grossIls, 8024); // 6,800 + 18% — the Builder's own gross
+});
+
+test('defaults: exempt ORDER mode — rows flagged exempt, mode exempt', () => {
+  const d = buildDocumentDefaults(
+    {
+      ...baseDeal,
+      quoteVersions: [
+        { vatMode: 'exempt', lines: [{ kind: 'manual', label: 'סיור', quantity: 2, unitPriceMinor: 100000n, vatMode: 'inherit', vatRate: null }] },
+      ],
+    },
+    { vatDefault: { mode: 'included', rate: 18 } },
+  );
+  assert.equal(d.vatMode, 'exempt');
+  assert.equal(d.rows[0].vatExempt, true);
+  const { grossIls, beforeVatIls } = totalsForRows(d.rows, 18, d.vatMode);
+  assert.equal(grossIls, 2000);
+  assert.equal(beforeVatIls, 2000);
+});
+
+test('defaults: version without a stored mode falls back to the PriceList default', () => {
+  const version = { vatMode: null, lines: [{ kind: 'manual', label: 'א', quantity: 1, unitPriceMinor: 10000n, vatMode: 'inherit', vatRate: null }] };
+  const excl = buildDocumentDefaults({ ...baseDeal, quoteVersions: [version] }, { vatDefault: { mode: 'excluded', rate: 18 } });
+  assert.equal(excl.vatMode, 'excluded');
+  const incl = buildDocumentDefaults({ ...baseDeal, quoteVersions: [version] }, { vatDefault: { mode: 'included', rate: 18 } });
+  assert.equal(incl.vatMode, 'included');
+});
+
+test('defaults: explicit per-line override in the OTHER semantics is converted into the document mode', () => {
+  // Excluded order with one explicitly-INCLUDED line: its gross ₪118 becomes net ₪100.
+  const d = buildDocumentDefaults(
+    {
+      ...baseDeal,
+      quoteVersions: [
+        {
+          vatMode: 'excluded',
+          lines: [
+            { kind: 'manual', label: 'נטו', quantity: 1, unitPriceMinor: 10000n, vatMode: 'inherit', vatRate: null },
+            { kind: 'manual', label: 'ברוטו', quantity: 1, unitPriceMinor: 11800n, vatMode: 'included', vatRate: 18 },
+          ],
+        },
+      ],
+    },
+    { vatDefault: { mode: 'included', rate: 18 } },
+  );
+  assert.deepEqual(d.rows.map((r) => r.unitPriceIls), [100, 100]);
+});
+
+test('defaults: discount/credit lines carry their Builder sign (negative)', () => {
+  const d = buildDocumentDefaults(
+    {
+      ...baseDeal,
+      quoteVersions: [
+        {
+          vatMode: 'included',
+          lines: [
+            { kind: 'product', label: 'סיור', quantity: 1, unitPriceMinor: 118000n, vatMode: 'inherit', vatRate: null },
+            { kind: 'discount', label: 'הנחה', quantity: 1, unitPriceMinor: 11800n, vatMode: 'inherit', vatRate: null },
+          ],
+        },
+      ],
+    },
+    { vatDefault: { mode: 'included', rate: 18 } },
+  );
+  assert.deepEqual(d.rows.map((r) => r.unitPriceIls), [1180, -118]);
+  assert.equal(totalsForRows(d.rows, 18, 'included').grossIls, 1062);
+});
+
+test('defaults: no vatDefault provided (legacy callers) still resolves included', () => {
+  const d = buildDocumentDefaults(baseDeal);
+  assert.equal(d.vatMode, 'included');
+});
+
+test('totals: excluded mode adds VAT at the unit level; exempt rows stay net', () => {
+  const t = totalsForRows(
+    [
+      { quantity: 1, unitPriceIls: 4900 },
+      { quantity: 1, unitPriceIls: 1900 },
+    ],
+    18,
+    'excluded',
+  );
+  assert.equal(t.beforeVatIls, 6800);
+  assert.equal(t.grossIls, 8024);
+  const exemptRow = totalsForRows([{ quantity: 1, unitPriceIls: 100, vatExempt: true }], 18, 'excluded');
+  assert.equal(exemptRow.grossIls, 100);
+  assert.equal(exemptRow.beforeVatIls, 100);
+});
+
+test('allocation: excluded mode uses the NET amounts directly for the threshold', () => {
+  // ₪5,000 net typed in excluded mode is exactly at the threshold.
+  const rows = [{ quantity: 1, unitPriceIls: 5000 }];
+  const req = allocationRequirement({ doctype: 'invoice', rows, vatId: '', vatMode: 'excluded' });
+  assert.equal(req.required, true);
+  // The same ₪5,000 read as gross (included) is only ₪4,237.29 net → no requirement.
+  assert.equal(allocationRequirement({ doctype: 'invoice', rows, vatId: '', vatMode: 'included' }), null);
+});
+
 test('totals: gross and before-VAT derived from inclusive rows', () => {
   const { grossIls, beforeVatIls } = totalsForRows(
     [{ quantity: 2, unitPriceIls: 2950 }],
@@ -170,9 +294,10 @@ test('base items: copied EXACTLY — every row kept, net price → inclusive per
     { item_id: '3', description: 'תרומה', long_description: '', unitprice: '100', quantity: '1', tax_rate: 18, tax_exempt: '1' },
   ]);
   assert.deepEqual(rows, [
-    { description: 'סיור גרפיטי', details: null, quantity: 2, unitPriceIls: 1180 },
-    { description: 'סדנה', details: 'כולל ציוד', quantity: 1, unitPriceIls: 590 },
-    { description: 'תרומה', details: null, quantity: 1, unitPriceIls: 100 }, // exempt stays net
+    { description: 'סיור גרפיטי', details: null, quantity: 2, unitPriceIls: 1180, vatExempt: false },
+    { description: 'סדנה', details: 'כולל ציוד', quantity: 1, unitPriceIls: 590, vatExempt: false },
+    // exempt stays net AND keeps its exemption for the follow-up document
+    { description: 'תרומה', details: null, quantity: 1, unitPriceIls: 100, vatExempt: true },
   ]);
 });
 
@@ -182,13 +307,13 @@ test('base items: document 54526 regression — high-precision net converts to t
     { description: 'סיור וסדנת גרפיטי', long_description: '', unitprice: '0.0084745762711864', quantity: '1', tax_rate: 18, tax_exempt: '0' },
   ]);
   assert.deepEqual(rows, [
-    { description: 'סיור וסדנת גרפיטי', details: null, quantity: 1, unitPriceIls: 0.01 },
+    { description: 'סיור וסדנת גרפיטי', details: null, quantity: 1, unitPriceIls: 0.01, vatExempt: false },
   ]);
 });
 
 test('base items: unitprice_incl preferred when present; no items → empty (never synthesized)', () => {
   assert.deepEqual(normalizeBaseDocItems([{ description: 'א', unitprice_incl: 118, unitprice: 100, quantity: 1 }]), [
-    { description: 'א', details: null, quantity: 1, unitPriceIls: 118 },
+    { description: 'א', details: null, quantity: 1, unitPriceIls: 118, vatExempt: false },
   ]);
   assert.deepEqual(normalizeBaseDocItems([]), []);
   assert.deepEqual(normalizeBaseDocItems(undefined), []);
