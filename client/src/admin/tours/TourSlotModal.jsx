@@ -201,7 +201,7 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
             >
               <option value="">— בחר מוצר —</option>
               {products.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>{p.nameHe}</option>
               ))}
             </select>
           </label>
@@ -215,7 +215,7 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
             >
               <option value="">— בחר וריאציה —</option>
               {variants.map((v) => (
-                <option key={v.id} value={v.id}>{v.label}</option>
+                <option key={v.id} value={v.id}>{v.location?.nameHe || '—'}</option>
               ))}
             </select>
           </label>
