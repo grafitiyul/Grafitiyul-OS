@@ -13,7 +13,7 @@ import './definitions/index.js';
 // never quietly lose an automation.
 
 const baseDef = (over = {}) => ({
-  id: 'AUT-001',
+  id: 'AUT-900',
   slug: 'test_automation',
   nameHe: 'אוטומציית בדיקה',
   descriptionHe: 'תיאור',
@@ -23,12 +23,13 @@ const baseDef = (over = {}) => ({
   when: null,
   actions: [{ kind: 'communication' }],
   dependsOn: [],
-  idempotency: (ev) => `AUT-001:${ev.id}`,
+  idempotency: (ev) => `AUT-900:${ev.id}`,
   ...over,
 });
 
-// A definition can only be REGISTERED if its id is in the ledger, so tests that
-// register must borrow a real allocation slot.
+// A definition can only be REGISTERED if its id is in the ledger, so tests
+// lend themselves a SYNTHETIC slot (AUT-900) and take it back afterwards.
+// Never a real id: a real id can be retired, and these tests mutate RETIRED.
 function withAllocatedId(id, fn) {
   const had = ALLOCATED.includes(id);
   if (!had) ALLOCATED.push(id);
@@ -61,7 +62,7 @@ test('nextAvailableId follows the highest allocation', () => {
 // ── definition validation ────────────────────────────────────────────────────
 
 test('a well-formed definition validates', () => {
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     assert.deepEqual(validateDefinition(baseDef()), []);
   });
 });
@@ -79,12 +80,12 @@ test('a malformed id is rejected', () => {
 test('a retired id can never be revived', () => {
   // Reviving a tombstone would make "AUT-014" mean two different things across
   // time — the single thing an AUT id must never do.
-  withAllocatedId('AUT-001', () => {
-    RETIRED['AUT-001'] = { retiredOn: '2026-09-01', reasonHe: 'הוחלפה' };
+  withAllocatedId('AUT-900', () => {
+    RETIRED['AUT-900'] = { retiredOn: '2026-09-01', reasonHe: 'הוחלפה' };
     try {
       assert.ok(validateDefinition(baseDef()).some((p) => p.startsWith('id_is_retired')));
     } finally {
-      delete RETIRED['AUT-001'];
+      delete RETIRED['AUT-900'];
     }
   });
 });
@@ -97,7 +98,7 @@ test('answer conditions must reference stable question keys, never labels', () =
   }));
   assert.ok(byLabel.some((p) => p.startsWith('condition_must_reference_question_key')));
 
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     assert.deepEqual(
       validateDefinition(baseDef({ when: { q: 'q_9f3a12bd', op: 'eq', value: 'o_7c21ab90' } })),
       [],
@@ -114,7 +115,7 @@ test('answer conditions must reference option keys, never answer text', () => {
 
 test('non-option condition values are left alone', () => {
   // Numeric and free-text comparisons are legitimately not option keys.
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     assert.deepEqual(validateDefinition(baseDef({ when: { q: 'q_9f3a12bd', op: 'gt', value: 20 } })), []);
     assert.deepEqual(validateDefinition(baseDef({ when: { q: 'q_9f3a12bd', op: 'answered' } })), []);
   });
@@ -145,16 +146,16 @@ test('registering an invalid definition throws at boot, not at trigger time', ()
 });
 
 test('a definition cannot be registered twice', () => {
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     registerAutomation(baseDef());
     assert.throws(() => registerAutomation(baseDef()), /already registered/);
   });
 });
 
 test('registered definitions are readable and trigger-matchable', () => {
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     registerAutomation(baseDef());
-    assert.equal(automationById('AUT-001').nameHe, 'אוטומציית בדיקה');
+    assert.equal(automationById('AUT-900').nameHe, 'אוטומציית בדיקה');
     assert.equal(listAutomations().length, 1);
 
     const matched = automationsForTrigger({
@@ -172,7 +173,7 @@ test('registered definitions are readable and trigger-matchable', () => {
 });
 
 test('a purpose-scoped trigger only matches that purpose', () => {
-  withAllocatedId('AUT-001', () => {
+  withAllocatedId('AUT-900', () => {
     registerAutomation(baseDef({
       trigger: { kind: 'questionnaire_submitted', templateKey: 'tour_coordination', purpose: 'coordination' },
     }));
@@ -195,7 +196,7 @@ test('the definition hash ignores prose but catches behaviour', () => {
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ when: { q: 'q_9f3a12bd', op: 'answered' } })));
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ actions: [{ kind: 'review_item', reviewKind: 'x' }] })));
   assert.notEqual(definitionHash(a), definitionHash(baseDef({ defaultEnabled: false })));
-  assert.notEqual(definitionHash(a), definitionHash(baseDef({ idempotency: (ev) => `AUT-001:${ev.other}` })));
+  assert.notEqual(definitionHash(a), definitionHash(baseDef({ idempotency: (ev) => `AUT-900:${ev.other}` })));
 });
 
 test('the definition hash is stable across key order and reformatting', () => {
@@ -203,6 +204,6 @@ test('the definition hash is stable across key order and reformatting', () => {
   const b = baseDef({ dependsOn: [{ severity: 'soft', triggerType: 'deal_won', kind: 'communication_trigger' }] });
   assert.equal(definitionHash(a), definitionHash(b));
 
-  const spaced = baseDef({ idempotency: (ev) => `AUT-001:${ev.id}` });
+  const spaced = baseDef({ idempotency: (ev) => `AUT-900:${ev.id}` });
   assert.equal(definitionHash(baseDef()), definitionHash(spaced));
 });

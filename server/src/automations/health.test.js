@@ -8,7 +8,7 @@ import { ALLOCATED, RETIRED } from './ledger.js';
 // with the specific reason, and nothing is ever masked.
 
 const def = (over = {}) => ({
-  id: 'AUT-001',
+  id: 'AUT-900',
   slug: 'a',
   nameHe: 'אוטומציה א',
   descriptionHe: 'x',
@@ -80,7 +80,7 @@ test('the operator override beats the definition default, in both directions', (
 
 test('a healthy automation that has never run says so honestly', async () => {
   await withDef(def(), async () => {
-    const h = await resolveHealth('AUT-001', { db: stubDb() });
+    const h = await resolveHealth('AUT-900', { db: stubDb() });
     assert.equal(h.status, STATUS.active);
     assert.match(h.reasonHe, /טרם רצה/);
     assert.equal(needsAttention(h), false);
@@ -91,7 +91,7 @@ test('a hard dependency failure reports BROKEN with the specific reason', async 
   await withDef(
     def({ dependsOn: [{ kind: 'questionnaire_question', templateKey: 'tour_coordination', questionKey: 'q_9f3a12bd' }] }),
     async () => {
-      const h = await resolveHealth('AUT-001', {
+      const h = await resolveHealth('AUT-900', {
         db: stubDb({ templates: { tour_coordination: LIVE_TEMPLATE }, questions: [] }),
       });
       assert.equal(h.status, STATUS.broken);
@@ -103,7 +103,7 @@ test('a hard dependency failure reports BROKEN with the specific reason', async 
 
 test('a soft dependency failure reports WAITING, not broken', async () => {
   await withDef(def({ dependsOn: [{ kind: 'communication_trigger', triggerType: 'deal_won' }] }), async () => {
-    const h = await resolveHealth('AUT-001', { db: stubDb() });
+    const h = await resolveHealth('AUT-900', { db: stubDb() });
     assert.equal(h.status, STATUS.waiting_dependency);
     assert.match(h.reasonHe, /לא הוגדר/);
   });
@@ -111,12 +111,12 @@ test('a soft dependency failure reports WAITING, not broken', async () => {
 
 test('recent failures report ERROR with the count and the last message', async () => {
   await withDef(def(), async () => {
-    const h = await resolveHealth('AUT-001', {
+    const h = await resolveHealth('AUT-900', {
       db: stubDb({
         runs: [
-          { autId: 'AUT-001', status: 'failed', startedAt: daysAgo(1), reasonHe: 'שליחה נכשלה' },
-          { autId: 'AUT-001', status: 'failed', startedAt: daysAgo(2), reasonHe: 'שליחה נכשלה' },
-          { autId: 'AUT-001', status: 'ran', startedAt: daysAgo(3) },
+          { autId: 'AUT-900', status: 'failed', startedAt: daysAgo(1), reasonHe: 'שליחה נכשלה' },
+          { autId: 'AUT-900', status: 'failed', startedAt: daysAgo(2), reasonHe: 'שליחה נכשלה' },
+          { autId: 'AUT-900', status: 'ran', startedAt: daysAgo(3) },
         ],
       }),
     });
@@ -128,8 +128,8 @@ test('recent failures report ERROR with the count and the last message', async (
 
 test('failures OUTSIDE the window do not make a healthy automation look broken', async () => {
   await withDef(def(), async () => {
-    const h = await resolveHealth('AUT-001', {
-      db: stubDb({ runs: [{ autId: 'AUT-001', status: 'failed', startedAt: daysAgo(30) }] }),
+    const h = await resolveHealth('AUT-900', {
+      db: stubDb({ runs: [{ autId: 'AUT-900', status: 'failed', startedAt: daysAgo(30) }] }),
     });
     assert.equal(h.status, STATUS.active);
     assert.equal(h.stats.totalRuns, 1);
@@ -141,9 +141,9 @@ test('DISABLED outranks broken — but the breakage is still reported, never hid
   await withDef(
     def({ dependsOn: [{ kind: 'questionnaire_question', templateKey: 'tour_coordination', questionKey: 'q_9f3a12bd' }] }),
     async () => {
-      const h = await resolveHealth('AUT-001', {
+      const h = await resolveHealth('AUT-900', {
         db: stubDb({
-          state: { autId: 'AUT-001', enabled: false, updatedByName: 'דור' },
+          state: { autId: 'AUT-900', enabled: false, updatedByName: 'דור' },
           templates: { tour_coordination: LIVE_TEMPLATE },
           questions: [],
         }),
@@ -165,11 +165,11 @@ test('BROKEN outranks waiting and error when several problems coexist', async ()
       ],
     }),
     async () => {
-      const h = await resolveHealth('AUT-001', {
+      const h = await resolveHealth('AUT-900', {
         db: stubDb({
           templates: { tour_coordination: LIVE_TEMPLATE },
           questions: [],
-          runs: [{ autId: 'AUT-001', status: 'failed', startedAt: daysAgo(1) }],
+          runs: [{ autId: 'AUT-900', status: 'failed', startedAt: daysAgo(1) }],
         }),
       });
       assert.equal(h.status, STATUS.broken);
@@ -180,19 +180,19 @@ test('BROKEN outranks waiting and error when several problems coexist', async ()
 
 test('a retired automation stays visible with its history and its reason', async () => {
   // "If an automation is removed, the registry must reflect it."
-  const borrowed = !ALLOCATED.includes('AUT-001');
-  if (borrowed) ALLOCATED.push('AUT-001');
-  RETIRED['AUT-001'] = { retiredOn: '2026-09-01', reasonHe: 'הוחלפה על ידי AUT-019' };
+  const borrowed = !ALLOCATED.includes('AUT-900');
+  if (borrowed) ALLOCATED.push('AUT-900');
+  RETIRED['AUT-900'] = { retiredOn: '2026-09-01', reasonHe: 'הוחלפה על ידי AUT-019' };
   try {
-    const h = await resolveHealth('AUT-001', {
-      db: stubDb({ runs: [{ autId: 'AUT-001', status: 'ran', startedAt: daysAgo(40) }] }),
+    const h = await resolveHealth('AUT-900', {
+      db: stubDb({ runs: [{ autId: 'AUT-900', status: 'ran', startedAt: daysAgo(40) }] }),
     });
     assert.equal(h.status, STATUS.retired);
     assert.match(h.reasonHe, /AUT-019/);
     assert.equal(h.stats.totalRuns, 1);
   } finally {
-    delete RETIRED['AUT-001'];
-    if (borrowed) ALLOCATED.splice(ALLOCATED.indexOf('AUT-001'), 1);
+    delete RETIRED['AUT-900'];
+    if (borrowed) ALLOCATED.splice(ALLOCATED.indexOf('AUT-900'), 1);
   }
 });
 
@@ -202,12 +202,12 @@ test('stats expose last run, last success and last failure separately', async ()
   const failedAt = daysAgo(1);
   const succeededAt = daysAgo(5);
   await withDef(def(), async () => {
-    const h = await resolveHealth('AUT-001', {
+    const h = await resolveHealth('AUT-900', {
       db: stubDb({
         runs: [
-          { autId: 'AUT-001', status: 'failed', startedAt: failedAt, reasonHe: 'x' },
-          { autId: 'AUT-001', status: 'ran', startedAt: succeededAt },
-          { autId: 'AUT-001', status: 'skipped', startedAt: daysAgo(6) },
+          { autId: 'AUT-900', status: 'failed', startedAt: failedAt, reasonHe: 'x' },
+          { autId: 'AUT-900', status: 'ran', startedAt: succeededAt },
+          { autId: 'AUT-900', status: 'skipped', startedAt: daysAgo(6) },
         ],
       }),
     });

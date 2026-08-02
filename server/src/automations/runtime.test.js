@@ -11,7 +11,7 @@ import { resolveSubjectRefs, answersOf } from './sources/questionnaire.js';
 //   * conditions read stable keys against frozen answers.
 
 const def = (over = {}) => ({
-  id: 'AUT-001',
+  id: 'AUT-900',
   slug: 'a',
   nameHe: 'אוטומציה א',
   descriptionHe: 'x',
@@ -21,7 +21,7 @@ const def = (over = {}) => ({
   when: null,
   actions: [{ kind: 'test_action' }],
   dependsOn: [],
-  idempotency: (e) => `AUT-001:${e.submissionId}`,
+  idempotency: (e) => `AUT-900:${e.submissionId}`,
   ...over,
 });
 
@@ -133,7 +133,7 @@ test('firstSubmitOnly:false lets an automation react to edits too', async () => 
 
 test('a disabled automation leaves NO trace', async () => {
   reset();
-  const db = stubDb({ state: { autId: 'AUT-001', enabled: false } });
+  const db = stubDb({ state: { autId: 'AUT-900', enabled: false } });
   const r = await runAutomation(def(), { submission, answers: {}, refs: { submissionId: 'sub1' } }, { db, log: silent });
   assert.equal(r.recorded, false);
   assert.equal(db.runs.size, 0, 'a switched-off automation must not fill the log with skips');

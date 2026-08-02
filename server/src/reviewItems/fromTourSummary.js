@@ -15,10 +15,12 @@
 
 import { prisma } from '../db.js';
 import { createReviewItem } from './service.js';
-import { TOUR_SUMMARY_KIND, buildSummaryDetails, summaryHeadline } from './kinds/tourSummary.js';
+import { TOUR_SUMMARY_KIND, buildSummaryDetails, summaryHeadline, paymentWasLeft } from './kinds/tourSummary.js';
 import { LOGISTICS_KIND, buildLogisticsFindings, logisticsHeadline } from './kinds/logisticsReport.js';
 import { staffName } from '../../../shared/staffName.mjs';
 import { fireAdminReport } from '../adminReports/dispatch.js';
+import { dealCollection } from '../collection.js';
+import { formatMoney } from '../communication/format.js';
 
 /** The published structure's questions + the option keys marked affirmative. */
 async function loadStructure(versionId, db) {
@@ -167,6 +169,42 @@ export async function reviewItemsForTourSummary(
         },
       },
     }).catch(() => {});
+  }
+
+  // ── Manager report #19 — a payment was left after the tour ──
+  // Same submit event, separate business signal from #17. Bound to the
+  // canonical ROLE, so the question's wording is free to change. Fired only on
+  // FIRST creation of the card, which is itself once per submission — so an
+  // edit, a re-read or a replay can never notify twice.
+  if (summary?.created) {
+    const payment = paymentWasLeft({ questions, answers });
+    if (payment.flagged) {
+      // The outstanding balance comes from the canonical collection resolver —
+      // never the deal total, which ignores manual payments and refunds.
+      let balanceText = null;
+      let dealOrderNo = null;
+      if (ctx.dealId) {
+        const deal = await db.deal.findUnique({
+          where: { id: ctx.dealId },
+          select: { id: true, orderNo: true, valueMinor: true, currency: true, collectionReview: true },
+        });
+        if (deal) {
+          dealOrderNo = deal.orderNo ?? null;
+          const c = await dealCollection(db, deal).catch(() => null);
+          if (c) balanceText = formatMoney(c.balanceMinor, deal.currency || 'ILS');
+        }
+      }
+      fireAdminReport({
+        number: 19,
+        // Immutable submission identity — one notification per summary, ever.
+        idempotencyKey: `payment_left_after_tour:${submission.id}`,
+        dealId: ctx.dealId || null,
+        tourEventId: ctx.tourEventId || null,
+        data: {
+          paymentLeft: { ...ctx, balanceText, dealOrderNo, reviewItemId: summary.item.id },
+        },
+      }).catch(() => {});
+    }
   }
 
   return { summary, logistics, findingCount: findings.length };

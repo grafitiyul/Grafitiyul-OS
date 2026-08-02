@@ -6,12 +6,14 @@
 // react to events, never to each other). Read order in the registry comes from
 // the ledger, so it follows allocation, not import order.
 //
-// Both automations here are NEW behaviour on the tour summary. No existing GOS
+// AUT-001 was retired: the same business event is now Manager Report #19, so
+// there is exactly one implementation and one sender. See ledger.js RETIRED.
+//
+// The automations here are NEW behaviour on the tour summary. No existing GOS
 // behaviour was migrated into this engine — coordination reports, tour
 // completion, payroll hooks and the background workers all still belong to
 // their own modules.
 
-import './AUT-001.payment-received.js';
 import './AUT-002.tour-summary-review.js';
 import './AUT-003.logistics-alert.js';
 import './AUT-004.new-lead-manager-alert.js';

@@ -26,7 +26,7 @@ test('index.js validates the registry at boot', () => {
 });
 
 const def = (over = {}) => ({
-  id: 'AUT-001',
+  id: 'AUT-900',
   slug: 'boot_test',
   nameHe: 'בדיקה',
   descriptionHe: 'x',

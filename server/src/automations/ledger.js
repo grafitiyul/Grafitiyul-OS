@@ -35,7 +35,13 @@ export const ALLOCATED = [
 
 /** Ids whose definition has been removed. They remain visible as "הוסרה". */
 export const RETIRED = {
-  // 'AUT-002': { retiredOn: '2026-09-01', reasonHe: 'הוחלפה על ידי AUT-019' },
+  'AUT-001': {
+    retiredOn: '2026-08-01',
+    reasonHe:
+      'הוחלפה בדיווח מנהלים #19 ("הושאר תשלום אחרי הסיור"). זהו אירוע פנימי לצוות '
+      + 'ולא תקשורת עם לקוח, ולכן הוא שייך לדיווחי המנהלים המוגדרים בקוד ולא למרכז '
+      + 'התקשורת. אותו אירוע עסקי — מימוש אחד, שולח אחד.',
+  },
 };
 
 export const AUT_ID_PATTERN = /^AUT-\d{3,}$/;

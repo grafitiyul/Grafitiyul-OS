@@ -32,6 +32,27 @@ export const SUMMARY_ROLES = [
   { role: 'suggestions', labelHe: 'הצעות לשימור / שיפור' },
 ];
 
+// The payment question is NOT a narrative slot — it drives a separate manager
+// notification (report #19), so it gets its own role rather than appearing in
+// the review card's narrative list.
+export const PAYMENT_LEFT_ROLE = 'payment_left';
+
+/**
+ * Did the guide report that a payment was left after the tour?
+ *
+ * Bound to the canonical ROLE, never to the question's wording or key. The
+ * question type is yesno, whose stored value is a BOOLEAN — a blank or 'no'
+ * answer is not affirmative, and neither is a missing mapping.
+ */
+export function paymentWasLeft({ questions = [], answers = {} }) {
+  const q = questions.find((x) => x?.config?.summaryRole === PAYMENT_LEFT_ROLE);
+  if (!q) return { flagged: false, questionKey: null };
+  const v = answers[q.key];
+  const flagged = v === true || v === 1
+    || (typeof v === 'string' && ['true', 'yes', 'כן'].includes(v.trim().toLowerCase()));
+  return { flagged, questionKey: q.key, value: v ?? null };
+}
+
 registerReviewKind(TOUR_SUMMARY_KIND, {
   labelHe: 'סיכום סיור',
   tone: 'default',

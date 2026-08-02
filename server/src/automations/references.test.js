@@ -9,7 +9,7 @@ import { ALLOCATED } from './ledger.js';
 // source here would let a "healthy" automation depend on an unprotected key.
 
 const def = (over = {}) => ({
-  id: 'AUT-001',
+  id: 'AUT-900',
   slug: 'a',
   nameHe: 'אוטומציה א',
   descriptionHe: 'x',
@@ -70,19 +70,19 @@ test('references are scoped to the automation\'s own template', () => {
   // different question and must never be treated as a dependency.
   withRegistry(
     [
-      def({ id: 'AUT-001', slug: 'a', when: { q: 'q_aaaaaaaa', op: 'answered' } }),
+      def({ id: 'AUT-900', slug: 'a', when: { q: 'q_aaaaaaaa', op: 'answered' } }),
       def({
-        id: 'AUT-002', slug: 'b', nameHe: 'אוטומציה ב',
+        id: 'AUT-901', slug: 'b', nameHe: 'אוטומציה ב',
         trigger: { kind: 'questionnaire_submitted', templateKey: 'other_form' },
         when: { q: 'q_aaaaaaaa', op: 'answered' },
       }),
     ],
     () => {
       const refs = referencesForTemplate('tour_coordination');
-      assert.deepEqual(refs.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-001']);
+      assert.deepEqual(refs.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-900']);
 
       const other = referencesForTemplate('other_form');
-      assert.deepEqual(other.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-002']);
+      assert.deepEqual(other.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-901']);
     },
   );
 });
@@ -90,12 +90,12 @@ test('references are scoped to the automation\'s own template', () => {
 test('several automations on one key are all reported', () => {
   withRegistry(
     [
-      def({ id: 'AUT-001', slug: 'a', when: { q: 'q_aaaaaaaa', op: 'answered' } }),
-      def({ id: 'AUT-002', slug: 'b', nameHe: 'אוטומציה ב', when: { q: 'q_aaaaaaaa', op: 'empty' } }),
+      def({ id: 'AUT-900', slug: 'a', when: { q: 'q_aaaaaaaa', op: 'answered' } }),
+      def({ id: 'AUT-901', slug: 'b', nameHe: 'אוטומציה ב', when: { q: 'q_aaaaaaaa', op: 'empty' } }),
     ],
     () => {
       const refs = referencesForTemplate('tour_coordination');
-      assert.deepEqual(refs.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-001', 'AUT-002']);
+      assert.deepEqual(refs.questions.get('q_aaaaaaaa').map((a) => a.autId), ['AUT-900', 'AUT-901']);
     },
   );
 });
@@ -105,8 +105,8 @@ test('the builder payload nests option references under their question', () => {
     [def({ when: { q: 'q_aaaaaaaa', op: 'eq', value: 'o_11111111' } })],
     () => {
       const payload = referencePayloadForTemplate('tour_coordination');
-      assert.deepEqual(payload.q_aaaaaaaa.automations.map((a) => a.autId), ['AUT-001']);
-      assert.deepEqual(payload.q_aaaaaaaa.options.o_11111111.map((a) => a.autId), ['AUT-001']);
+      assert.deepEqual(payload.q_aaaaaaaa.automations.map((a) => a.autId), ['AUT-900']);
+      assert.deepEqual(payload.q_aaaaaaaa.options.o_11111111.map((a) => a.autId), ['AUT-900']);
     },
   );
 });

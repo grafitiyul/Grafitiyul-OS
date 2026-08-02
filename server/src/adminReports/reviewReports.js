@@ -138,3 +138,86 @@ export const REVIEW_REPORTS = [
     }),
   },
 ];
+
+// ── #19 payment left after the tour ──────────────────────────────────────────
+// Replaces AUT-001 (Communication Center). Same business event, one
+// implementation: code-defined, on the shared queue, windows, retries and
+// idempotency — no second sender.
+//
+// Bound to the canonical ROLE (summaryRole 'payment_left'), never to the
+// question's wording or key, so rewording the question changes nothing.
+//
+// Destination is the fixed internal manager group, so the language follows the
+// REPORT's configured policy — never the customer's, and the guide-language
+// checkbox does not apply here.
+
+const dealLinkOf = (ctx) =>
+  (ctx.paymentLeft?.dealOrderNo != null && ctx.links?.origin
+    ? `${ctx.links.origin}/admin/crm/deals/${ctx.paymentLeft.dealOrderNo}`
+    : '—');
+
+REVIEW_REPORTS.push({
+  number: 19,
+  key: 'payment_left_after_tour',
+  nameHe: 'הושאר תשלום אחרי הסיור',
+  nameEn: 'Payment left after the tour',
+  triggerHe:
+    'נורה כשמדריך מדווח בסיכום סיור שהושאר תשלום. פעם אחת לכל הגשה — '
+    + 'עריכה, קריאה חוזרת או שידור חוזר של אותה הגשה לא ישלחו שוב. '
+    + 'תשובה "לא" או ריקה אינה מפעילה דיווח.',
+  dataHe:
+    'היתרה לתשלום מגיעה ממודול הגבייה (collection.js), מקור האמת היחיד לחישוב — '
+    + 'לא מסכום הדיל. שאר הפרטים מוקפאים מהסיכום ומהסיור ברגע ההגשה.',
+
+  render: (ctx) => {
+    const r = ctx.paymentLeft || {};
+    const party = [r.customerName, r.orgName].filter(Boolean).join(' - ') || '—';
+    const product = [r.productName, r.variantName].filter(Boolean).join(' · ') || '—';
+    return lines([
+      '💰 הושאר תשלום אחרי הסיור 💰',
+      '',
+      `מדריך: ${r.guideName || '—'}`,
+      `לקוח: ${party}`,
+      `מוצר: ${product}`,
+      `מועד הסיור: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
+      `יתרה לתשלום: ${r.balanceText || '—'}`,
+      '',
+      `לינק לדיל: ${dealLinkOf(ctx)}`,
+      `לסיכום הסיור: ${reviewLink(ctx, r.reviewItemId)}`,
+    ]);
+  },
+
+  renderEn: (ctx) => {
+    const r = ctx.paymentLeft || {};
+    const party = [r.customerName, r.orgName].filter(Boolean).join(' - ') || '—';
+    const product = [r.productName, r.variantName].filter(Boolean).join(' · ') || '—';
+    return lines([
+      '💰 Payment left after the tour 💰',
+      '',
+      `Guide: ${r.guideName || '—'}`,
+      `Customer: ${party}`,
+      `Product: ${product}`,
+      `Tour: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
+      `Outstanding balance: ${r.balanceText || '—'}`,
+      '',
+      `Deal: ${dealLinkOf(ctx)}`,
+      `Tour summary: ${reviewLink(ctx, r.reviewItemId)}`,
+    ]);
+  },
+
+  sample: () => ({
+    links: { origin: 'https://app.grafitiyul.co.il' },
+    paymentLeft: {
+      guideName: 'יואב כהן',
+      customerName: 'דנה לוי',
+      orgName: 'עיריית תל אביב',
+      productName: 'סיור וסדנת גרפיטי',
+      variantName: 'פלורנטין',
+      tourDate: '2026-09-16',
+      tourTime: '10:00',
+      balanceText: '₪1,250.00',
+      dealOrderNo: 27184,
+      reviewItemId: 'ri_sample',
+    },
+  }),
+});
