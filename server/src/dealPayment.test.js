@@ -5,6 +5,8 @@ import {
   pickPaymentContact,
   buildPaymentSnapshot,
   linkMatchesSnapshot,
+  buildSaleItems,
+  salePaypageId,
 } from './dealPayment.js';
 import { GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 
@@ -59,6 +61,7 @@ test('buildPaymentSnapshot: full deal → all prefill fields', () => {
   assert.deepEqual(s, {
     amountMinor: 540000n,
     currency: 'ILS',
+    vatExempt: false,
     productName: 'סיור גרפיטי',
     firstName: 'רחל',
     lastName: 'כהן',
@@ -132,6 +135,7 @@ test('linkMatchesSnapshot: each relevant drift forces a new link', () => {
     ['customerPhone', '0529999999'],
     ['customerEmail', 'other@example.com'],
     ['currency', 'USD'],
+    ['vatExempt', true],
   ]) {
     assert.equal(linkMatchesSnapshot({ ...matchingLink(), [field]: value }, snap), false, `${field} drift`);
   }
@@ -140,4 +144,78 @@ test('linkMatchesSnapshot: each relevant drift forces a new link', () => {
 test('linkMatchesSnapshot: BigInt/number amount representations compare equal', () => {
   // Prisma returns BigInt; serialized copies may carry numbers — same value must match.
   assert.equal(linkMatchesSnapshot({ ...matchingLink(), amountMinor: 540000 }, buildPaymentSnapshot(baseDeal())), true);
+});
+
+// ── VAT truth on the payment link (production bug: deal #26617) ──────────────
+// Working Builder: QuoteVersion.vatMode='exempt', one product line ₪1,000.00
+// with vatMode='inherit'. Before the fix the link was generated with no VAT
+// semantics at all — the iCount page presented ₪847.46 + ₪152.54 מע"מ.
+const exemptDeal26617 = () => ({
+  ...baseDeal(),
+  valueMinor: 100000n,
+  quoteVersions: [
+    { id: 'cmsdf63ju000tagpqt2hfanc6', vatMode: 'exempt', lines: [{ vatMode: 'inherit' }] },
+  ],
+});
+
+test('buildPaymentSnapshot: exempt Builder (inherit lines) → vatExempt snapshot, exempt total kept verbatim', () => {
+  const s = buildPaymentSnapshot(exemptDeal26617());
+  assert.equal(s.vatExempt, true);
+  assert.equal(s.amountMinor, 100000n, 'the exempt total — no VAT added or implied');
+});
+
+test('linkMatchesSnapshot: pre-fix link (vatExempt undefined/false) drifts against an exempt snapshot → regenerates', () => {
+  const preFixLink = { ...matchingLink(), amountMinor: 100000n };
+  assert.equal(linkMatchesSnapshot(preFixLink, buildPaymentSnapshot(exemptDeal26617())), false);
+});
+
+// ── buildSaleItems: preview === payload by construction ──────────────────────
+test('buildSaleItems: exempt → exact amount + tax_exempt (what iCount receives)', () => {
+  const s = buildPaymentSnapshot(exemptDeal26617());
+  assert.deepEqual(buildSaleItems(s, s.productName), [
+    { quantity: 1, description: 'סיור גרפיטי', unitprice_incl: 1000, tax_exempt: 1 },
+  ]);
+});
+
+test('buildSaleItems: included/excluded → gross passes through ONCE, no tax flag, no re-add', () => {
+  // Deal.valueMinor is the Builder gross — VAT was already applied exactly once
+  // by splitVat. The payload must carry that number verbatim as unitprice_incl.
+  for (const mode of ['included', 'excluded']) {
+    const d = { ...baseDeal(), quoteVersions: [{ id: 'v', vatMode: mode, lines: [{ vatMode: 'inherit' }] }] };
+    const s = buildPaymentSnapshot(d);
+    assert.equal(s.vatExempt, false, `${mode} is not exempt`);
+    const items = buildSaleItems(s, s.productName);
+    assert.equal(items[0].unitprice_incl, 5400, `${mode}: payload amount === snapshot amount (₪5,400.00)`);
+    assert.equal('tax_exempt' in items[0], false, `${mode}: no exempt flag`);
+  }
+});
+
+test('buildSaleItems: payment-page amount equals payment payload amount (same snapshot feeds both)', () => {
+  const s = buildPaymentSnapshot(exemptDeal26617());
+  const items = buildSaleItems(s, s.productName);
+  // The stored link row (page) and the generate_sale item (payload) both come
+  // from `s.amountMinor` — a drift between them is impossible by construction.
+  assert.equal(BigInt(Math.round(items[0].unitprice_incl * 100)), s.amountMinor);
+});
+
+// ── salePaypageId: exempt sales must go to the exempt paypage ────────────────
+test('salePaypageId: routes by VAT truth and fails loudly when the exempt page is unconfigured', () => {
+  const prevDefault = process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+  const prevExempt = process.env.ICOUNT_EXEMPT_PAYPAGE_ID;
+  try {
+    process.env.ICOUNT_DEFAULT_PAYPAGE_ID = '3';
+    process.env.ICOUNT_EXEMPT_PAYPAGE_ID = '9';
+    assert.equal(salePaypageId(false), '3');
+    assert.equal(salePaypageId(true), '9');
+    delete process.env.ICOUNT_EXEMPT_PAYPAGE_ID;
+    assert.throws(() => salePaypageId(true), (e) => e.code === 'icount_exempt_paypage_not_configured');
+    // an exempt misconfiguration must never fall back to the VAT page
+    delete process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+    assert.throws(() => salePaypageId(false), (e) => e.code === 'icount_paypage_not_configured');
+  } finally {
+    if (prevDefault === undefined) delete process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+    else process.env.ICOUNT_DEFAULT_PAYPAGE_ID = prevDefault;
+    if (prevExempt === undefined) delete process.env.ICOUNT_EXEMPT_PAYPAGE_ID;
+    else process.env.ICOUNT_EXEMPT_PAYPAGE_ID = prevExempt;
+  }
 });

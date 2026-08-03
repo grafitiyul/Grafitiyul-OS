@@ -1436,7 +1436,9 @@ model DealPaymentLink {
   status              String   @default("created") // 'created' | 'superseded'
   paymentLinkUrl      String
   paypageId           String? // iCount paypage template the sale was generated from
-  amountMinor         BigInt // agorot, VAT-inclusive gross (Deal.valueMinor at generation time)
+  amountMinor         BigInt // agorot, the payable total (Deal.valueMinor at generation time):
+  // VAT-inclusive gross for included/excluded builders, the exempt total when vatExempt
+  vatExempt           Boolean  @default(false) // working Builder resolved VAT-exempt at generation (pricing/dealVat.js)
   currency            String   @default("ILS")
   productName         String
   customerName        String?

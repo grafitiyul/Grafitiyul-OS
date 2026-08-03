@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { generateSale, isIcountConfigured } from './icount.js';
 import { GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
+import { dealVatExempt } from './pricing/dealVat.js';
 
 // Deal payment-link domain logic, shared by the admin API (routes/deals.js)
 // and the public /pay/:token redirect (routes/pay.js).
@@ -61,6 +62,10 @@ export function buildPaymentSnapshot(deal) {
   return {
     amountMinor: deal.valueMinor ?? 0n,
     currency: deal.currency || 'ILS',
+    // VAT truth from the working Builder (pricing/dealVat.js). An exempt deal's
+    // valueMinor is the exempt total — the sale must say so, or iCount presents
+    // the amount as VAT-inclusive and the auto-issued receipt invents VAT.
+    vatExempt: dealVatExempt(deal),
     // Customer-visible item description on the iCount payment page/invoice.
     // NEVER Deal.title (internal CRM wording — privacy rule,
     // displayFallbacks.js); a product-less deal gets the generic line.
@@ -78,6 +83,7 @@ export function linkMatchesSnapshot(link, snap) {
   if (!link) return false;
   return (
     BigInt(link.amountMinor) === BigInt(snap.amountMinor) &&
+    !!link.vatExempt === !!snap.vatExempt &&
     link.currency === snap.currency &&
     link.productName === snap.productName &&
     (link.customerName || null) === (snap.customerName || null) &&
@@ -90,6 +96,13 @@ export function linkMatchesSnapshot(link, snap) {
 export const PAYMENT_DEAL_INCLUDE = {
   product: { select: { nameHe: true } },
   organization: { select: { name: true } },
+  // VAT truth: the working Builder's order-level mode + active line overrides
+  // (consumed by pricing/dealVat.js).
+  quoteVersions: {
+    where: { isWorking: true },
+    take: 1,
+    select: { id: true, vatMode: true, lines: { where: { active: true }, select: { vatMode: true } } },
+  },
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     include: {
@@ -112,6 +125,42 @@ function codedError(code, message) {
   const err = new Error(message || code);
   err.code = code;
   return err;
+}
+
+// ── VAT-aware sale construction (shared by regular + custom links) ───────────
+// iCount's VAT presentation is decided by the PAYPAGE, not by the sale: the
+// regular page (add_vat on) always presents amounts as VAT-inclusive and its
+// post-payment receipt extracts VAT out of them. An exempt sale therefore MUST
+// go to the dedicated exempt paypage (add_vat off) — and its items must carry
+// tax_exempt so iCount stores the amount verbatim (net = gross) and the
+// auto-issued receipt stays tax-exempt. Verified live 2026-08-03: per-sale
+// overrides (tax_exempt/add_vat/vat_rate on generate_sale) do NOT change the
+// regular page's presentation — only the paypage split does.
+//
+// Missing exempt paypage = loud failure. Silently sending an exempt deal to
+// the VAT page would misrepresent the sale AND bake VAT into the receipt.
+export function salePaypageId(vatExempt) {
+  const id = vatExempt ? process.env.ICOUNT_EXEMPT_PAYPAGE_ID : process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+  if (!id) throw codedError(vatExempt ? 'icount_exempt_paypage_not_configured' : 'icount_paypage_not_configured');
+  return id;
+}
+
+// The ONE generate_sale items shape. `amountMinor` is the exact payable total
+// (Deal.valueMinor / the custom link's frozen amount) — the page shows this
+// number and the payment charges it, so preview and payload are equal BY
+// CONSTRUCTION. VAT was already resolved by the Builder: included/excluded
+// grosses pass as unitprice_incl (iCount extracts, never re-adds); exempt
+// totals pass verbatim with tax_exempt.
+export function buildSaleItems({ amountMinor, vatExempt }, description) {
+  return [
+    {
+      quantity: 1,
+      description,
+      // iCount expects major units, VAT-INCLUSIVE (unitprice_incl).
+      unitprice_incl: Number(amountMinor) / 100,
+      ...(vatExempt ? { tax_exempt: 1 } : {}),
+    },
+  ];
 }
 
 // Ensure the deal has its permanent token; returns it. Lazy: created on first
@@ -137,8 +186,7 @@ export async function ensureCurrentIcountLink(prisma, deal, { createdBy } = {}) 
   if (linkMatchesSnapshot(active, snap)) return active;
 
   if (!isIcountConfigured()) throw codedError('icount_not_configured');
-  const paypageId = process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
-  if (!paypageId) throw codedError('icount_paypage_not_configured');
+  const paypageId = salePaypageId(snap.vatExempt);
 
   // IPN: only attached when the webhook receiver is configured. The receiver
   // logs raw payloads only (no state changes) — see routes/icountWebhook.js.
@@ -151,14 +199,7 @@ export async function ensureCurrentIcountLink(prisma, deal, { createdBy } = {}) 
 
   const { saleUrl, raw } = await generateSale({
     paypageId,
-    items: [
-      {
-        quantity: 1,
-        description: snap.productName,
-        // iCount expects major units, VAT-INCLUSIVE (unitprice_incl).
-        unitprice_incl: Number(snap.amountMinor) / 100,
-      },
-    ],
+    items: buildSaleItems(snap, snap.productName),
     clientName: snap.customerName || 'לקוח',
     firstName: snap.firstName,
     lastName: snap.lastName,
@@ -181,6 +222,7 @@ export async function ensureCurrentIcountLink(prisma, deal, { createdBy } = {}) 
         paymentLinkUrl: saleUrl,
         paypageId: String(paypageId),
         amountMinor: snap.amountMinor,
+        vatExempt: snap.vatExempt,
         currency: snap.currency,
         productName: snap.productName,
         customerName: snap.customerName,
@@ -206,10 +248,12 @@ export async function ensureCustomIcountLink(prisma, link, deal) {
   if (link.paymentLinkUrl) return link;
 
   if (!isIcountConfigured()) throw codedError('icount_not_configured');
-  const paypageId = process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
-  if (!paypageId) throw codedError('icount_paypage_not_configured');
 
+  // VAT treatment follows the deal's working Builder at generation time (the
+  // custom row only overrides the LINE WORDING + amount, not the deal's VAT
+  // reality); frozen with the generated sale like everything else on the row.
   const snap = buildPaymentSnapshot(deal);
+  const paypageId = salePaypageId(snap.vatExempt);
   const origin = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
   const secret = process.env.ICOUNT_WEBHOOK_SECRET;
   const ipnUrl =
@@ -219,14 +263,7 @@ export async function ensureCustomIcountLink(prisma, link, deal) {
 
   const { saleUrl, raw } = await generateSale({
     paypageId,
-    items: [
-      {
-        quantity: 1,
-        description: link.description,
-        // iCount expects major units, VAT-INCLUSIVE (unitprice_incl).
-        unitprice_incl: Number(link.amountMinor) / 100,
-      },
-    ],
+    items: buildSaleItems({ amountMinor: link.amountMinor, vatExempt: snap.vatExempt }, link.description),
     clientName: snap.customerName || 'לקוח',
     firstName: snap.firstName,
     lastName: snap.lastName,
