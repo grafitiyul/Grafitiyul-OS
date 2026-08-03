@@ -506,8 +506,10 @@ export const api = {
     // Pending Tour Update — apply (the ONE tour-update orchestration, which
     // mutates the tour → emits) / discard (restores deal fields to the
     // currently-applied tour values → NOT a tour change, no emit).
-    applyTourUpdate: (id) =>
-      tourMutation(request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: '{}' })),
+    // data may carry { sendUpdatedEmail } — the banner checkbox. Optional, so
+    // the בקרה dashboard's action buttons keep calling it with just an id.
+    applyTourUpdate: (id, data = {}) =>
+      tourMutation(request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: JSON.stringify(data) })),
     discardTourUpdate: (id) =>
       request(`/api/deals/${id}/discard-tour-update`, { method: 'POST', body: '{}' }),
     addContact: (id, data) =>

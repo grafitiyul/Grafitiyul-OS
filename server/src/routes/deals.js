@@ -45,6 +45,8 @@ import {
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
+import { sendConfirmationEmail } from '../confirmation/sendService.js';
+import { hasActiveFillers } from '../confirmation/fillers.js';
 import { marketingDto } from '../deals/marketing.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { fireAdminReport } from '../adminReports/dispatch.js';
@@ -1049,7 +1051,35 @@ router.post(
         }).catch(() => {});
       }
     }
-    res.json(withTourUpdatePending(await loadDeal(deal.id)));
+
+    // "שליחת מייל מעודכן ללקוח" (checkbox on the update banner, default on).
+    // Composed only AFTER the tour update committed, so the email carries the
+    // NEW canonical date/time/location/participants/duration. A failed update
+    // never reaches this line, so it can never mail stale details.
+    let confirmationEmail = { action: 'skipped' };
+    if (pending.length && req.body?.sendUpdatedEmail) {
+      const fresh = await prisma.deal.findUnique({
+        where: { id: deal.id },
+        select: { status: true, confirmation: { select: { fillers: true } } },
+      });
+      if (fresh?.status !== 'won') {
+        confirmationEmail = { action: 'skipped', reason: 'deal_not_won' };
+      } else if (hasActiveFillers(fresh.confirmation?.fillers)) {
+        // Special terms must be read before they go out — the operator is
+        // right here, so the client opens the preview.
+        confirmationEmail = { action: 'preview' };
+      } else {
+        const out = await sendConfirmationEmail({
+          dealId: deal.id,
+          trigger: 'tour_update',
+          actorUserId: req.adminAuth?.userId || null,
+        });
+        confirmationEmail = out.ok
+          ? { action: 'sent', sendId: out.sendId, subject: out.subject, sendKind: out.sendKind }
+          : { action: 'failed', error: out.error, warnings: out.warnings || null };
+      }
+    }
+    res.json({ ...withTourUpdatePending(await loadDeal(deal.id)), confirmationEmail });
   }),
 );
 

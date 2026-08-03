@@ -183,6 +183,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // (approved D3). Blocked sends offer the preview as the escape hatch.
   const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
   const [confirmEmailBusy, setConfirmEmailBusy] = useState(false);
+  // "שליחת מייל מעודכן ללקוח" on the tour-update banner — default on.
+  const [sendUpdatedEmail, setSendUpdatedEmail] = useState(true);
   const sendConfirmationEmail = async () => {
     setConfirmEmailBusy(true);
     try {
@@ -609,15 +611,26 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Pending Tour Update — the two bar actions. Apply = the ONE server
   // orchestration (tour + calendar + future workflows); discard = restore the
   // deal's planning fields to the applied tour values (nothing operational).
-  async function applyTourUpdate() {
+  async function applyTourUpdate({ sendEmail = sendUpdatedEmail } = {}) {
     setTourUpdateBusy(true);
     try {
       // api.deals.applyTourUpdate emits the canonical tour-changed signal
       // centrally (api.js) → every open Tours surface re-fetches silently.
-      await api.deals.applyTourUpdate(id);
+      // The updated-email request rides the SAME call: the server composes it
+      // only after the tour update commits, so it carries the new values.
+      const res = await api.deals.applyTourUpdate(id, { sendUpdatedEmail: !!sendEmail });
       await refresh();
+      // Special terms → the operator reviews before the customer gets it.
+      const ce = res?.confirmationEmail;
+      if (ce?.action === 'preview') setConfirmEmailOpen(true);
+      else if (ce?.action === 'sent') alert('הסיור עודכן ומייל מעודכן נכנס לתור השליחה ✓');
+      else if (ce?.action === 'failed') {
+        alert('הסיור עודכן, אך מייל האישור לא נשלח: ' + (ce.error || '') + '\nאפשר לשלוח מהתפריט.');
+      }
       return true;
     } catch (e) {
+      // The tour update FAILED — nothing was mailed; the operator's state
+      // stays intact and the banner remains.
       alert('שגיאה: ' + (e.payload?.error || e.message));
       return false;
     } finally {
@@ -1007,6 +1020,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             {/* Pending Tour Update — full-width action bar ABOVE the customer
                 info. Rendered only while the deal differs from its live tour. */}
             <PendingTourUpdateBar
+              sendUpdatedEmail={sendUpdatedEmail}
+              onToggleSendUpdatedEmail={setSendUpdatedEmail}
               pending={pendingTour}
               busy={tourUpdateBusy}
               onApply={applyTourUpdate}
