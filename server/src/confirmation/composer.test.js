@@ -418,6 +418,24 @@ test('email HTML: an operator override title renders as a customer heading', () 
   assert.match(html, /<h3>מה להביא לסיור<\/h3>/);
 });
 
+// The production bug: the meeting-point photo showed in the preview's section
+// view and in imagesSnapshot, but the assembled body carried NO <img> — an
+// image-only section has zero TEXT, and the skip test only measured text.
+test('email HTML: the meeting-point image survives into the sent body', () => {
+  const r = composeFromContext(ctx());
+  assert.match(r.emailHtml, /<img[^>]+src="https:\/\/r2\.example\/mp\.jpg"/);
+  // Stable public URL, never a signed/expiring one, and mobile-safe sizing.
+  assert.doesNotMatch(r.emailHtml, /X-Amz-|Signature=|Expires=/);
+  assert.match(r.emailHtml, /max-width:100%/);
+});
+
+test('email HTML: a section with neither text nor media is still skipped', () => {
+  const c = ctx({ meetingPoint: null, tour: null });
+  const r = composeFromContext(c);
+  assert.equal(byId(r, 'meeting_point_image'), undefined);
+  assert.doesNotMatch(r.emailHtml, /<img/);
+});
+
 test('email HTML: empty sections are skipped entirely', () => {
   const r = composeFromContext(ctx({ language: 'en' })); // sc_bring has no English
   const html = buildEmailHtml(r);

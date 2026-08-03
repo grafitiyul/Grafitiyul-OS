@@ -45,6 +45,12 @@ import {
 const pickStrict = (he, en, lang) => (lang === 'en' ? en : he) || null;
 const hasText = (html) =>
   !!html && String(html).replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') !== '';
+// Media counts as content even with zero text. hasText() strips every tag, so
+// an image-only section (the meeting-point photo) measured as "empty" and was
+// dropped from the assembled email while still showing in the preview's
+// section view — the production bug where the photo never reached the inbox.
+const MEDIA_RE = /<(img|video)\b/i;
+const hasRenderableContent = (html) => hasText(html) || MEDIA_RE.test(String(html || ''));
 
 const esc = (s) =>
   String(s ?? '')
@@ -386,9 +392,14 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
       case 'meeting_point_image': {
         const url = meetingPoint?.image?.url || null;
         if (url) {
+          // Stable PUBLIC R2 URL (never a signed/expiring one) so the photo
+          // still loads days later. The inline max-width keeps it inside the
+          // column on phones; `width` is the desktop/Outlook fallback.
           sections.push({
             id: 'meeting_point_image', kind: 'auto', key: 'meeting_point_image',
-            html: `<p><img src="${esc(url)}" alt="${esc(t.meetingAlt)}" width="480"></p>`,
+            html:
+              `<p><img src="${esc(url)}" alt="${esc(t.meetingAlt)}" width="480" ` +
+              'style="max-width:100%;height:auto;display:block;border-radius:6px"></p>',
             data: { url }, editable: false,
           });
         }
@@ -558,7 +569,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
 export function buildEmailHtml(composeResult) {
   const parts = [];
   for (const s of composeResult.sections || []) {
-    if (!hasText(s.html)) continue;
+    if (!hasRenderableContent(s.html)) continue;
     if (s.customerTitle && s.title) parts.push(`<h3>${esc(s.title)}</h3>`);
     parts.push(s.html);
   }
