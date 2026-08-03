@@ -69,10 +69,25 @@ test('daysAway drives the icon bucket and is measured in Israel calendar days', 
   assert.equal(daysBetween('2026-08-02', '2026-08-06'), 4);
 });
 
-test('a completed coordination form marks the line done', async () => {
+test('a submitted coordination form leaves the digest entirely (owner correction, 2026-08-03)', async () => {
+  // The digest is a to-do list: a completed call is not the guide's problem
+  // anymore, so it does not appear at all — not even as ✅.
   const c = fakeClient({ tours: [tour()], coordination: [{ subjectId: 'b1' }] });
-  const [d] = await collectGuideDigests({ nowMs: NOW, client: c });
-  assert.equal(d.guideDigest.coordination[0].done, true);
+  assert.deepEqual(await collectGuideDigests({ nowMs: NOW, client: c }), []);
+
+  // Two bookings, one submitted → only the pending one remains.
+  const partial = fakeClient({
+    tours: [tour({
+      bookings: [
+        { id: 'b1', deal: { participants: 4, organization: null, contacts: [{ contact: { firstNameHe: 'א', lastNameHe: 'א' } }] } },
+        { id: 'b2', deal: { participants: 9, organization: { name: 'חברת ABC' }, contacts: [] } },
+      ],
+    })],
+    coordination: [{ subjectId: 'b1' }],
+  });
+  const [d] = await collectGuideDigests({ nowMs: NOW, client: partial });
+  assert.deepEqual(d.guideDigest.coordination.map((i) => i.customerName), ['חברת ABC']);
+  assert.equal(d.guideDigest.coordination[0].done, false);
 });
 
 test('one line per BOOKING — a two-booking tour yields two lines', async () => {
