@@ -22,7 +22,8 @@ import {
   confirmationCtxFromDeal,
   ConfirmationTemplateError,
 } from './resolveTemplate.js';
-import { normalizeSections } from './sections.js';
+import { normalizeSections, getAutoSection } from './sections.js';
+import { sanitizeEmailHtml } from '../email/sanitize.js';
 import { normalizeFillers, fillersAffecting, getFillerKind } from './fillers.js';
 import { mergeOverrides, overrideFor } from './overrides.js';
 
@@ -169,8 +170,14 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
   );
   const layout = normalizeSections(template.sections, Object.keys(blockById));
 
-  const warnMissing = (sectionId, otherHas) =>
-    warnings.push({ code: 'missing_content', sectionId, language: lang, otherLanguageHasContent: !!otherHas });
+  // Every warning names its section (operator-facing Hebrew label) so the
+  // preview can say exactly WHAT is missing, not just that something is.
+  const warnMissing = (sectionId, otherHas, label) =>
+    warnings.push({
+      code: 'missing_content', sectionId, language: lang,
+      label: label || getAutoSection(sectionId)?.labelHe || sectionId,
+      otherLanguageHasContent: !!otherHas,
+    });
 
   const firstName = pickStrict(contact?.firstNameHe, contact?.firstNameEn, lang);
   const durationFiller = fillers.find((f) => f.kind === 'activity_duration');
@@ -193,19 +200,19 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
           if (policyRow?.active) {
             html = pickStrict(policyRow.bodyHe, policyRow.bodyEn, lang);
             source = 'filler_policy';
-            if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(policyRow.bodyEn, policyRow.bodyHe, lang)));
+            if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(policyRow.bodyEn, policyRow.bodyHe, lang)), policyRow.internalName);
           } else {
             html = null;
             source = 'filler_policy';
-            warnings.push({ code: 'missing_policy', sectionId });
+            warnings.push({ code: 'missing_policy', sectionId, label: block.internalName });
           }
         } else {
           html = pickStrict(cancelFiller.noteHe, cancelFiller.noteEn, lang);
           source = 'filler_override';
-          if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(cancelFiller.noteEn, cancelFiller.noteHe, lang)));
+          if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(cancelFiller.noteEn, cancelFiller.noteHe, lang)), block.internalName);
         }
       } else if (!hasText(html)) {
-        warnMissing(sectionId, hasText(pickStrict(block.bodyEn, block.bodyHe, lang)));
+        warnMissing(sectionId, hasText(pickStrict(block.bodyEn, block.bodyHe, lang)), block.internalName);
       }
       sections.push({
         id: sectionId, kind: 'block', type: block.type,
@@ -255,7 +262,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
       }
       case 'meeting_point': {
         if (!meetingPoint) {
-          warnings.push({ code: 'no_tour', sectionId: 'meeting_point' });
+          warnings.push({ code: 'no_tour', sectionId: 'meeting_point', label: 'נקודת מפגש' });
           sections.push({ id: 'meeting_point', kind: 'auto', key: 'meeting_point', html: null, editable: true });
         } else {
           if (!hasText(meetingPoint.html)) warnMissing('meeting_point', false);
@@ -338,11 +345,15 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
   const subject = pickStrict(template.subjectHe, template.subjectEn, lang);
   if (!subject || !subject.trim()) {
     warnings.push({
-      code: 'missing_subject', language: lang,
+      code: 'missing_subject', language: lang, label: 'נושא המייל',
       otherLanguageHasContent: !!pickStrict(template.subjectEn, template.subjectHe, lang),
     });
   }
-  if (!email) warnings.push({ code: 'no_recipient_email' });
+  if (!email) warnings.push({ code: 'no_recipient_email', label: 'נמען' });
+
+  // The EXACT body the send will mail (assembled + sanitized here, once) —
+  // the preview's "final view" renders this string, so preview == email.
+  const emailHtml = sanitizeEmailHtml(buildEmailHtml({ sections })) || null;
 
   return {
     dealId: deal.id,
@@ -363,6 +374,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
     fillers,
     hasFillers: fillers.length > 0,
     sections,
+    emailHtml,
     warnings,
   };
 }

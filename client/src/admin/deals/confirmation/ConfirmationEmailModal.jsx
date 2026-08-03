@@ -46,6 +46,8 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
   const [toEmail, setToEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // 'sections' = per-section editing; 'final' = the exact assembled email body.
+  const [viewMode, setViewMode] = useState('sections');
 
   const recompose = useCallback(
     async (overlay) => {
@@ -168,20 +170,86 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2" dir="rtl">
-            <span className="text-[12px] text-gray-500">
-              תבנית: <span className="font-medium text-gray-700">{data.template.internalName}</span>
+            {/* The resolver's choice — always visible before sending. */}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white">
+              תבנית: {data.template.internalName}
             </span>
-            {data.warnings.length > 0 && (
-              <span className="text-[12px] rounded-full bg-amber-50 text-amber-700 px-2.5 py-0.5 ring-1 ring-amber-200">
-                ⚠ {data.warnings.map((w) => WARNING_TEXT[w.code] || w.code).join(' · ')}
-              </span>
-            )}
-            <span className="text-[11px] text-gray-400 ms-auto">
-              ריחוף על מקטע מציג ✎ עריכה — לעסקה זו בלבד, לא לתבנית.
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[12px] text-gray-600">
+              {lang === 'en' ? 'English' : 'עברית'}
             </span>
+            <div className="ms-auto flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
+              <button
+                type="button"
+                onClick={() => setViewMode('sections')}
+                className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${viewMode === 'sections' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+              >
+                עריכה
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('final')}
+                title="הגוף המדויק שיישלח — אותו HTML אחד לאחד"
+                className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${viewMode === 'final' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+              >
+                תצוגה סופית (כמו במייל)
+              </button>
+            </div>
           </div>
 
+          {/* Specific, actionable warnings — each names its section. */}
+          {data.warnings.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12.5px] text-amber-800" dir="rtl">
+              {(() => {
+                const missing = data.warnings.filter((w) => w.code === 'missing_content');
+                const others = data.warnings.filter((w) => w.code !== 'missing_content');
+                return (
+                  <>
+                    {missing.length > 0 && (
+                      <div>
+                        <span className="font-semibold">
+                          ⚠ חסר תוכן ב{lang === 'en' ? 'אנגלית' : 'עברית'} (שפת השליחה):
+                        </span>
+                        <ul className="mt-1 list-disc pr-5 space-y-0.5">
+                          {missing.map((w, i) => (
+                            <li key={i}>
+                              {w.label || w.sectionId}
+                              {w.otherLanguageHasContent && (
+                                <span className="text-amber-600"> — קיים תוכן בשפה השנייה</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {others.map((w, i) => (
+                      <div key={`o${i}`} className={missing.length ? 'mt-1' : ''}>
+                        ⚠ {WARNING_TEXT[w.code] || w.code}
+                        {w.label && w.code !== 'missing_subject' && w.code !== 'no_recipient_email' ? ` (${w.label})` : ''}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {viewMode === 'sections' && (
+            <p className="mb-2 text-[11px] text-gray-400" dir="rtl">
+              ריחוף על מקטע מציג ✎ עריכה — לעסקה זו בלבד, לא לתבנית.
+            </p>
+          )}
+
           <div className="rounded-xl bg-gray-100 p-2 sm:p-4">
+            {viewMode === 'final' ? (
+              /* The EXACT body the send mails (composer emailHtml, one string,
+                 sanitized) — what Gmail receives, headings and images included. */
+              <article
+                dir={lang === 'en' ? 'ltr' : 'rtl'}
+                className="mx-auto max-w-2xl rounded-lg bg-white px-6 py-8 sm:px-10 shadow-sm"
+              >
+                <RichText html={data.emailHtml || ''} dir={lang === 'en' ? 'ltr' : 'rtl'} />
+              </article>
+            ) : (
             <article
               dir={lang === 'en' ? 'ltr' : 'rtl'}
               className="mx-auto max-w-2xl rounded-lg bg-white px-6 py-8 sm:px-10 space-y-5 shadow-sm"
@@ -226,6 +294,7 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
                 </section>
               ))}
             </article>
+            )}
           </div>
 
           {editing && (

@@ -7,6 +7,7 @@ import { SettingsCard } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import { ACTIVITY_TYPE_LABELS } from '../../deals/config.js';
 import { TYPE_LABEL, htmlPreview } from '../../shared-content/sharedContentMeta.js';
+import ConfirmationTestSendDialog from './ConfirmationTestSendDialog.jsx';
 
 // CRM settings → מייל אישור — the Confirmation Email module's template
 // management. A DEDICATED module (not the Communication Center): templates are
@@ -46,6 +47,7 @@ export default function ConfirmationEmailSettings() {
   const [editingId, setEditingId] = useState(null);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testSendOpen, setTestSendOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -129,7 +131,18 @@ export default function ConfirmationEmailSettings() {
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
       <header className="mb-8">
         <SettingsChrome />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">מייל אישור</h1>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">מייל אישור</h1>
+          {/* QA before go-live: real deal, real resolver, real queue — only
+              the recipient differs. */}
+          <button
+            type="button"
+            onClick={() => setTestSendOpen(true)}
+            className="h-10 shrink-0 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            🧪 שלח מייל בדיקה
+          </button>
+        </div>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           תבניות מייל האישור ללקוח. לכל עסקה נבחרת בדיוק תבנית אחת — לפי מוצר, סוג
           פעילות וסוג ארגון (הכי ספציפית מנצחת). בלוקי התוכן מנוהלים{' '}
@@ -257,6 +270,7 @@ export default function ConfirmationEmailSettings() {
           </SettingsCard>
         </>
       )}
+      {testSendOpen && <ConfirmationTestSendDialog onClose={() => setTestSendOpen(false)} />}
     </div>
   );
 }

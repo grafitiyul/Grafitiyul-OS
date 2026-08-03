@@ -3489,6 +3489,11 @@ model ConfirmationEmailSend {
   fillersSnapshot   Json? // active fillers at send time
   overridesSnapshot Json? // persistent + temporary overrides, merged, for audit
   imagesSnapshot    Json? // [{ role, mediaFileId, r2Key, url }]
+  // Internal debugging metadata frozen at send: { templateName, language,
+  // blocks: [{ id, internalName, type }], fillers: [kind], test? }.
+  // Snapshotted (never re-derived from the live template, which mutates);
+  // shown ONLY in the admin archive view — never in the customer email.
+  generationMeta    Json?
   scheduledEmailId  String? // loose ref → the canonical email-queue row
   createdById       String?
   createdAt         DateTime @default(now())

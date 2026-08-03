@@ -86,6 +86,42 @@ export default function ConfirmationSnapshotView() {
             </div>
           )}
         </div>
+
+        {/* "נוצר מתוך" — frozen generation metadata for internal debugging.
+            Snapshotted at send (the live template mutates); never part of the
+            customer email. Older sends predate the column and skip this box. */}
+        {snap.generationMeta && (
+          <div className="mb-4 rounded-xl border border-gray-200 bg-white px-5 py-4 text-[13px] text-gray-700">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="font-semibold text-gray-800">נוצר מתוך</span>
+              <span className="text-[10.5px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">דיבוג פנימי</span>
+              {snap.generationMeta.test && (
+                <span className="text-[10.5px] rounded-full bg-purple-50 text-purple-700 px-2 py-0.5 font-medium">מייל בדיקה</span>
+              )}
+            </div>
+            <div className="space-y-1">
+              <div>
+                <span className="text-gray-400">תבנית:</span>{' '}
+                <span className="font-medium">{snap.generationMeta.templateName}</span>
+                {' · '}
+                <span className="text-gray-400">שפה:</span>{' '}
+                {snap.generationMeta.language === 'en' ? 'English' : 'עברית'}
+              </div>
+              <div>
+                <span className="text-gray-400">בלוקים מספריית התוכן:</span>{' '}
+                {(snap.generationMeta.blocks || []).length
+                  ? snap.generationMeta.blocks.map((b) => b.internalName).join(' · ')
+                  : '—'}
+              </div>
+              <div>
+                <span className="text-gray-400">פילרים פעילים:</span>{' '}
+                {(snap.generationMeta.fillers || []).length
+                  ? snap.generationMeta.fillers.join(', ')
+                  : '—'}
+              </div>
+            </div>
+          </div>
+        )}
         <article dir={en ? 'ltr' : 'rtl'} className="rounded-lg bg-white px-6 py-8 sm:px-10 shadow-sm">
           <RichText html={snap.bodyHtml} dir={en ? 'ltr' : 'rtl'} />
         </article>

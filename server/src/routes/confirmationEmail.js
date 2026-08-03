@@ -13,10 +13,9 @@ import {
   blockIdsInSections,
 } from '../confirmation/sections.js';
 import { CONFIRMATION_CONTENT_TYPES } from '../shared-content/sharedContentTypes.js';
-import { composeConfirmationEmail, buildEmailHtml } from '../confirmation/composer.js';
+import { composeConfirmationEmail } from '../confirmation/composer.js';
 import { normalizeOverrideState } from '../confirmation/overrides.js';
 import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
-import { sanitizeEmailHtml } from '../email/sanitize.js';
 import {
   FILLER_KINDS,
   NEW_GUIDE_DEFAULT_NOTE,
@@ -361,11 +360,19 @@ router.post(
     if (composed.error === 'deal_not_found') return res.status(404).json({ error: composed.error });
     if (composed.error) return res.status(422).json({ error: composed.error, ...composed.meta });
 
+    // Test send (QA): the EXACT same composer/resolver/queue pipeline — the
+    // only differences are the recipient, a '[בדיקה]' subject prefix, no
+    // deal/contact thread linking and no timeline entry (a QA probe is not
+    // customer communication). Everything else, including sending windows and
+    // the snapshot, is production behavior.
+    const isTest = !!req.body?.test;
+
     // Operator-edited recipient/subject from the send step win over composed.
     const to = cleanRecipientList([
-      { email: req.body?.to || composed.recipient?.email, name: composed.recipient?.name },
+      { email: req.body?.to || composed.recipient?.email, name: isTest ? null : composed.recipient?.name },
     ]);
-    const subject = String(req.body?.subject ?? composed.subject ?? '').trim();
+    const baseSubject = String(req.body?.subject ?? composed.subject ?? '').trim();
+    const subject = isTest && baseSubject ? `[בדיקה] ${baseSubject}` : baseSubject;
     if (!to.length) return res.status(422).json({ error: 'no_recipient_email' });
     if (!subject) return res.status(422).json({ error: 'missing_subject' });
 
@@ -382,7 +389,9 @@ router.post(
     });
     if (recent) return res.status(409).json({ error: 'duplicate_send' });
 
-    const bodyHtml = sanitizeEmailHtml(buildEmailHtml(composed));
+    // ONE derivation: the composer already assembled + sanitized the exact
+    // body (composed.emailHtml) — the preview's final view showed this string.
+    const bodyHtml = composed.emailHtml;
     if (!bodyHtml) return res.status(422).json({ error: 'empty_body' });
 
     // Freeze the sending account NOW (the queue contract) — fails with
@@ -402,8 +411,8 @@ router.post(
           toJson: to,
           subject,
           bodyHtml,
-          dealId: composed.dealId,
-          contactId: composed.recipient?.contactId || null,
+          dealId: isTest ? null : composed.dealId,
+          contactId: isTest ? null : composed.recipient?.contactId || null,
           scheduledAt: new Date(),
           createdById: req.adminAuth?.userId || null,
         },
@@ -414,7 +423,11 @@ router.post(
           templateId: composed.template.id,
           templateName: composed.template.internalName,
           language: composed.language,
-          recipientSnapshot: { ...to[0], contactId: composed.recipient?.contactId || null },
+          recipientSnapshot: {
+            ...to[0],
+            contactId: isTest ? null : composed.recipient?.contactId || null,
+            ...(isTest ? { test: true } : {}),
+          },
           subject,
           bodyHtml,
           fillersSnapshot: composed.fillers,
@@ -422,25 +435,38 @@ router.post(
           imagesSnapshot: composed.sections
             .filter((s) => s.key === 'meeting_point_image' && s.data?.url)
             .map((s) => ({ role: 'meeting_point', url: s.data.url })),
+          // Frozen "generated from" — the archive's debugging answer even
+          // after the template/blocks are edited or deleted.
+          generationMeta: {
+            templateName: composed.template.internalName,
+            language: composed.language,
+            blocks: composed.sections
+              .filter((s) => s.kind === 'block')
+              .map((s) => ({ id: s.id.replace(/^block:/, ''), internalName: s.title, type: s.type })),
+            fillers: composed.fillers.map((f) => f.kind),
+            ...(isTest ? { test: true } : {}),
+          },
           scheduledEmailId: scheduled.id,
           createdById: req.adminAuth?.userId || null,
         },
       });
-      await emitTimelineEvent(tx, {
-        subjectId: composed.dealId,
-        kind: 'communication',
-        origin,
-        data: {
-          event: 'confirmation_email_queued',
-          sendId: snapshot.id,
-          channel: 'email',
-          language: composed.language,
-          recipientName: to[0].name || to[0].email,
-          subject,
-          eventName: 'מייל אישור',
-          messageName: composed.template.internalName,
-        },
-      });
+      if (!isTest) {
+        await emitTimelineEvent(tx, {
+          subjectId: composed.dealId,
+          kind: 'communication',
+          origin,
+          data: {
+            event: 'confirmation_email_queued',
+            sendId: snapshot.id,
+            channel: 'email',
+            language: composed.language,
+            recipientName: to[0].name || to[0].email,
+            subject,
+            eventName: 'מייל אישור',
+            messageName: composed.template.internalName,
+          },
+        });
+      }
       return { scheduled, snapshot };
     });
 

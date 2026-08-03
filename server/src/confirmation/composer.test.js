@@ -212,6 +212,38 @@ test('warnings: missing subject language + missing recipient email', () => {
   assert.ok(r.warnings.some((w) => w.code === 'no_recipient_email'));
 });
 
+// ── QA polish: labeled warnings + assembled emailHtml ────────────────────────
+
+test('every warning names its section with an operator-facing label', () => {
+  const c = ctx({ language: 'en', email: null, meetingPoint: null, tour: null });
+  c.template = { ...c.template, subjectEn: null };
+  const r = composeFromContext(c);
+  const byCode = Object.fromEntries(r.warnings.map((w) => [w.code, w]));
+  assert.equal(byCode.missing_content.label, 'מה להביא'); // block internal name
+  assert.equal(byCode.no_tour.label, 'נקודת מפגש');
+  assert.equal(byCode.missing_subject.label, 'נושא המייל');
+  assert.equal(byCode.no_recipient_email.label, 'נמען');
+});
+
+test('auto-section language gaps use the section vocabulary label', () => {
+  const c = ctx({ language: 'en' });
+  c.deal = {
+    ...c.deal,
+    location: { ...c.deal.location, logisticsEn: null }, // English gap, Hebrew exists
+  };
+  const r = composeFromContext(c);
+  const w = r.warnings.find((x) => x.sectionId === 'location_logistics');
+  assert.equal(w.label, 'לוגיסטיקה במיקום');
+  assert.ok(w.otherLanguageHasContent);
+});
+
+test('compose returns emailHtml — the exact assembled+sanitized send body', () => {
+  const r = composeFromContext(ctx({ fillers: [{ kind: 'other_note', noteHe: '<p>תנאי</p>' }] }));
+  assert.ok(r.emailHtml.includes('<h3>תנאים מיוחדים שסוכמו</h3>'));
+  assert.ok(r.emailHtml.includes('מדיניות רגילה'));
+  assert.doesNotMatch(r.emailHtml, /מדיניות ביטול רגילה/); // internal names never leak
+});
+
 // ── buildEmailHtml ───────────────────────────────────────────────────────────
 
 test('email HTML: internal block names never render; customer titles do', () => {

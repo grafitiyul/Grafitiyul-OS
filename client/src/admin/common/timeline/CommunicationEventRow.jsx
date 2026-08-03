@@ -27,6 +27,9 @@ export default function CommunicationEventRow({ entry }) {
           </span>
           {d.subject && <span className="text-gray-500"> · {d.subject}</span>}
           <span className="text-gray-500"> · {d.eventName}{d.messageName ? ` — ${d.messageName}` : ''}</span>
+          {manual && d.language && (
+            <span className="text-gray-500"> · {d.language === 'en' ? 'English' : 'עברית'}</span>
+          )}
           {d.messageNumber != null && <span className="font-mono text-[11px] text-gray-400"> · #{d.messageNumber}</span>}
         </span>
         {manual && d.sendId && (
