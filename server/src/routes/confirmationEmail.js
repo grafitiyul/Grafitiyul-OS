@@ -26,6 +26,10 @@ import {
   normalizeFillers,
   validateFillers,
 } from '../confirmation/fillers.js';
+import {
+  listConfirmationVariables,
+  CONFIRMATION_VARIABLE_CATEGORIES,
+} from '../confirmation/variables.js';
 import { tourDurationHours, effectiveDurationHours } from '../tours/tourTime.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
@@ -78,6 +82,10 @@ router.get(
         autoSections: AUTO_SECTIONS,
         blockTypes: CONFIRMATION_CONTENT_TYPES,
         activityTypes: CONFIRMATION_ACTIVITY_TYPES,
+        // THE customer-facing variable catalog — same list the composer
+        // resolves; the client registers these for the editor picker.
+        variables: listConfirmationVariables(),
+        variableCategories: CONFIRMATION_VARIABLE_CATEGORIES,
       },
     });
   }),
@@ -342,7 +350,13 @@ router.put(
 // Warnings that BLOCK a send unless the operator explicitly approved them in
 // the preview (acknowledgeWarnings). Recipient/subject are hard requirements
 // and are never acknowledgeable — they must be provided or exist.
-const ACKNOWLEDGEABLE = new Set(['missing_content', 'missing_policy', 'no_tour']);
+const ACKNOWLEDGEABLE = new Set([
+  'missing_content',
+  'missing_policy',
+  'no_tour',
+  'missing_variable',
+  'unknown_variable',
+]);
 
 // POST /deal/:dealId/send — compose (same pipeline as preview), validate,
 // hand ONE email to the canonical queue (ScheduledEmail, scheduledAt=now) and

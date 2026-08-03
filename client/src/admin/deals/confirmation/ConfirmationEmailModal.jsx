@@ -20,6 +20,8 @@ const WARNING_TEXT = {
   no_recipient_email: 'לאיש הקשר אין כתובת מייל',
   no_tour: 'אין סיור משויך — נקודת המפגש חסרה',
   missing_policy: 'מדיניות הביטול שנבחרה אינה זמינה עוד',
+  missing_variable: 'משתנה ללא ערך בעסקה זו',
+  unknown_variable: 'משתנה לא מוכר',
 };
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -224,7 +226,7 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
                     {others.map((w, i) => (
                       <div key={`o${i}`} className={missing.length ? 'mt-1' : ''}>
                         ⚠ {WARNING_TEXT[w.code] || w.code}
-                        {w.label && w.code !== 'missing_subject' && w.code !== 'no_recipient_email' ? ` (${w.label})` : ''}
+                        {w.label && !['missing_subject', 'no_recipient_email'].includes(w.code) ? ` — ${w.label}` : ''}
                       </div>
                     ))}
                   </>

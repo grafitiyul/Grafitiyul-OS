@@ -201,8 +201,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           missing_content: 'חסר תוכן בשפת השליחה',
           missing_policy: 'מדיניות הביטול שנבחרה אינה זמינה עוד',
           no_tour: 'אין סיור משויך — נקודת המפגש חסרה',
+          missing_variable: 'משתנה ללא ערך בעסקה זו',
+          unknown_variable: 'משתנה לא מוכר',
         };
-        const list = (e.payload.warnings || []).map((w) => t[w.code] || w.code).join('\n• ');
+        const list = (e.payload.warnings || [])
+          .map((w) => (t[w.code] || w.code) + (w.label ? ` — ${w.label}` : ''))
+          .join('\n• ');
         if (confirm(`לא ניתן לשלוח אוטומטית:\n• ${list}\n\nלפתוח תצוגה מקדימה לטיפול ושליחה?`)) setConfirmEmailOpen(true);
       } else if (code === 'no_recipient_email' || code === 'missing_subject') {
         const msg = code === 'no_recipient_email' ? 'לאיש הקשר אין כתובת מייל.' : 'חסר נושא לשפת השליחה בתבנית.';

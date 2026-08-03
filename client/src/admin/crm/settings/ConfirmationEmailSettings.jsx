@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
@@ -8,6 +8,9 @@ import RichEditor from '../../../editor/RichEditor.jsx';
 import { ACTIVITY_TYPE_LABELS } from '../../deals/config.js';
 import { TYPE_LABEL, htmlPreview } from '../../shared-content/sharedContentMeta.js';
 import ConfirmationTestSendDialog from './ConfirmationTestSendDialog.jsx';
+import VariableMenu from '../../communication/VariableMenu.jsx';
+import { registerDynamicFields, getDynamicFieldByKey } from '../../../lib/dynamicFields.js';
+import { normalizeTokensToChips } from '../../../../../shared/variableTokens.mjs';
 
 // CRM settings → מייל אישור — the Confirmation Email module's template
 // management. A DEDICATED module (not the Communication Center): templates are
@@ -57,6 +60,11 @@ export default function ConfirmationEmailSettings() {
         api.products.list(),
         api.organizationTypes.list(),
       ]);
+      // Chip labels for the editors — the ONE server catalog, registered into
+      // the shared dynamic-field registry before any editor renders.
+      registerDynamicFields(
+        (d.meta?.variables || []).map((v) => ({ key: v.key, label: v.labelHe, description: v.descriptionHe })),
+      );
       setData(d);
       setProducts(p);
       setOrgTypes(ot);
@@ -302,6 +310,31 @@ function PillGroup({ options, selected, onToggle, disabled }) {
   );
 }
 
+// Stored/typed raw {{tokens}} → chip nodes before entering TipTap (the
+// EmailBodyEditor hydration convention; labels come from the registry).
+const hydrate = (html) =>
+  normalizeTokensToChips(html || '', (key) => getDynamicFieldByKey(key)?.label || null);
+
+// Readable chip preview under a subject input (tokens stay {{key}} in state).
+function SubjectPreview({ value }) {
+  const parts = String(value || '').split(/(\{\{[a-z][a-z0-9_]*\}\})/g).filter(Boolean);
+  if (parts.length < 2 && !/^\{\{/.test(parts[0] || '')) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1 text-[12px] text-gray-500">
+      {parts.map((p, i) => {
+        const m = /^\{\{([a-z][a-z0-9_]*)\}\}$/.exec(p);
+        if (!m) return <span key={i}>{p}</span>;
+        const f = getDynamicFieldByKey(m[1]);
+        return (
+          <span key={i} className="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-medium text-blue-800">
+            ✦ {f?.label || m[1]}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }) {
   const [internalName, setInternalName] = useState(template.internalName);
   const [productIds, setProductIds] = useState(template.productIds || []);
@@ -310,10 +343,28 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
   const [priority, setPriority] = useState(template.priority || 0);
   const [subjectHe, setSubjectHe] = useState(template.subjectHe || '');
   const [subjectEn, setSubjectEn] = useState(template.subjectEn || '');
-  const [greetingHe, setGreetingHe] = useState(template.greetingHe || '');
-  const [greetingEn, setGreetingEn] = useState(template.greetingEn || '');
-  const [closingHe, setClosingHe] = useState(template.closingHe || '');
-  const [closingEn, setClosingEn] = useState(template.closingEn || '');
+  const [greetingHe, setGreetingHe] = useState(() => hydrate(template.greetingHe));
+  const [greetingEn, setGreetingEn] = useState(() => hydrate(template.greetingEn));
+  const [closingHe, setClosingHe] = useState(() => hydrate(template.closingHe));
+  const [closingEn, setClosingEn] = useState(() => hydrate(template.closingEn));
+  const subjectHeRef = useRef(null);
+  const subjectEnRef = useRef(null);
+  const lastSubjectRef = useRef('he');
+
+  function insertIntoSubject(v) {
+    const he = lastSubjectRef.current !== 'en';
+    const input = he ? subjectHeRef.current : subjectEnRef.current;
+    const [value, set] = he ? [subjectHe, setSubjectHe] : [subjectEn, setSubjectEn];
+    const token = `{{${v.key}}}`;
+    const cur = String(value || '');
+    const start = input?.selectionStart ?? cur.length;
+    const end = input?.selectionEnd ?? cur.length;
+    set(cur.slice(0, start) + token + cur.slice(end));
+    setTimeout(() => {
+      input?.focus();
+      input?.setSelectionRange(start + token.length, start + token.length);
+    }, 0);
+  }
   const [sections, setSections] = useState(() => template.sections || []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -445,17 +496,43 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
         )}
       </div>
 
-      {/* Subject — side-by-side He/En. */}
+      {/* Subject — side-by-side He/En, with the canonical variable picker. */}
       <div>
-        <div className="text-[13px] font-semibold text-gray-700 mb-2">נושא המייל</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[13px] font-semibold text-gray-700">נושא המייל</div>
+          <VariableMenu
+            variables={meta?.variables || []}
+            categories={meta?.variableCategories || {}}
+            onInsert={insertIntoSubject}
+            label="משתנה בנושא"
+            showKeys={false}
+          />
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <label className="block">
             <span className={LABEL}>עברית</span>
-            <input value={subjectHe} onChange={(e) => setSubjectHe(e.target.value)} className={INPUT} placeholder="אישור הזמנה — גרפיטיול" />
+            <input
+              ref={subjectHeRef}
+              onFocus={() => { lastSubjectRef.current = 'he'; }}
+              value={subjectHe}
+              onChange={(e) => setSubjectHe(e.target.value)}
+              className={INPUT}
+              placeholder="אישור הזמנה — גרפיטיול"
+            />
+            <SubjectPreview value={subjectHe} />
           </label>
           <label className="block">
             <span className={LABEL}>English</span>
-            <input value={subjectEn} onChange={(e) => setSubjectEn(e.target.value)} dir="ltr" className={INPUT} placeholder="Booking confirmation — Grafitiyul" />
+            <input
+              ref={subjectEnRef}
+              onFocus={() => { lastSubjectRef.current = 'en'; }}
+              value={subjectEn}
+              onChange={(e) => setSubjectEn(e.target.value)}
+              dir="ltr"
+              className={INPUT}
+              placeholder="Booking confirmation — Grafitiyul"
+            />
+            <SubjectPreview value={subjectEn} />
           </label>
         </div>
       </div>
@@ -511,9 +588,10 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
         </p>
       </div>
 
-      {/* Greeting / closing wording overrides — side-by-side rich editors. */}
-      <BilingualRich label="פתיח (ריק = נוסח ברירת המחדל)" he={greetingHe} en={greetingEn} onHe={setGreetingHe} onEn={setGreetingEn} />
-      <BilingualRich label="סגיר (ריק = נוסח ברירת המחדל)" he={closingHe} en={closingEn} onHe={setClosingHe} onEn={setClosingEn} />
+      {/* Greeting / closing wording overrides — side-by-side rich editors with
+          the canonical customer-variable picker per language. */}
+      <BilingualRich label="פתיח (ריק = נוסח ברירת המחדל)" he={greetingHe} en={greetingEn} onHe={setGreetingHe} onEn={setGreetingEn} meta={meta} />
+      <BilingualRich label="סגיר (ריק = נוסח ברירת המחדל)" he={closingHe} en={closingEn} onHe={setClosingHe} onEn={setClosingEn} meta={meta} />
 
       <div className="flex gap-1.5">
         <button
@@ -541,20 +619,44 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
   );
 }
 
-// Side-by-side bilingual rich editing (the VariantEditor BiEditor convention).
-function BilingualRich({ label, he, en, onHe, onEn }) {
+// Side-by-side bilingual rich editing (the VariantEditor BiEditor convention),
+// with the canonical customer-variable picker above each language column.
+function BilingualRich({ label, he, en, onHe, onEn, meta }) {
+  const heRef = useRef(null);
+  const enRef = useRef(null);
+  const variables = meta?.variables || [];
+  const categories = meta?.variableCategories || {};
   return (
     <div>
       <div className="text-[13px] font-semibold text-gray-700 mb-2">{label}</div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
-          <span className={LABEL}>עברית</span>
-          <RichEditor value={he} onChange={onHe} ariaLabel={`${label} — עברית`} minContentHeight={100} />
+          <div className="flex items-center justify-between mb-1">
+            <span className={LABEL}>עברית</span>
+            <VariableMenu variables={variables} categories={categories} editorRef={heRef} showKeys={false} />
+          </div>
+          <RichEditor
+            value={he}
+            onChange={onHe}
+            ariaLabel={`${label} — עברית`}
+            minContentHeight={100}
+            onEditorReady={(editor) => { heRef.current = editor; }}
+          />
         </div>
         <div>
-          <span className={LABEL}>English</span>
+          <div className="flex items-center justify-between mb-1">
+            <span className={LABEL}>English</span>
+            <VariableMenu variables={variables} categories={categories} editorRef={enRef} showKeys={false} />
+          </div>
           <div dir="ltr">
-            <RichEditor value={en} onChange={onEn} ariaLabel={`${label} — English`} minContentHeight={100} placeholder="Write here..." />
+            <RichEditor
+              value={en}
+              onChange={onEn}
+              ariaLabel={`${label} — English`}
+              minContentHeight={100}
+              placeholder="Write here..."
+              onEditorReady={(editor) => { enRef.current = editor; }}
+            />
           </div>
         </div>
       </div>

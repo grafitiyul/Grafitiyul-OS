@@ -244,6 +244,49 @@ test('compose returns emailHtml — the exact assembled+sanitized send body', ()
   assert.doesNotMatch(r.emailHtml, /מדיניות ביטול רגילה/); // internal names never leak
 });
 
+// ── variable substitution (ONE catalog: preview == send) ────────────────────
+
+test('tokens in template overrides substitute with catalog values', () => {
+  const c = ctx({
+    persistentOverrides: {
+      sections: { greeting: { html: '<p>היי {{customer_first_name}}, נתראה ב{{tour_city}}!</p>' } },
+    },
+  });
+  const r = composeFromContext(c);
+  assert.equal(byId(r, 'greeting').html, '<p>היי דנה, נתראה בתל אביב!</p>');
+  assert.match(r.emailHtml, /היי דנה, נתראה בתל אביב!/);
+  assert.equal(r.warnings.length, 0);
+});
+
+test('chip spans substitute too (data-field-key form)', () => {
+  const c = ctx();
+  c.template = {
+    ...c.template,
+    greetingHe: '<p>שלום <span data-type="dynamic-field" data-field-key="customer_full_name">שם מלא</span></p>',
+  };
+  const r = composeFromContext(c);
+  assert.equal(byId(r, 'greeting').html, '<p>שלום דנה לוי</p>');
+});
+
+test('subject tokens substitute; empty-value token warns with its label', () => {
+  const c = ctx();
+  c.template = { ...c.template, subjectHe: 'אישור הזמנה {{deal_number}} — {{org_name}}' };
+  c.deal = { ...c.deal, orderNo: 27123 };
+  const r = composeFromContext(c);
+  assert.equal(r.subject, 'אישור הזמנה 27123 — ');
+  const w = r.warnings.find((x) => x.code === 'missing_variable');
+  assert.equal(w.label, 'שם הארגון');
+});
+
+test('unknown token stays raw and warns; staff keys are NOT resolvable', () => {
+  const c = ctx({
+    persistentOverrides: { sections: { closing: { html: '<p>{{staff_portal_link}}</p>' } } },
+  });
+  const r = composeFromContext(c);
+  assert.equal(byId(r, 'closing').html, '<p>{{staff_portal_link}}</p>');
+  assert.ok(r.warnings.some((x) => x.code === 'unknown_variable'));
+});
+
 // ── buildEmailHtml ───────────────────────────────────────────────────────────
 
 test('email HTML: internal block names never render; customer titles do', () => {

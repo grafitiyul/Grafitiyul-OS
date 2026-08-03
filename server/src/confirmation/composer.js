@@ -26,6 +26,16 @@ import { normalizeSections, getAutoSection } from './sections.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
 import { normalizeFillers, fillersAffecting, getFillerKind } from './fillers.js';
 import { mergeOverrides, overrideFor } from './overrides.js';
+import { getQuoteTemplate } from '../quote/quoteTemplate.js';
+import {
+  resolveConfirmationVariables,
+  confirmationVariableByKey,
+} from './variables.js';
+import {
+  extractTokens,
+  substituteTokens,
+  substituteHtmlTokens,
+} from '../communication/variables.js';
 
 const pickStrict = (he, en, lang) => (lang === 'en' ? en : he) || null;
 const hasText = (html) =>
@@ -90,10 +100,19 @@ export async function attachSlotTemplate(db, tour) {
 // invalid include; see the openTourTemplate incident).
 export const CONFIRMATION_DEAL_INCLUDE = {
   contacts: {
-    include: { contact: { include: { emails: true } } },
+    include: { contact: { include: { emails: true, phones: true } } },
     orderBy: { isPrimary: 'desc' },
   },
-  organization: { select: { organizationTypeId: true } },
+  // Org name + type label feed the customer variable catalog; the deal-level
+  // organizationType is the manual classification (no linked org).
+  organization: {
+    select: {
+      organizationTypeId: true,
+      name: true,
+      organizationType: { select: { label: true, labelEn: true } },
+    },
+  },
+  organizationType: { select: { label: true, labelEn: true } },
   product: { select: { nameHe: true, nameEn: true } },
   location: {
     select: {
@@ -175,9 +194,18 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
     })
     : null;
 
+  // Variable-catalog context: primary phone, active-bookings count on the
+  // booked tour, and the public brand contact (quote-template singleton).
+  const contactPhone =
+    ((contact?.phones || []).find((p) => p.isPrimary) || (contact?.phones || [])[0])?.value || null;
+  const tourBookingsCount = tour?.id
+    ? await db.booking.count({ where: { tourEventId: tour.id, status: 'active' } })
+    : null;
+  const brandContact = (await getQuoteTemplate(db))?.contact || null;
+
   return {
     deal, template, contact, email, language, tour: pseudoTour, meetingPoint,
-    fillers, policyRow,
+    fillers, policyRow, contactPhone, tourBookingsCount, brandContact,
     persistentOverrides: deal.confirmation?.overrideState || null,
   };
 }
@@ -205,6 +233,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
     });
 
   const firstName = pickStrict(contact?.firstNameHe, contact?.firstNameEn, lang);
+  const effHours = effectiveDurationHours(deal, tour);
   const durationFiller = fillers.find((f) => f.kind === 'activity_duration');
   const cancelFiller = fillers.find((f) => f.kind === 'cancellation_policy');
   const specialFillers = fillersAffecting(fillers, 'special_terms');
@@ -259,7 +288,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
       case 'tour_details': {
         const productName = pickStrict(deal.product?.nameHe, deal.product?.nameEn, lang) || deal.product?.nameHe;
         const cityName = pickStrict(deal.location?.nameHe, deal.location?.nameEn, lang) || deal.location?.nameHe;
-        const hours = effectiveDurationHours(deal, tour);
+        const hours = effHours;
         const rows = [
           productName && { label: t.product, value: productName },
           deal.tourDate && { label: t.date, value: formatTourDate(deal.tourDate, lang) },
@@ -367,7 +396,30 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
     s.overridden = true;
   }
 
-  const subject = pickStrict(template.subjectHe, template.subjectEn, lang);
+  let subject = pickStrict(template.subjectHe, template.subjectEn, lang);
+
+  // ── Variable substitution — the ONE canonical customer catalog, applied
+  // identically for preview and send (this function IS both). Runs AFTER
+  // overrides so operator edits may themselves carry tokens. Unknown keys
+  // stay visible (amber chip in the editor) and warn; known-but-empty keys
+  // render '' and warn with their Hebrew label.
+  const usedKeys = new Set(extractTokens(subject || ''));
+  for (const s of sections) {
+    if (s.html) for (const k of extractTokens(s.html)) usedKeys.add(k);
+  }
+  if (usedKeys.size) {
+    const { values } = resolveConfirmationVariables({ ...ctx, effectiveDurationHours: effHours }, lang);
+    for (const s of sections) {
+      if (s.html) s.html = substituteHtmlTokens(s.html, values);
+    }
+    if (subject) subject = substituteTokens(subject, values);
+    for (const k of usedKeys) {
+      const def = confirmationVariableByKey(k);
+      if (!def) warnings.push({ code: 'unknown_variable', key: k, label: `{{${k}}}` });
+      else if (!values[k]) warnings.push({ code: 'missing_variable', key: k, label: def.labelHe });
+    }
+  }
+
   if (!subject || !subject.trim()) {
     warnings.push({
       code: 'missing_subject', language: lang, label: 'נושא המייל',
