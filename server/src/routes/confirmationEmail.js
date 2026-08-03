@@ -13,7 +13,11 @@ import {
   blockIdsInSections,
 } from '../confirmation/sections.js';
 import { CONFIRMATION_CONTENT_TYPES } from '../shared-content/sharedContentTypes.js';
-import { composeConfirmationEmail } from '../confirmation/composer.js';
+import {
+  composeConfirmationEmail,
+  attachSlotTemplate,
+  TOUR_DURATION_SELECT,
+} from '../confirmation/composer.js';
 import { normalizeOverrideState } from '../confirmation/overrides.js';
 import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
 import {
@@ -198,9 +202,10 @@ router.put(
 );
 
 // Duration context for the deal-card editor: the tour (or product×city
-// variant) the canonical chain reads from.
+// variant) the canonical chain reads from. The slot template is a LOOSE ref —
+// attachSlotTemplate loads it; it must never appear inside an include.
 async function dealDurationTour(deal) {
-  const tour = deal.bookings?.[0]?.tourEvent || null;
+  const tour = await attachSlotTemplate(prisma, deal.bookings?.[0]?.tourEvent || null);
   if (tour) return tour;
   if (!deal.productId || !deal.locationId) return null;
   return {
@@ -211,18 +216,12 @@ async function dealDurationTour(deal) {
   };
 }
 
-const DEAL_STATE_INCLUDE = {
+export const DEAL_STATE_INCLUDE = {
   confirmation: true,
   bookings: {
     where: { status: 'active' },
     include: {
-      tourEvent: {
-        select: {
-          id: true,
-          openTourTemplate: { select: { durationHoursOverride: true } },
-          productVariant: { select: { durationHours: true } },
-        },
-      },
+      tourEvent: { select: TOUR_DURATION_SELECT },
     },
   },
 };

@@ -28,17 +28,21 @@ const VALIDATION_TEXT = {
 
 export default function DealFillersCard({ dealId, revealed, onHide, onVisibilityInfo, onDealChanged }) {
   const [state, setState] = useState(null); // GET /deal/:id/state payload
+  const [loadError, setLoadError] = useState(null); // NEVER swallowed — a failed
+  // load must be visible when the card is revealed, not an invisible dead card.
   const [draft, setDraft] = useState([]);
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const s = await api.confirmationEmail.dealState(dealId);
       setState(s);
       setDraft(s.fillers);
-    } catch {
+    } catch (e) {
       setState(null);
+      setLoadError(e.payload?.error || e.message || 'load_failed');
     }
   }, [dealId]);
   useEffect(() => {
@@ -55,6 +59,28 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
     [draft, state],
   );
 
+  // Revealed but the state fetch failed → an explicit error card with retry
+  // (a silent null here is exactly how the reveal action "did nothing").
+  if (!state && loadError && revealed) {
+    return (
+      <PanelCard
+        variant="panel"
+        title="תנאי עסקה מיוחדים (פילרים)"
+        action={
+          <button type="button" onClick={onHide} className="text-[12px] font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md px-2 py-1">
+            הסתר
+          </button>
+        }
+      >
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12.5px] text-red-700">
+          שגיאה בטעינת הפילרים: <span dir="ltr" className="font-mono">{loadError}</span>
+          <button type="button" onClick={load} className="ms-2 rounded-md px-2 py-0.5 text-[12px] font-medium text-red-700 underline">
+            נסו שוב
+          </button>
+        </div>
+      </PanelCard>
+    );
+  }
   if (!state) return null;
   if (!hasSaved && !revealed) return null;
 

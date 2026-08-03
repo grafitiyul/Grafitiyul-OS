@@ -63,37 +63,62 @@ const L = {
 
 // ── context loader (ALL db reads live here) ──────────────────────────────────
 
+// What the duration chain needs off a booked TourEvent. openTourTemplateId is
+// a loose ref — NOT a relation — so the slot-override template is loaded by
+// attachSlotTemplate below, never via include.
+export const TOUR_DURATION_SELECT = {
+  id: true,
+  openTourTemplateId: true,
+  productVariant: { select: { durationHours: true } },
+};
+
+/** Attach the open-tour slot template (loose ref) so tourDurationHours can
+ * read its durationHoursOverride. Returns the tour object (or null) with
+ * `openTourTemplate` populated when applicable. */
+export async function attachSlotTemplate(db, tour) {
+  if (!tour) return null;
+  if (!tour.openTourTemplateId) return tour;
+  const openTourTemplate = await db.openTourTemplate.findUnique({
+    where: { id: tour.openTourTemplateId },
+    select: { durationHoursOverride: true },
+  });
+  return { ...tour, openTourTemplate };
+}
+
+// The loader's deal shape — exported so the Prisma-DMMF contract test can
+// prove every field/relation actually exists (fixture tests can't catch an
+// invalid include; see the openTourTemplate incident).
+export const CONFIRMATION_DEAL_INCLUDE = {
+  contacts: {
+    include: { contact: { include: { emails: true } } },
+    orderBy: { isPrimary: 'desc' },
+  },
+  organization: { select: { organizationTypeId: true } },
+  product: { select: { nameHe: true, nameEn: true } },
+  location: {
+    select: {
+      nameHe: true, nameEn: true, logisticsHe: true, logisticsEn: true,
+      parentLocation: { select: { logisticsHe: true, logisticsEn: true } },
+    },
+  },
+  bookings: {
+    where: { status: 'active' },
+    include: {
+      // openTourTemplateId is a LOOSE ref (no FK, no Prisma relation —
+      // templates are config); the template row is fetched separately by
+      // attachSlotTemplate(). Selecting a relation here is an invalid
+      // Prisma query that 500s at runtime while fixture tests stay green.
+      tourEvent: { select: TOUR_DURATION_SELECT },
+    },
+  },
+  confirmation: true,
+};
+
 export async function loadConfirmationContext(client, dealId, { language: langOverride } = {}) {
   const db = client || prisma;
   const deal = await db.deal.findUnique({
     where: { id: dealId },
-    include: {
-      contacts: {
-        include: { contact: { include: { emails: true } } },
-        orderBy: { isPrimary: 'desc' },
-      },
-      organization: { select: { organizationTypeId: true } },
-      product: { select: { nameHe: true, nameEn: true } },
-      location: {
-        select: {
-          nameHe: true, nameEn: true, logisticsHe: true, logisticsEn: true,
-          parentLocation: { select: { logisticsHe: true, logisticsEn: true } },
-        },
-      },
-      bookings: {
-        where: { status: 'active' },
-        include: {
-          tourEvent: {
-            select: {
-              id: true,
-              openTourTemplate: { select: { durationHoursOverride: true } },
-              productVariant: { select: { durationHours: true } },
-            },
-          },
-        },
-      },
-      confirmation: true,
-    },
+    include: CONFIRMATION_DEAL_INCLUDE,
   });
   if (!deal) return { error: 'deal_not_found' };
 
@@ -125,7 +150,7 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
         ? 'en'
         : 'he';
 
-  const tour = deal.bookings[0]?.tourEvent || null;
+  const tour = await attachSlotTemplate(db, deal.bookings[0]?.tourEvent || null);
   // Duration chain needs a variant even without a booked tour.
   const pseudoTour =
     tour ||
