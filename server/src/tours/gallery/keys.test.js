@@ -52,4 +52,20 @@ test('invalid ids are rejected (keys must never be attacker-shaped)', () => {
   assert.throws(() => galleryPrefix('a/b'), /invalid_tour_event_id/);
   assert.throws(() => originalKey('t', 'm/../x', 'a.jpg'), /invalid_media_id/);
   assert.throws(() => galleryPrefix(''), /invalid_tour_event_id/);
+  assert.throws(() => galleryPrefix('a.b'), /invalid_tour_event_id/);
+  assert.throws(() => galleryPrefix('a b'), /invalid_tour_event_id/);
+});
+
+// Regression — 2026-08-03 P0: production TourEvent ids are uuids (hyphenated),
+// not cuids. The id guard rejected the hyphen, so EVERY production upload died
+// at initiate with invalid_tour_event_id before a row was even created.
+test('uuid-shaped ids (real production TourEvent ids) build valid keys', () => {
+  const uuid = '6881e558-71aa-40c3-aa5f-95684ff94a63';
+  assert.equal(galleryPrefix(uuid), `tour-galleries/${uuid}/`);
+  assert.equal(
+    originalKey(uuid, 'abc123def456', 'IMG_0001.jpg'),
+    `tour-galleries/${uuid}/originals/abc123def456/IMG_0001.jpg`,
+  );
+  assert.equal(thumbKey(uuid, 'abc123def456'), `tour-galleries/${uuid}/thumbs/abc123def456.webp`);
+  assert.equal(archiveKey(uuid, 'exp1'), `tour-galleries/${uuid}/archives/exp1.zip`);
 });

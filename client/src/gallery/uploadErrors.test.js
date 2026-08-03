@@ -16,6 +16,7 @@ test('known engine/server codes map to Hebrew', () => {
     'uploads_disabled',
     'upload_not_found',
     'r2_not_configured',
+    'internal_error',
   ]) {
     const label = uploadErrorLabel(code);
     assert.ok(/[א-ת]/.test(label), `${code} → "${label}" must be Hebrew`);

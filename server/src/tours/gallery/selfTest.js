@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import * as r2 from '../../r2.js';
+import { originalKey } from './keys.js';
 
 // Upload-readiness self-test — answers, in one call, "why do uploads fail?"
 // by exercising the exact legs a browser upload uses:
@@ -28,6 +29,7 @@ export async function uploadReadinessSelfTest({
   const result = {
     r2Configured: storage.isConfigured(),
     origin,
+    keyBuilder: null, // 'ok' | error string
     serverPut: null, // 'ok' | error string
     corsPreflight: null, // 'ok' | 'missing_cors_policy' | error string
     corsGet: null, // 'ok' | 'missing_cors_policy' | error string
@@ -38,7 +40,19 @@ export async function uploadReadinessSelfTest({
     result.requiredAction = 'set R2_* env vars';
     return result;
   }
-  const key = `tour-galleries/__selftest__/${crypto.randomBytes(8).toString('hex')}.txt`;
+  // The probe key goes through the SAME builder real uploads use, with a
+  // uuid-shaped tour id — production TourEvent ids are uuids, and a hand-built
+  // probe key once hid a key-builder rejection that killed every real upload
+  // (2026-08-03 P0). The builder failing IS an upload-readiness failure.
+  let key;
+  try {
+    key = originalKey(crypto.randomUUID(), crypto.randomBytes(12).toString('hex'), 'selftest.txt');
+    result.keyBuilder = 'ok';
+  } catch (e) {
+    result.keyBuilder = `error: ${e?.message || e}`;
+    result.requiredAction = 'gallery key builder rejects production-shaped ids — fix tours/gallery/keys.js';
+    return result;
+  }
   try {
     const putUrl = await storage.presignPut({ key, contentType: 'text/plain', expiresIn: 120 });
 
@@ -83,7 +97,8 @@ export async function uploadReadinessSelfTest({
     await storage.deleteObject(key);
   }
 
-  result.ready = result.serverPut === 'ok' && result.corsPreflight === 'ok';
+  result.ready =
+    result.keyBuilder === 'ok' && result.serverPut === 'ok' && result.corsPreflight === 'ok';
   if (!result.ready) {
     result.requiredAction =
       result.serverPut !== 'ok'

@@ -10,7 +10,10 @@
 //   tour-galleries/<tourEventId>/posters/<mediaId>.webp
 //   tour-galleries/<tourEventId>/archives/<exportId>.zip
 
-const ID_RE = /^[a-z0-9]+$/i;
+// cuid (alphanumeric) AND uuid (hyphenated) — production TourEvent ids are
+// uuids, so hyphens are load-bearing. Anything that could shape a key path
+// ('/', '.', whitespace) stays rejected.
+const ID_RE = /^[a-z0-9-]+$/i;
 
 function assertId(id, label) {
   if (!ID_RE.test(String(id || ''))) throw new Error(`invalid_${label}`);

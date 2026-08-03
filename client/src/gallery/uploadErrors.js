@@ -24,6 +24,8 @@ const EXACT = {
   not_found: 'הפריט לא נמצא',
   no_files: 'לא נבחרו קבצים',
   rejected: 'הקובץ נדחה',
+  // Server-side 5xx — the request never reached storage. Retryable.
+  internal_error: 'תקלה זמנית בשרת — נסו שוב בעוד רגע',
 };
 
 export function uploadErrorLabel(code) {
