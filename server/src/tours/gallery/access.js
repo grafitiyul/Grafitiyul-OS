@@ -1,4 +1,4 @@
-import { getGallerySettings } from './service.js';
+import { GALLERY_TITLE_BOOKINGS_INCLUDE, getGallerySettings } from './service.js';
 import { findActiveAssignment, getGuidePortalSettings } from '../guidePortal/access.js';
 
 // Server-side permission resolution for every gallery surface. UI hiding is
@@ -77,13 +77,7 @@ export async function resolveCustomerGalleryAccess(client, { token }) {
       product: { select: { nameHe: true, nameEn: true } },
       location: { select: { nameHe: true } },
       productVariant: { select: { location: { select: { nameHe: true } } } },
-      bookings: {
-        where: { status: 'active' },
-        select: {
-          status: true,
-          deal: { select: { title: true, organization: { select: { name: true } } } },
-        },
-      },
+      bookings: GALLERY_TITLE_BOOKINGS_INCLUDE,
     },
   });
   // A cancelled (or deleted) tour behaves as if the link never existed.

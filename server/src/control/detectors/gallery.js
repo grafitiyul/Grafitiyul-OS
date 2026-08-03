@@ -2,7 +2,10 @@ import { registerIssueType } from '../registry.js';
 import { registerDetector } from '../sweepWorker.js';
 import { raiseIssue, resolveMissing } from '../issueService.js';
 import { emitTimelineEvent, systemOrigin, userOrigin } from '../../timeline/events.js';
-import { buildGalleryTitle } from '../../tours/gallery/service.js';
+import {
+  GALLERY_TITLE_BOOKINGS_INCLUDE,
+  buildGalleryTitle,
+} from '../../tours/gallery/service.js';
 import { requestExport } from '../../tours/gallery/exports.js';
 
 // Gallery cleanup approval — the בקרה side of the gallery safety invariant:
@@ -18,7 +21,7 @@ const dedupeKey = (tourEventId) => `${TYPE}:${tourEventId}`;
 
 const TOUR_TITLE_INCLUDE = {
   product: true,
-  bookings: { include: { deal: { include: { organization: true } } } },
+  bookings: GALLERY_TITLE_BOOKINGS_INCLUDE,
 };
 
 // Build the raiseIssue payload for one awaiting-approval task. Exported for

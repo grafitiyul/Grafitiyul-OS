@@ -5,6 +5,7 @@ import * as r2 from '../r2.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { resolveGuideGalleryAccess } from '../tours/gallery/access.js';
 import {
+  GALLERY_TITLE_BOOKINGS_INCLUDE,
   buildGalleryTitle,
   ensureGallery,
   ensureGalleryLink,
@@ -100,13 +101,7 @@ router.get(
       where: { id: access.tour.id },
       include: {
         product: { select: { nameHe: true, nameEn: true } },
-        bookings: {
-          where: { status: 'active' },
-          select: {
-            status: true,
-            deal: { select: { title: true, organization: { select: { name: true } } } },
-          },
-        },
+        bookings: GALLERY_TITLE_BOOKINGS_INCLUDE,
       },
     });
     const gallery = await prisma.tourGallery.findUnique({ where: { tourEventId: tour.id } });

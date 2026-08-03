@@ -56,22 +56,74 @@ function fmtDate(ymd) {
   return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
+// Safe generic wording when no organization/contact resolves. The ONLY
+// localized part of a gallery title (names stay as stored).
+export const GENERIC_GALLERY_TITLE_HE = 'תמונות מהפעילות';
+export const GENERIC_GALLERY_TITLE_EN = 'Activity Photos';
+
+// THE bookings include for every title/label caller. Customer-safe fields
+// ONLY: organization name + primary-contact name. Deal.title (internal CRM
+// wording — "ליד חדש - …", pipeline labels) is deliberately NOT selected, so
+// no gallery surface can ever leak it, even by accident.
+export const GALLERY_TITLE_BOOKINGS_INCLUDE = {
+  where: { status: 'active' },
+  select: {
+    status: true,
+    deal: {
+      select: {
+        organization: { select: { name: true } },
+        contacts: {
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          take: 1,
+          select: {
+            contact: {
+              select: {
+                firstNameHe: true,
+                lastNameHe: true,
+                firstNameEn: true,
+                lastNameEn: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// Same He-first full-name rule as communication/context.js contactFullName —
+// kept pure/local so the public gallery path does not pull the comms module.
+function contactDisplayName(contact) {
+  if (!contact) return null;
+  const he = `${contact.firstNameHe || ''} ${contact.lastNameHe || ''}`.trim();
+  const en = `${contact.firstNameEn || ''} ${contact.lastNameEn || ''}`.trim();
+  return he || en || null;
+}
+
+// CANONICAL customer-facing display name for a gallery (privacy rule):
+//   organization name → ordering contact's full name → null (caller shows the
+//   generic fallback). NEVER Deal.title / stage names / internal CRM labels.
+// A group slot with several active bookings shows the neutral "סיור קבוצתי" —
+// one shared gallery must not surface any single customer's name.
+export function galleryCustomerLabel(tour) {
+  if (!tour) return null;
+  const active = (tour.bookings || []).filter((b) => b.status === 'active');
+  if (tour.kind === 'group_slot' && active.length > 1) return 'סיור קבוצתי';
+  const deal = active[0]?.deal || null;
+  if (!deal) return null;
+  return deal.organization?.name || contactDisplayName(deal.contacts?.[0]?.contact) || null;
+}
+
 // Live display title — "סיור גרפיטי · 14.07.2026 · חברת ABC". Pure function of
 // current TourEvent data; changing product/date/customer updates the title
 // immediately and never touches storage keys.
 export function buildGalleryTitle(tour) {
-  if (!tour) return 'גלריית סיור';
+  if (!tour) return GENERIC_GALLERY_TITLE_HE;
   const productName = tour.product?.nameHe || null;
   const date = fmtDate(tour.date);
-  let customer = null;
-  const active = (tour.bookings || []).filter((b) => b.status === 'active');
-  if (tour.kind === 'group_slot') {
-    customer = active.length > 1 ? 'סיור קבוצתי' : active[0]?.deal?.title || null;
-  } else {
-    customer = active[0]?.deal?.organization?.name || active[0]?.deal?.title || null;
-  }
-  const parts = [productName || 'סיור', date, customer].filter(Boolean);
-  return parts.join(' · ');
+  const customer = galleryCustomerLabel(tour);
+  if (!productName && !date && !customer) return GENERIC_GALLERY_TITLE_HE;
+  return [productName || 'סיור', date, customer].filter(Boolean).join(' · ');
 }
 
 const MEDIA_LIVE = { deletedAt: null, uploadStatus: 'ready' };

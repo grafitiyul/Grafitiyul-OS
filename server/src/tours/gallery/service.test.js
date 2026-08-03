@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  GALLERY_TITLE_BOOKINGS_INCLUDE,
+  GENERIC_GALLERY_TITLE_HE,
   buildGalleryTitle,
+  galleryCustomerLabel,
   newGalleryToken,
   scheduleGalleryCleanup,
 } from './service.js';
@@ -20,27 +23,119 @@ test('title: product · date · organization for a business tour', () => {
   assert.equal(t, 'סיור גרפיטי · 14.07.2026 · חברת ABC');
 });
 
-test('title: falls back to deal title when no organization', () => {
+// PRIVACY REGRESSION GUARD — Deal.title is internal CRM wording ("ליד חדש -
+// …") and must NEVER appear on a customer-facing gallery. The canonical
+// resolution is organization → ordering contact full name → generic fallback.
+
+test('privacy: organization name wins; internal Deal.title never renders', () => {
+  const tour = {
+    kind: 'business',
+    date: '2026-07-14',
+    product: { nameHe: 'סיור גרפיטי' },
+    bookings: [
+      {
+        status: 'active',
+        deal: {
+          title: 'ליד חדש - לילי',
+          organization: { name: 'עיריית תל אביב' },
+          contacts: [{ contact: { firstNameHe: 'לילי', lastNameHe: 'כהן' } }],
+        },
+      },
+    ],
+  };
+  const t = buildGalleryTitle(tour);
+  assert.equal(t, 'סיור גרפיטי · 14.07.2026 · עיריית תל אביב');
+  assert.ok(!t.includes('ליד חדש'));
+  assert.equal(galleryCustomerLabel(tour), 'עיריית תל אביב');
+});
+
+test('privacy: no organization → ordering contact full name, not Deal.title', () => {
   const t = buildGalleryTitle({
     kind: 'private',
     date: '2026-01-02',
     product: { nameHe: 'סדנת גרפיטי' },
-    bookings: [{ status: 'active', deal: { title: 'משפחת לוי' } }],
+    bookings: [
+      {
+        status: 'active',
+        deal: {
+          title: 'ליד חדש - לילי',
+          organization: null,
+          contacts: [{ contact: { firstNameHe: 'לילי', lastNameHe: 'לוי' } }],
+        },
+      },
+    ],
   });
-  assert.equal(t, 'סדנת גרפיטי · 02.01.2026 · משפחת לוי');
+  assert.equal(t, 'סדנת גרפיטי · 02.01.2026 · לילי לוי');
+  assert.ok(!t.includes('ליד חדש'));
+});
+
+test('privacy: contact falls back to English name; no names at all → title stays safe', () => {
+  const en = galleryCustomerLabel({
+    kind: 'private',
+    bookings: [
+      {
+        status: 'active',
+        deal: { title: 'ליד חדש', contacts: [{ contact: { firstNameEn: 'John', lastNameEn: 'Doe' } }] },
+      },
+    ],
+  });
+  assert.equal(en, 'John Doe');
+  const bare = buildGalleryTitle({
+    kind: 'private',
+    date: '2026-01-02',
+    product: { nameHe: 'סדנה' },
+    bookings: [{ status: 'active', deal: { title: 'ליד חדש - לילי', contacts: [] } }],
+  });
+  assert.equal(bare, 'סדנה · 02.01.2026');
+  assert.ok(!bare.includes('ליד'));
+});
+
+test('privacy: nothing resolvable at all → generic fallback', () => {
+  assert.equal(buildGalleryTitle(null), GENERIC_GALLERY_TITLE_HE);
+  assert.equal(
+    buildGalleryTitle({ kind: 'private', date: 'bad', product: null, bookings: [] }),
+    GENERIC_GALLERY_TITLE_HE,
+  );
+});
+
+test('privacy: the shared bookings include never selects Deal.title', () => {
+  // Structural guard: the customer route can only leak what it fetches — the
+  // canonical include must not select the deal title (or any other field
+  // beyond organization name + contact names).
+  const dealSelect = GALLERY_TITLE_BOOKINGS_INCLUDE.select.deal.select;
+  assert.equal('title' in dealSelect, false);
+  assert.deepEqual(Object.keys(dealSelect).sort(), ['contacts', 'organization']);
 });
 
 test('title: group slot with several active bookings shows קבוצתי, not one customer', () => {
+  const tour = {
+    kind: 'group_slot',
+    date: '2026-03-05',
+    product: { nameHe: 'סיור' },
+    bookings: [
+      { status: 'active', deal: { title: 'א', organization: { name: 'ארגון א' } } },
+      { status: 'active', deal: { title: 'ב', contacts: [{ contact: { firstNameHe: 'ב' } }] } },
+    ],
+  };
+  assert.equal(buildGalleryTitle(tour), 'סיור · 05.03.2026 · סיור קבוצתי');
+  // One shared group gallery never surfaces a single customer's identity.
+  assert.equal(galleryCustomerLabel(tour), 'סיור קבוצתי');
+});
+
+test('title: group slot with ONE active booking shows THAT customer (org → contact)', () => {
   const t = buildGalleryTitle({
     kind: 'group_slot',
     date: '2026-03-05',
     product: { nameHe: 'סיור' },
     bookings: [
-      { status: 'active', deal: { title: 'א' } },
-      { status: 'active', deal: { title: 'ב' } },
+      {
+        status: 'active',
+        deal: { title: 'ליד חדש - לילי', contacts: [{ contact: { firstNameHe: 'לילי', lastNameHe: 'כהן' } }] },
+      },
+      { status: 'cancelled', deal: { title: 'אחר', organization: { name: 'ארגון אחר' } } },
     ],
   });
-  assert.equal(t, 'סיור · 05.03.2026 · סיור קבוצתי');
+  assert.equal(t, 'סיור · 05.03.2026 · לילי כהן');
 });
 
 test('title: cancelled bookings are ignored; missing parts are dropped', () => {
@@ -51,7 +146,6 @@ test('title: cancelled bookings are ignored; missing parts are dropped', () => {
     bookings: [{ status: 'cancelled', deal: { title: 'ישן' } }],
   });
   assert.equal(t, 'סיור · 14.07.2026');
-  assert.equal(buildGalleryTitle(null), 'גלריית סיור');
 });
 
 test('title changes when tour data changes — same media, same keys, new title', () => {

@@ -3,7 +3,11 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../r2.js';
 import { resolveCustomerGalleryAccess } from '../tours/gallery/access.js';
-import { buildGalleryTitle, getGallerySettings } from '../tours/gallery/service.js';
+import {
+  buildGalleryTitle,
+  galleryCustomerLabel,
+  getGallerySettings,
+} from '../tours/gallery/service.js';
 import {
   abortUpload,
   completeUpload,
@@ -105,14 +109,14 @@ router.get(
       const key = cover.thumbKey || cover.posterKey || cover.objectKey;
       coverUrl = await r2.presignGet({ key, expiresIn: 3600 });
     }
-    // Display context for the header — the SAME exposure class as `title`
-    // (which already carries product + customer): organization name (or deal
-    // title), tour time/location, and the tour kind. Nothing else.
-    const activeBookings = (access.tour.bookings || []).filter((b) => b.status === 'active');
+    // Display context for the header — the canonical customer-safe label:
+    // organization name → ordering contact full name → null. NEVER Deal.title
+    // (internal CRM wording must not reach a customer page).
     const customerLabel =
-      access.tour.kind === 'group_slot' && activeBookings.length > 1
+      access.tour.kind === 'group_slot' &&
+      (access.tour.bookings || []).filter((b) => b.status === 'active').length > 1
         ? null
-        : activeBookings[0]?.deal?.organization?.name || activeBookings[0]?.deal?.title || null;
+        : galleryCustomerLabel(access.tour);
     res.json({
       title: buildGalleryTitle(access.tour),
       logoUrl: await brandLogoUrl(),
