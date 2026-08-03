@@ -4,6 +4,7 @@ import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from '../products/ImageUploader.jsx';
 import { SHARED_CONTENT_TYPES, TYPE_LABEL } from './sharedContentMeta.js';
 import SharedContentVariantLinker from './SharedContentVariantLinker.jsx';
+import TranslateButton from '../common/TranslateButton.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -107,6 +108,9 @@ export default function SharedContentEditorDialog({
           <RichEditor value={bodyHe} onChange={setBodyHe} ariaLabel="shared content he" minContentHeight={120} placeholder="תוכן, הוראות, קישורים…" />
         </Field>
         <Field label="Content (EN)">
+          <div dir="rtl" className="mb-1 flex justify-end">
+            <TranslateButton getSource={() => bodyHe} getTarget={() => bodyEn} onResult={setBodyEn} />
+          </div>
           <RichEditor value={bodyEn} onChange={setBodyEn} ariaLabel="shared content en" minContentHeight={120} placeholder="Content, directions, links…" />
         </Field>
 

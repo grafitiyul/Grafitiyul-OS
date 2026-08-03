@@ -4,6 +4,7 @@ import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import TranslateButton from '../../common/TranslateButton.jsx';
 
 // CRM settings → Quote Content Sections. Reusable fixed content blocks for
 // FUTURE quote templates. Content management only — quote generation is not
@@ -257,7 +258,10 @@ function SectionEditor({ item, onClose, onSaved }) {
           />
         </label>
         <label className="block">
-          <span className={LABEL}>Title (EN) — אופציונלי</span>
+          <span className={`${LABEL} flex items-center justify-between`}>
+            Title (EN) — אופציונלי
+            <TranslateButton getSource={() => titleHe} getTarget={() => titleEn} onResult={setTitleEn} format="text" />
+          </span>
           <input
             value={titleEn}
             onChange={(e) => setTitleEn(e.target.value)}
@@ -293,7 +297,10 @@ function SectionEditor({ item, onClose, onSaved }) {
       </div>
 
       <div>
-        <span className={LABEL}>Rich content (EN)</span>
+        <div className="flex items-center justify-between">
+          <span className={LABEL}>Rich content (EN)</span>
+          <TranslateButton getSource={() => richTextHe} getTarget={() => richTextEn} onResult={setRichTextEn} />
+        </div>
         <RichEditor
           value={richTextEn}
           onChange={setRichTextEn}

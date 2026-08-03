@@ -87,6 +87,7 @@ import quoteImagesRouter from './routes/quoteImages.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import confirmationEmailRouter from './routes/confirmationEmail.js';
+import translateRouter from './routes/translate.js';
 import tourContentRouter from './routes/tourContent.js';
 import toursRouter from './routes/tours.js';
 import openToursRouter from './routes/openTours.js';
@@ -464,6 +465,8 @@ app.use('/api/shared-content', requireAdminAuth, sharedContentRouter);
 // Confirmation Email (מייל אישור) — dedicated module: template management.
 // Deliberately separate from the Communication Center.
 app.use('/api/confirmation-email', requireAdminAuth, confirmationEmailRouter);
+// Shared bilingual-field AI translation (settings "תרגם לאנגלית" actions).
+app.use('/api/translate', requireAdminAuth, translateRouter);
 // Tour Content (Phase 1a foundation) — GOS-owned internal tour content
 // (Tour → Station → ordered Steps → reusable ContentBlocks). Admin-only. No
 // recruitment migration, no permissions/access, no R2 uploads yet.

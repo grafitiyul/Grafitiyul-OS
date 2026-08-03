@@ -111,3 +111,82 @@ export async function translateContent({ subject = '', body = '', channel, tone 
   );
   return { subject: result.subject || '', body: normalizedBody };
 }
+
+const FIELD_SCHEMA = {
+  type: 'object',
+  properties: {
+    content: {
+      type: 'string',
+      description:
+        'Translated content, same format as the input (HTML stays HTML with identical tags/attributes; plain text stays plain text)',
+    },
+  },
+  required: ['content'],
+  additionalProperties: false,
+};
+
+/**
+ * Translate ONE bilingual field — the shared service behind the settings-wide
+ * "תרגם לאנגלית" action. Direction-aware ('he_to_en' | 'en_to_he'), same
+ * guarantees as translateContent: token preservation verified mechanically,
+ * chips byte-preserved, output is ALWAYS a draft the caller fills into the
+ * target field — nothing is saved here. Throws the same coded errors.
+ */
+export async function translateField({
+  content = '',
+  direction = 'he_to_en',
+  tone = null,
+  format = 'html',
+  providerClient = null,
+}) {
+  const c = providerClient || client();
+  if (!c) throw coded('translation_not_configured');
+
+  const he2en = direction !== 'en_to_he';
+  const src = he2en ? 'Hebrew' : 'English';
+  const dst = he2en ? 'English' : 'Hebrew';
+  const toneHint = TONE_HINTS[tone] || TONE_HINTS.service;
+  const system = [
+    `You translate ${src} content into natural, fluent ${dst} for an Israeli tour company (Grafitiyul — graffiti and street-art tours).`,
+    'Rules:',
+    '- Translate meaning and tone naturally; NEVER literally word-for-word.',
+    `- Register: ${toneHint}.`,
+    '- Preserve EVERY {{variable_token}} exactly as-is, in the position that makes sense in the translated sentence. Never translate, rename, remove, or invent tokens.',
+    '- If the content is HTML: keep the exact same tags and attributes (including <span data-type="dynamic-field" data-field-key="..."> chips — copy them byte-identical, do not translate their inner label text). Only translate human-readable text.',
+    '- Preserve links, paragraph structure, line breaks, lists and formatting.',
+    '- Keep emojis.',
+    '- Do not add content that is not in the source.',
+  ].join('\n');
+
+  let result;
+  try {
+    const response = await c.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      system,
+      output_config: { format: { type: 'json_schema', schema: FIELD_SCHEMA } },
+      messages: [{
+        role: 'user',
+        content: `Translate the following ${src} ${format === 'html' ? 'rich-text (HTML) field' : 'plain-text field'} into ${dst}.\n\nContent:\n${content}`,
+      }],
+    });
+    if (response.stop_reason === 'refusal') throw coded('translation_failed', 'refused');
+    const block = response.content.find((b) => b.type === 'text');
+    result = JSON.parse(block?.text || '{}');
+  } catch (err) {
+    if (err?.code) throw err;
+    throw coded('translation_failed', String(err?.message || err).slice(0, 200));
+  }
+
+  const before = new Set(extractTokens(content));
+  const after = new Set(extractTokens(result.content));
+  const lost = [...before].filter((k) => !after.has(k));
+  const invented = [...after].filter((k) => !before.has(k));
+  if (lost.length || invented.length) throw coded('translation_tokens_changed', { lost, invented });
+
+  const normalized =
+    format === 'html'
+      ? normalizeTokensToChips(result.content || '', (key) => variableByKey(key)?.labelHe || null)
+      : result.content || '';
+  return { content: normalized };
+}

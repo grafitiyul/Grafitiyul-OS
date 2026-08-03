@@ -11,6 +11,7 @@ import {
 } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import { PaymentTermsButton } from './OrgTypePaymentTermsModal.jsx';
+import TranslateButton from '../../common/TranslateButton.jsx';
 
 const FIELD_LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 
@@ -35,7 +36,14 @@ function QuoteContentEditor({ draft, setDraft }) {
         </p>
       </div>
       <div>
-        <span className={FIELD_LABEL}>Quote content</span>
+        <div className="flex items-center justify-between">
+          <span className={FIELD_LABEL}>Quote content</span>
+          <TranslateButton
+            getSource={() => draft.quoteContentHe}
+            getTarget={() => draft.quoteContentEn}
+            onResult={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
+          />
+        </div>
         <RichEditor
           value={draft.quoteContentEn || ''}
           onChange={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}

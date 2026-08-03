@@ -13,6 +13,7 @@ import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from './ImageUploader.jsx';
+import TranslateButton from '../common/TranslateButton.jsx';
 import { HomeIcon } from '../common/FieldIcons.jsx';
 import LocationDefaultsDialog from './LocationDefaultsDialog.jsx';
 
@@ -297,7 +298,10 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
           </div>
 
           <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (אנגלית)</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[13px] font-medium text-gray-700">נקודת מפגש (אנגלית)</label>
+              <TranslateButton getSource={() => meetingHe} getTarget={() => meetingEn} onResult={setMeetingEn} />
+            </div>
             <RichEditor value={meetingEn} onChange={setMeetingEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={90} />
             <p className="text-[11px] text-gray-400 mt-1.5">לפסקה באנגלית השתמשו בכפתור כיוון LTR שבסרגל העריכה.</p>
           </div>
@@ -309,7 +313,10 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
             <RichEditor value={marketingHe} onChange={setMarketingHe} ariaLabel="תוכן שיווקי לעיר בעברית" placeholder="תוכן שיווקי שיופיע בהצעות מחיר…" minContentHeight={120} />
           </div>
           <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">City marketing content (EN)</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[13px] font-medium text-gray-700">City marketing content (EN)</label>
+              <TranslateButton getSource={() => marketingHe} getTarget={() => marketingEn} onResult={setMarketingEn} />
+            </div>
             <RichEditor value={marketingEn} onChange={setMarketingEn} ariaLabel="City marketing content (EN)" placeholder="Marketing content for quotes…" minContentHeight={120} />
           </div>
 
@@ -323,7 +330,10 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
                 <RichEditor value={logisticsHe} onChange={setLogisticsHe} ariaLabel="לוגיסטיקה במיקום — עברית" placeholder="חניה, הגעה, שירותים, נגישות…" minContentHeight={110} />
               </div>
               <div>
-                <span className="block text-[12px] font-medium text-gray-500 mb-1">English</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="block text-[12px] font-medium text-gray-500">English</span>
+                  <TranslateButton getSource={() => logisticsHe} getTarget={() => logisticsEn} onResult={setLogisticsEn} />
+                </div>
                 <div dir="ltr">
                   <RichEditor value={logisticsEn} onChange={setLogisticsEn} ariaLabel="Location logistics — English" placeholder="Parking, arrival, restrooms, accessibility…" minContentHeight={110} />
                 </div>

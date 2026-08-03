@@ -9,6 +9,7 @@ import { ACTIVITY_TYPE_LABELS } from '../../deals/config.js';
 import { TYPE_LABEL, htmlPreview } from '../../shared-content/sharedContentMeta.js';
 import ConfirmationTestSendDialog from './ConfirmationTestSendDialog.jsx';
 import VariableMenu from '../../communication/VariableMenu.jsx';
+import TranslateButton from '../../common/TranslateButton.jsx';
 import { registerDynamicFields, getDynamicFieldByKey } from '../../../lib/dynamicFields.js';
 import { normalizeTokensToChips } from '../../../../../shared/variableTokens.mjs';
 
@@ -522,7 +523,10 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
             <SubjectPreview value={subjectHe} />
           </label>
           <label className="block">
-            <span className={LABEL}>English</span>
+            <span className={`${LABEL} flex items-center justify-between`}>
+              English
+              <TranslateButton getSource={() => subjectHe} getTarget={() => subjectEn} onResult={setSubjectEn} format="text" />
+            </span>
             <input
               ref={subjectEnRef}
               onFocus={() => { lastSubjectRef.current = 'en'; }}
@@ -646,7 +650,10 @@ function BilingualRich({ label, he, en, onHe, onEn, meta }) {
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className={LABEL}>English</span>
-            <VariableMenu variables={variables} categories={categories} editorRef={enRef} showKeys={false} />
+            <span className="flex items-center gap-1.5">
+              <TranslateButton getSource={() => he} getTarget={() => en} onResult={(v) => onEn(hydrate(v))} />
+              <VariableMenu variables={variables} categories={categories} editorRef={enRef} showKeys={false} />
+            </span>
           </div>
           <div dir="ltr">
             <RichEditor

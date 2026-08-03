@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
 import RichEditor from '../../editor/RichEditor.jsx';
+import TranslateButton from '../common/TranslateButton.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
 import VariantSharedContent from './VariantSharedContent.jsx';
@@ -495,6 +496,10 @@ function BiEditor({ he, en, onHe, onEn, heLabel = 'עברית', enLabel = 'Engli
         <RichEditor value={he} onChange={onHe} minContentHeight={minH} ariaLabel={heLabel} />
       </Field>
       <Field label={enLabel} ltr>
+        {/* Shared AI translate — fills the En editor, never saves. */}
+        <div dir="rtl" className="mb-1 flex justify-end">
+          <TranslateButton getSource={() => he} getTarget={() => en} onResult={onEn} />
+        </div>
         <div dir="ltr"><RichEditor value={en} onChange={onEn} minContentHeight={minH} ariaLabel={enLabel} placeholder="Write here..." /></div>
       </Field>
     </div>

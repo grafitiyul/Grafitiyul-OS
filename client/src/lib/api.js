@@ -1093,6 +1093,11 @@ export const api = {
     convert: (variantId, type) => request(`/api/shared-content/variant/${variantId}/convert`, { method: 'POST', body: JSON.stringify({ type }) }),
     detach: (variantId, type) => request(`/api/shared-content/variant/${variantId}/${type}`, { method: 'DELETE' }),
   },
+  // Shared bilingual-field AI translation (the settings תרגם לאנגלית action).
+  translate: {
+    field: (data) => request('/api/translate', { method: 'POST', body: JSON.stringify(data) }),
+    status: () => request('/api/translate/status'),
+  },
   // Confirmation Email (מייל אישור) — dedicated module, NOT the Communication
   // Center. Template management; composition/preview/send arrive in later slices.
   confirmationEmail: {
