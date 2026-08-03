@@ -421,8 +421,12 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
         }
         sections.push({
           id: 'cancellation_policy', kind: 'auto', key: 'cancellation_policy',
+          // `title` is the INTERNAL section label (override dialog, warnings)
+          // only — deliberately NOT customerTitle: the operator authors the
+          // heading inside the special text itself, so the composer must not
+          // inject a second one. Same in Hebrew and English.
           title: lang === 'en' ? 'Cancellation policy' : 'מדיניות ביטול',
-          customerTitle: true, html: r.html, source: r.source,
+          html: r.html, source: r.source,
           // INTERNAL provenance for the preview — never rendered to customers.
           sourceLabel: r.sourceLabel,
           editable: true,

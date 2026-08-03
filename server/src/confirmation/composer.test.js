@@ -395,6 +395,21 @@ test('email HTML: internal block names never render; customer titles do', () => 
   assert.match(html, /<p>תנאי<\/p>/);
 });
 
+test('cancellation renders ONLY the authored text — no injected heading', () => {
+  for (const lang of ['he', 'en']) {
+    const r = composeFromContext(ctx({ language: lang }));
+    const s = byId(r, 'cancellation_policy');
+    assert.equal(s.customerTitle, undefined, `${lang}: must not be customer-titled`);
+    // The internal label survives for the override dialog / warnings…
+    assert.ok(s.title);
+    // …but never reaches the customer in either language.
+    assert.doesNotMatch(r.emailHtml, /<h3>מדיניות ביטול<\/h3>/);
+    assert.doesNotMatch(r.emailHtml, /<h3>Cancellation policy<\/h3>/);
+  }
+  // The authored customer text itself is still there.
+  assert.match(composeFromContext(ctx()).emailHtml, /<p>מדיניות רגילה<\/p>/);
+});
+
 test('email HTML: an operator override title renders as a customer heading', () => {
   const r = composeFromContext(ctx(), {
     overrideOverlay: { sections: { 'block:sc_bring': { html: '<p>ציוד</p>', title: 'מה להביא לסיור' } } },

@@ -404,7 +404,7 @@ router.post(
     if (composed.error) return res.status(422).json({ error: composed.error, ...composed.meta });
 
     // Test send (QA): the EXACT same composer/resolver/queue pipeline — the
-    // only differences are the recipient, a '[בדיקה]' subject prefix, no
+    // only differences are the recipient, a trailing '[בדיקה]' subject marker, no
     // deal/contact thread linking and no timeline entry (a QA probe is not
     // customer communication). Everything else, including sending windows and
     // the snapshot, is production behavior.
@@ -415,7 +415,9 @@ router.post(
       { email: req.body?.to || composed.recipient?.email, name: isTest ? null : composed.recipient?.name },
     ]);
     const baseSubject = String(req.body?.subject ?? composed.subject ?? '').trim();
-    const subject = isTest && baseSubject ? `[בדיקה] ${baseSubject}` : baseSubject;
+    // Suffix, not prefix: the real subject stays readable at a glance in the
+    // inbox list, with the test marker trailing it.
+    const subject = isTest && baseSubject ? `${baseSubject} [בדיקה]` : baseSubject;
     if (!to.length) return res.status(422).json({ error: 'no_recipient_email' });
     if (!subject) return res.status(422).json({ error: 'missing_subject' });
 
