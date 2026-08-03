@@ -28,6 +28,21 @@ export function tourDurationHours(tour) {
   return DEFAULT_DURATION_HOURS;
 }
 
+/**
+ * Effective activity duration for a DEAL (hours). The operator-confirmed Deal
+ * override (Deal.durationHours — written via the confirmation-email
+ * "משך הפעילות" filler) beats the operational chain; otherwise the canonical
+ * tour rule applies (open-tour slot override → variant → platform default).
+ * ONE business fact, ONE reader — every surface that shows a deal's duration
+ * must call this, never re-derive. Frozen documents (quote snapshots) are
+ * unaffected by definition: they never re-read live data.
+ */
+export function effectiveDurationHours(deal, tour) {
+  const override = Number(deal?.durationHours);
+  if (Number.isFinite(override) && override > 0) return override;
+  return tourDurationHours(tour);
+}
+
 /** The tour's real start instant (ms), or null when it has no datetime. */
 export function tourStartMs(tour) {
   if (!tour?.date) return null;

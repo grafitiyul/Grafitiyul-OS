@@ -18,6 +18,13 @@ export const SHARED_CONTENT_TYPES = [
   { key: 'safety', labelHe: 'בטיחות', cardinality: 'list' },
   { key: 'map', labelHe: 'מפה', cardinality: 'single' },
   { key: 'custom', labelHe: 'תוכן כללי', cardinality: 'list' },
+  // Confirmation Email module (מייל אישור) — SAME library, dedicated types
+  // (approved decision D1: no second reusable-content system). Templates
+  // reference these via ConfirmationTemplateBlock; the cancellation-policy
+  // rows are the predefined policies a deal filler can pick from.
+  { key: 'confirmation_cancellation_policy', labelHe: 'מדיניות ביטול — מייל אישור', cardinality: 'list' },
+  { key: 'confirmation_what_to_bring', labelHe: 'מה להביא — מייל אישור', cardinality: 'list' },
+  { key: 'confirmation_special_block', labelHe: 'בלוק תוכן — מייל אישור', cardinality: 'list' },
 ];
 
 export const SHARED_CONTENT_TYPE_KEYS = SHARED_CONTENT_TYPES.map((t) => t.key);

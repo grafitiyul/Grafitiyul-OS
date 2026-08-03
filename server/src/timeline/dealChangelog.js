@@ -52,6 +52,7 @@ const TRACKED_FIELDS = [
   { key: 'discountMinor', labelHe: 'הנחה', type: 'money' },
   { key: 'currency', labelHe: 'מטבע', type: 'text' },
   { key: 'participants', labelHe: 'כמות משתתפים', type: 'number' },
+  { key: 'durationHours', labelHe: 'משך הפעילות (שעות)', type: 'number' },
   { key: 'tourDate', labelHe: 'תאריך הסיור', type: 'dateStr' },
   { key: 'tourTime', labelHe: 'שעת הסיור', type: 'text' },
   { key: 'productId', labelHe: 'מוצר', type: 'fk', model: 'product', labelField: 'nameHe' },

@@ -1138,6 +1138,15 @@ model Deal {
   // scalars; pricing CONSUMES it (group-aware base calculation) — there is no
   // pricing-specific copy. NULL = 1 group.
   groups                Int?
+  // Operator-confirmed activity-duration override (hours), written via the
+  // confirmation-email "משך הפעילות" filler. NULL = canonical operational chain
+  // (open-tour slot override → variant → platform default). ONE reader:
+  // effectiveDurationHours() in src/tours/tourTime.js — never re-derive.
+  // Changelog-tracked. Historical quote documents are frozen snapshots and are
+  // NOT affected by this field.
+  durationHours         Float?
+  // Confirmation Email module — per-deal fillers + preview overrides.
+  confirmation          DealConfirmation?
   // DEPRECATED back-compat only — no longer written. Superseded by paymentMethodId.
   paymentMethod         String?
   communicationLanguage String? // he | en
@@ -2353,6 +2362,10 @@ model Location {
   // QuoteSection). Bilingual rich HTML. Referenced by the City content block.
   marketingDescHe       String? // rich HTML
   marketingDescEn       String? // rich HTML
+  // Location logistics for the confirmation email (מייל אישור) — bilingual rich
+  // HTML rendered automatically as the email's "location logistics" section.
+  logisticsHe           String? // rich HTML
+  logisticsEn           String? // rich HTML
   meetingPointImage     MediaFile?           @relation("LocationMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId   String?
   active                Boolean              @default(true)
@@ -3342,6 +3355,8 @@ model SharedContent {
   createdAt              DateTime                      @default(now())
   updatedAt              DateTime                      @updatedAt
   variantLinks           ProductVariantSharedContent[]
+  // Confirmation-email templates that include this block (back-relation).
+  confirmationTemplateLinks ConfirmationTemplateBlock[]
   // Locations that reference this block as their default (back-relations).
   locationDefaultMeeting Location[]                    @relation("LocationDefaultMeeting")
   locationDefaultEnding  Location[]                    @relation("LocationDefaultEnding")
@@ -3370,6 +3385,116 @@ model ProductVariantSharedContent {
   @@unique([productVariantId, sharedContentId])
   @@index([productVariantId])
   @@index([sharedContentId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirmation Email module (מייל אישור) — a DEDICATED module, deliberately NOT
+// part of the Communication Center (which stays generic). Owns template
+// selection, composition, per-deal fillers, preview overrides and immutable
+// send snapshots. Actual delivery rides the canonical email queue
+// (ScheduledEmail + email/scheduledWorker.js) — connected Gmail account,
+// retries, connection-deferral, sending windows — never a direct side-path.
+// Design: docs/architecture/GOS-confirmation-email-module-2026-08-03.md.
+
+// One confirmation-email template. EXACTLY ONE template resolves per deal:
+// matching/specificity/priority/ambiguity-refusal live in
+// src/confirmation/resolveTemplate.js (the pricing-engine rule — never guess
+// between equally specific templates).
+model ConfirmationEmailTemplate {
+  id            String   @id @default(cuid())
+  internalName  String // admin-facing (never shown to customers)
+  // Exactly one all-wildcard default — enforced at the API (the
+  // PriceList.isDefault convention: setting one unsets the previous).
+  isDefault     Boolean  @default(false)
+  active        Boolean  @default(true)
+  // Scoping — empty array = wildcard (matches all). String enums validated at
+  // the API (no Postgres enum — project convention).
+  productIds    String[] @default([])
+  activityTypes String[] @default([]) // group | private | business
+  orgTypeIds    String[] @default([])
+  priority      Int      @default(0) // tiebreak inside equal specificity
+  // Ordered section layout:
+  //   [{ kind:'auto',  key:'greeting'|'tour_details'|'meeting_point'
+  //        |'meeting_point_image'|'location_logistics'|'special_terms'
+  //        |'closing', hidden:false },
+  //    { kind:'block', sharedContentId, hidden:false }]
+  // Blocks referenced here MUST have a ConfirmationTemplateBlock row (the
+  // reference-integrity layer below); this JSON owns ORDER + visibility only —
+  // the API keeps the two in sync on every save.
+  sections      Json?
+  subjectHe     String?
+  subjectEn     String?
+  // Optional wording overrides for the auto greeting/closing sections (rich
+  // HTML); null = the code-level bilingual default in the composer.
+  greetingHe    String?
+  greetingEn    String?
+  closingHe     String?
+  closingEn     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  blockLinks ConfirmationTemplateBlock[]
+
+  @@index([active, isDefault])
+}
+
+// Explicit reference: a template includes a Shared Content block. The
+// ProductVariantSharedContent pattern: template → Cascade, sharedContent →
+// Restrict (a referenced block is NOT silently deletable — deletion is a
+// library operation guarded by "where used"). Order/visibility live in
+// ConfirmationEmailTemplate.sections, NOT here — one order, no drift.
+model ConfirmationTemplateBlock {
+  id              String                    @id @default(cuid())
+  template        ConfirmationEmailTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId      String
+  sharedContent   SharedContent             @relation(fields: [sharedContentId], references: [id], onDelete: Restrict)
+  sharedContentId String
+
+  @@unique([templateId, sharedContentId])
+  @@index([sharedContentId])
+}
+
+// Per-deal confirmation state (the DealTourPlan pattern: dealId @unique side
+// table, Deal stays lean). `fillers` = [{ kind, ...payload }] validated against
+// the code registry src/confirmation/fillers.js (at most one entry per kind).
+// `overrideState` = persistent per-deal preview overrides,
+// { sections: { [key]: { html?, title? } } } — the QuoteDocument.overrideState
+// convention (sparse, field-level merge, temporary layer never stored).
+model DealConfirmation {
+  id            String   @id @default(cuid())
+  deal          Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId        String   @unique
+  fillers       Json?
+  overrideState Json?
+  updatedById   String? // loose actor id (project convention)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Immutable snapshot of every confirmation email handed to the queue — the
+// audit answer to "what exactly did the customer get". Content fields are
+// NEVER updated after creation; delivery outcome (retries, sent/failed,
+// provider id, logging) lives on the linked ScheduledEmail row, which the
+// queue owns. Loose ids (no FKs) — the audit outlives entities, the
+// CommunicationDelivery convention.
+model ConfirmationEmailSend {
+  id                String   @id @default(cuid())
+  dealId            String
+  templateId        String? // loose — the template may be edited/deleted later
+  templateName      String // frozen display name at send time
+  language          String // he | en — the ACTUAL sent language
+  recipientSnapshot Json // { name, email, contactId }
+  subject           String
+  bodyHtml          String // final rendered HTML exactly as enqueued
+  fillersSnapshot   Json? // active fillers at send time
+  overridesSnapshot Json? // persistent + temporary overrides, merged, for audit
+  imagesSnapshot    Json? // [{ role, mediaFileId, r2Key, url }]
+  scheduledEmailId  String? // loose ref → the canonical email-queue row
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  @@index([dealId, createdAt])
+  @@index([scheduledEmailId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
