@@ -112,6 +112,7 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
 import ConfirmationEmailSettings from './admin/crm/settings/ConfirmationEmailSettings.jsx';
+import ConfirmationSnapshotView from './admin/confirmation/ConfirmationSnapshotView.jsx';
 import CommunicationPage from './admin/communication/CommunicationPage.jsx';
 import AdminReportsPage from './admin/adminReports/AdminReportsPage.jsx';
 import CommEventEditorPage from './admin/communication/EventEditorPage.jsx';
@@ -265,6 +266,8 @@ export default function App() {
         {/* Admin archive view of a generated quote's frozen snapshot (the
             public URL of a superseded version shows the replacement screen). */}
         <Route path="quote-view/:docId" element={<QuoteSnapshotView />} />
+        {/* Admin archive view of a SENT confirmation email's frozen snapshot. */}
+        <Route path="confirmation-view/:sendId" element={<ConfirmationSnapshotView />} />
         {/* Global Settings — category cards. CRM Settings (incl. the
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}

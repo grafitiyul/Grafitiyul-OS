@@ -465,6 +465,24 @@ router.post(
   }),
 );
 
+// GET /sends/:id — one immutable snapshot (the archive viewer). Read-only by
+// construction: content fields are never updated after creation; delivery
+// outcome is read live off the linked queue row.
+router.get(
+  '/sends/:id',
+  handle(async (req, res) => {
+    const snap = await prisma.confirmationEmailSend.findUnique({ where: { id: req.params.id } });
+    if (!snap) return res.status(404).json({ error: 'send_not_found' });
+    const delivery = snap.scheduledEmailId
+      ? await prisma.scheduledEmail.findUnique({
+        where: { id: snap.scheduledEmailId },
+        select: { status: true, sentAt: true, failureReason: true, waitReason: true, attemptCount: true },
+      })
+      : null;
+    res.json({ ...snap, delivery });
+  }),
+);
+
 // DELETE /:id — the default is undeletable (promote another first). Block
 // links cascade with the template; library content is never touched.
 router.delete(

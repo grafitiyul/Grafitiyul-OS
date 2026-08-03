@@ -29,6 +29,16 @@ export default function CommunicationEventRow({ entry }) {
           <span className="text-gray-500"> · {d.eventName}{d.messageName ? ` — ${d.messageName}` : ''}</span>
           {d.messageNumber != null && <span className="font-mono text-[11px] text-gray-400"> · #{d.messageNumber}</span>}
         </span>
+        {manual && d.sendId && (
+          <a
+            href={`/admin/confirmation-view/${d.sendId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium text-blue-600 hover:bg-blue-50"
+          >
+            צפייה
+          </a>
+        )}
         <span className="shrink-0 text-[11px] text-gray-400">
           {when
             ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })

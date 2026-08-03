@@ -1,7 +1,26 @@
 # GOS — Confirmation Email Module (מייל אישור) — Audit + Architecture Proposal
 
 Date: 2026-08-03
-Status: PROPOSED — awaiting owner approval. No code written yet.
+Status: SHIPPED 2026-08-03 (slices 1-6, commits b1682b3 → Slice-6). Approved
+with decisions D1-D4 + clarifications; as-built deviations from Part B:
+
+- **Delivery rides the canonical email queue** (owner directive, supersedes
+  §B1's direct-send design): POST /deal/:id/send freezes the Gmail account,
+  creates a ScheduledEmail row (scheduledAt=now) and the immutable
+  ConfirmationEmailSend snapshot in one tx; the 60s worker owns retries,
+  connection-deferral, customer×email sending windows, mirror + CRM linking.
+- **D3**: no-fillers send is direct (no generic confirm); duplicate-click 409
+  within 10s; validation popups only for missing data, each offering the
+  preview dialog as the escape hatch (also for content-gap warnings, which
+  block unacknowledged sends).
+- Deal-card note editors are STACKED He/En (the 460px panel can't carry
+  side-by-side); side-by-side lives in the settings screens as specced.
+- Block internal names are NEVER rendered to customers — the only email
+  headings are customer-facing ones (special_terms + operator override
+  titles, `customerTitle`).
+- Snapshot archive viewer: /admin/confirmation-view/:sendId (timeline צפייה).
+- OPEN: the new-guide default wording (fillers.js NEW_GUIDE_DEFAULT_NOTE) is
+  a minimal placeholder — owner copy wanted before heavy use.
 
 ---
 
