@@ -14,6 +14,15 @@ import {
 } from '../confirmation/sections.js';
 import { CONFIRMATION_CONTENT_TYPES } from '../shared-content/sharedContentTypes.js';
 import { composeConfirmationEmail } from '../confirmation/composer.js';
+import {
+  FILLER_KINDS,
+  NEW_GUIDE_DEFAULT_NOTE,
+  normalizeFillers,
+  validateFillers,
+} from '../confirmation/fillers.js';
+import { tourDurationHours, effectiveDurationHours } from '../tours/tourTime.js';
+import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 
 // CRM settings → מייל אישור — confirmation-email template management.
 // Selection semantics (specificity → priority → REFUSE ambiguity) live in
@@ -183,6 +192,130 @@ router.put(
 
     const { conflicts } = await listPayload();
     res.json({ template: row, conflicts });
+  }),
+);
+
+// Duration context for the deal-card editor: the tour (or product×city
+// variant) the canonical chain reads from.
+async function dealDurationTour(deal) {
+  const tour = deal.bookings?.[0]?.tourEvent || null;
+  if (tour) return tour;
+  if (!deal.productId || !deal.locationId) return null;
+  return {
+    productVariant: await prisma.productVariant.findFirst({
+      where: { productId: deal.productId, locationId: deal.locationId },
+      select: { durationHours: true },
+    }),
+  };
+}
+
+const DEAL_STATE_INCLUDE = {
+  confirmation: true,
+  bookings: {
+    where: { status: 'active' },
+    include: {
+      tourEvent: {
+        select: {
+          id: true,
+          openTourTemplate: { select: { durationHoursOverride: true } },
+          productVariant: { select: { durationHours: true } },
+        },
+      },
+    },
+  },
+};
+
+// GET /deal/:dealId/state — the deal card's working set: active fillers,
+// duration context, the predefined cancellation policies, and the filler
+// vocabulary (labels + the editable new-guide default wording).
+router.get(
+  '/deal/:dealId/state',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({
+      where: { id: req.params.dealId },
+      include: DEAL_STATE_INCLUDE,
+    });
+    if (!deal) return res.status(404).json({ error: 'deal_not_found' });
+    const tour = await dealDurationTour(deal);
+    const fillers = normalizeFillers(deal.confirmation?.fillers);
+    const policies = await prisma.sharedContent.findMany({
+      where: { type: 'confirmation_cancellation_policy', active: true },
+      select: { id: true, internalName: true, bodyHe: true, bodyEn: true },
+      orderBy: [{ sortOrder: 'asc' }, { internalName: 'asc' }],
+    });
+    res.json({
+      fillers,
+      hasFillers: fillers.length > 0,
+      durationInfo: {
+        canonicalHours: tourDurationHours(tour),
+        effectiveHours: effectiveDurationHours(deal, tour),
+        overridden: deal.durationHours != null,
+      },
+      policies,
+      meta: {
+        fillerKinds: FILLER_KINDS.map((f) => ({ kind: f.kind, labelHe: f.labelHe })),
+        newGuideDefaultNote: NEW_GUIDE_DEFAULT_NOTE,
+      },
+    });
+  }),
+);
+
+// PUT /deal/:dealId/state — save the filler set. The activity_duration filler
+// ALSO writes Deal.durationHours (structured, changelog-tracked); removing it
+// clears the override. One timeline entry summarizes the filler set change.
+router.put(
+  '/deal/:dealId/state',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({
+      where: { id: req.params.dealId },
+      include: { confirmation: true },
+    });
+    if (!deal) return res.status(404).json({ error: 'deal_not_found' });
+
+    const fillers = normalizeFillers(req.body?.fillers);
+    const problems = validateFillers(fillers);
+    if (problems.length) return res.status(400).json({ error: 'invalid_fillers', problems });
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const durationFiller = fillers.find((f) => f.kind === 'activity_duration');
+    const nextDuration = durationFiller ? durationFiller.durationHours : null;
+
+    const before = await prisma.deal.findUnique({
+      where: { id: deal.id },
+      select: DEAL_DIFF_SELECT,
+    });
+    const prevKinds = normalizeFillers(deal.confirmation?.fillers).map((f) => f.kind);
+    const nextKinds = fillers.map((f) => f.kind);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.deal.update({ where: { id: deal.id }, data: { durationHours: nextDuration } });
+      await tx.dealConfirmation.upsert({
+        where: { dealId: deal.id },
+        create: { dealId: deal.id, fillers, updatedById: req.adminAuth?.userId || null },
+        update: { fillers, updatedById: req.adminAuth?.userId || null },
+      });
+      const added = nextKinds.filter((k) => !prevKinds.includes(k));
+      const removed = prevKinds.filter((k) => !nextKinds.includes(k));
+      if (added.length || removed.length) {
+        const label = (k) => FILLER_KINDS.find((f) => f.kind === k)?.labelHe || k;
+        await emitTimelineEvent(tx, {
+          subjectId: deal.id,
+          kind: 'change',
+          origin,
+          data: {
+            title: 'תנאי עסקה מיוחדים (פילרים)',
+            changes: [
+              ...added.map((k) => ({ fieldKey: `filler:${k}`, labelHe: label(k), oldDisplay: null, newDisplay: 'פעיל' })),
+              ...removed.map((k) => ({ fieldKey: `filler:${k}`, labelHe: label(k), oldDisplay: 'פעיל', newDisplay: null })),
+            ],
+          },
+        }); // emitTimelineEvent touches lastMeaningfulActivityAt itself
+      }
+    });
+    const after = await prisma.deal.findUnique({ where: { id: deal.id }, select: DEAL_DIFF_SELECT });
+    await recordDealChanges(prisma, { dealId: deal.id, before, after, origin });
+
+    res.json({ ok: true, fillers, hasFillers: fillers.length > 0 });
   }),
 );
 

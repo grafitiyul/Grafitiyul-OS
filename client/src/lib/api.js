@@ -1100,6 +1100,12 @@ export const api = {
     create: (data) => request('/api/confirmation-email', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/confirmation-email/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/confirmation-email/${id}`, { method: 'DELETE' }),
+    // Deal-side: fillers state + the one compose pipeline (preview == send).
+    dealState: (dealId) => request(`/api/confirmation-email/deal/${dealId}/state`),
+    saveDealState: (dealId, data) =>
+      request(`/api/confirmation-email/deal/${dealId}/state`, { method: 'PUT', body: JSON.stringify(data) }),
+    compose: (dealId, data = {}) =>
+      request(`/api/confirmation-email/deal/${dealId}/compose`, { method: 'POST', body: JSON.stringify(data) }),
   },
   payment: {
     listTerms: () => request('/api/payment-config/terms'),

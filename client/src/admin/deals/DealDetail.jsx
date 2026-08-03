@@ -42,6 +42,7 @@ import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePicke
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import DealCollectionCard from './DealCollectionCard.jsx';
+import DealFillersCard from './confirmation/DealFillersCard.jsx';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
@@ -166,6 +167,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [regModal, setRegModal] = useState(null);
   const [reopenConfirmTour, setReopenConfirmTour] = useState(null);
   const [lostPending, setLostPending] = useState(null);
+  // תנאי עסקה מיוחדים (פילרים): ephemeral reveal (kebab shows the empty card;
+  // Hide returns it). A deal WITH saved fillers always shows the card.
+  const [fillersRevealed, setFillersRevealed] = useState(false);
+  const [hasFillers, setHasFillers] = useState(false);
   // Pending Tour Update actions + the leave-with-pending confirmation target.
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
   const [leaveHref, setLeaveHref] = useState(null);
@@ -769,6 +774,17 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                       <div className="my-1 border-t border-gray-100" />
                     </>
                   )}
+                  {/* Reveal the fillers card; hidden again via its Hide button
+                      (only while it has no saved fillers). */}
+                  {!hasFillers && !fillersRevealed && (
+                    <button
+                      type="button"
+                      onClick={() => { close(); setFillersRevealed(true); }}
+                      className="flex w-full items-center px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                    >
+                      תנאי עסקה מיוחדים (פילרים)
+                    </button>
+                  )}
                   {TOUR_PLACEHOLDER_ACTIONS.map((label) => (
                     <MenuSoonItem key={label} label={label} />
                   ))}
@@ -935,6 +951,17 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               onSave={(v) => saveField({ customerInfo: v || null })} />
           </div>
         </Card>
+
+        {/* תנאי עסקה מיוחדים (פילרים) — structured deal-term deviations that
+            feed the confirmation email. Hidden until fillers exist or the
+            kebab reveals it. */}
+        <DealFillersCard
+          dealId={deal.id}
+          revealed={fillersRevealed}
+          onHide={() => setFillersRevealed(false)}
+          onVisibilityInfo={setHasFillers}
+          onDealChanged={refresh}
+        />
 
         {/* Quote Module — the COMPLETE proposal workspace (business deals only:
             group/private deals don't send proposals). Generation, versions,
