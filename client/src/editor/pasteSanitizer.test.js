@@ -163,3 +163,56 @@ test('a lone mso-list style on ordinary text is NOT turned into a list', () => {
   assert.match(out, /<p[^>]*>real text<\/p>/);
   assert.doesNotMatch(out, /<li/);
 });
+
+// ---- pasted emoji / tiny-icon images (production bug: giant emoji) ----
+
+test('twemoji-style <img> with emoji alt becomes the Unicode emoji', () => {
+  const out = sanitizePastedHtml(
+    '<p>נתראה <img src="https://cdn.example/72x72/1f600.png" alt="😀" class="emoji" width="20" height="20"> מחר</p>',
+  );
+  assert.doesNotMatch(out, /<img/);
+  assert.match(out, /נתראה 😀 מחר/);
+});
+
+test('ZWJ/skin-tone emoji sequences in alt survive as one glyph', () => {
+  const out = sanitizePastedHtml('<p><img src="https://x/y.png" alt="👍🏽" width="18"></p>');
+  assert.match(out, /👍🏽/);
+  assert.doesNotMatch(out, /<img/);
+});
+
+test('tiny icon without emoji alt is dropped, alt text kept when present', () => {
+  const withAlt = sanitizePastedHtml('<p>hi <img src="https://x/i.png" alt="logo" width="16"> there</p>');
+  assert.doesNotMatch(withAlt, /<img/);
+  assert.match(withAlt, /hi logo there/);
+  const noAlt = sanitizePastedHtml('<p>hi <img src="https://x/i.png" width="16"> there</p>');
+  assert.doesNotMatch(noAlt, /<img/);
+});
+
+test('style-declared tiny width counts (Word/Docs put size in style)', () => {
+  const out = sanitizePastedHtml('<p><img src="https://x/e.png" alt="🎉" style="width:20px;height:20px"></p>');
+  assert.match(out, /🎉/);
+  assert.doesNotMatch(out, /<img/);
+});
+
+test('data: URI images are dropped on paste (base64 never reaches the doc)', () => {
+  const out = sanitizePastedHtml('<p>a <img src="data:image/png;base64,iVBORw0KGgo="> b</p>');
+  assert.doesNotMatch(out, /<img/);
+  assert.doesNotMatch(out, /base64/);
+});
+
+test('a real content image (large, real src) is untouched', () => {
+  const out = sanitizePastedHtml('<p><img src="https://cdn.example/photo.jpg" alt="נקודת המפגש" width="800" height="600"></p>');
+  assert.match(out, /<img[^>]*src="https:\/\/cdn\.example\/photo\.jpg"/);
+});
+
+test('an image with no sizing info at all is treated as content, not emoji', () => {
+  const out = sanitizePastedHtml('<p><img src="https://cdn.example/photo.jpg" alt="תמונה מהסיור"></p>');
+  assert.match(out, /<img[^>]*src="https:\/\/cdn\.example\/photo\.jpg"/);
+});
+
+test('plain digits in alt are NOT mistaken for emoji', () => {
+  const out = sanitizePastedHtml('<p><img src="https://x/n.png" alt="123" width="20"></p>');
+  // tiny → replaced by alt text, but as TEXT "123", never kept as an image
+  assert.doesNotMatch(out, /<img/);
+  assert.match(out, /123/);
+});

@@ -1,27 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
+import { EMOJI_I18N_HE, loadEmojiPicker } from '../lib/emojiPickerData.js';
 
-// The one shared emoji list + picker for GOS. Used by BOTH the body editor's
-// toolbar (RichEditor via Toolbar.jsx) and the single-line TitleEditor, so
-// there is exactly one emoji implementation — no per-screen duplication.
+// The one shared emoji picker for every rich-text surface. Used by the body
+// editor's toolbar (RichEditor via Toolbar.jsx), the single-line TitleEditor
+// and the WhatsApp body editor — exactly one emoji implementation.
 //
-// Insertion is a plain character via `insertContent`: it works in any TipTap
-// editor, in RTL and LTR content alike (an emoji is just a character), and it
-// never creates a new block — so it's safe even in the single-paragraph title.
-export const EMOJIS = [
-  '😀', '🙂', '😅', '😎', '🤝', '👍', '👌', '🙏',
-  '🎉', '✅', '✔️', '❗', '❓', '⚠️', '⭐', '🔥',
-  '❤️', '💡', '📌', '📞', '✉️', '📅', '🕒', '💰',
-];
-
-// `placement` controls which way the popup opens: 'up' (default) suits a
-// bottom toolbar; 'down' suits a control near the top of a form (the title row).
+// Backed by emoji-picker-element (the full Unicode catalog, categories,
+// search, skin tones, frequently-used via IndexedDB) with the SAME bundled
+// dataset + Hebrew i18n as the WhatsApp chat composer — no external service,
+// nothing fetched at runtime. Loaded lazily on first open.
+//
+// Insertion is a plain Unicode character via `insertContent`: it works in any
+// TipTap editor, in RTL and LTR content alike, never creates a block node and
+// NEVER an <img> — an emoji is just a character.
 export default function EmojiButton({ editor, placement = 'up' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const hostRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     function onDoc(e) {
+      // The picker lives in the host's light DOM subtree — contains() covers it.
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
     }
     function onEsc(e) {
@@ -35,14 +35,34 @@ export default function EmojiButton({ editor, placement = 'up' }) {
     };
   }, [open]);
 
-  function insert(emoji) {
-    if (!editor) return;
-    editor.chain().focus().insertContent(emoji).run();
-    setOpen(false);
-  }
+  // Mount the web component into the popup on open (lazy element + dataset).
+  useEffect(() => {
+    if (!open) return;
+    let disposed = false;
+    let picker = null;
+    let onPick = null;
+    loadEmojiPicker().then(({ dataSource }) => {
+      if (disposed || !hostRef.current) return;
+      picker = document.createElement('emoji-picker');
+      picker.dataSource = dataSource;
+      picker.i18n = EMOJI_I18N_HE;
+      picker.style.width = '100%';
+      picker.style.height = '100%';
+      onPick = (e) => {
+        const emoji = e?.detail?.unicode;
+        if (emoji && editor) editor.chain().focus().insertContent(emoji).run();
+        setOpen(false);
+      };
+      picker.addEventListener('emoji-click', onPick);
+      hostRef.current.replaceChildren(picker);
+    });
+    return () => {
+      disposed = true;
+      if (picker && onPick) picker.removeEventListener('emoji-click', onPick);
+    };
+  }, [open, editor]);
 
-  const menuPos =
-    placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-1';
+  const menuPos = placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-1';
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -58,21 +78,16 @@ export default function EmojiButton({ editor, placement = 'up' }) {
       </button>
       {open && (
         <div
-          role="menu"
+          role="dialog"
+          aria-label="בחירת אימוג'י"
           dir="ltr"
-          className={`absolute ${menuPos} left-0 bg-white border border-gray-200 rounded-md shadow-lg z-30 p-2 grid grid-cols-8 gap-0.5 w-[18rem]`}
+          className={`absolute ${menuPos} left-0 z-30 h-[22rem] w-[20rem] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg`}
         >
-          {EMOJIS.map((em) => (
-            <button
-              key={em}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => insert(em)}
-              className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-[18px]"
-            >
-              {em}
-            </button>
-          ))}
+          <div ref={hostRef} className="h-full w-full">
+            <div className="flex h-full items-center justify-center text-[12px] text-gray-400">
+              טוען אימוג׳ים…
+            </div>
+          </div>
         </div>
       )}
     </div>

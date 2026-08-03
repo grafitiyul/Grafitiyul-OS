@@ -179,6 +179,10 @@ export function sanitizePastedHtml(html) {
     // <o:p> markers). Drop comment nodes up front so they can't wedge between
     // list markers and their text.
     stripComments(doc.body);
+    // Emoji/tiny-icon <img> normalization MUST run before cleanAttributes
+    // strips width/height/class — that sizing evidence is what identifies an
+    // inline emoji sprite vs a real content image.
+    normalizeEmojiImages(doc.body);
     unwrapSpuriousBold(doc.body);
     // Word does not emit <ul>/<ol>. It emits <p class="MsoListParagraph"> with
     // the bullet/number in a leading marker span. Rebuild real lists BEFORE the
@@ -213,6 +217,57 @@ export function sanitizePastedHtml(html) {
     return doc.body.innerHTML;
   } catch {
     return html;
+  }
+}
+
+// ── Pasted emoji images → Unicode ────────────────────────────────────────────
+// WhatsApp Web, Slack, Google Docs and many sites copy emoji as <img>
+// elements (twemoji-style sprites carrying the real character in `alt`, or
+// tiny inline PNGs). Left alone, MediaImage's bare-img parse rule turns each
+// into a full-column BLOCK figure — a 20px emoji becomes a giant image that
+// splits the paragraph (production bug). Policy:
+//   • emoji-only alt  → replace the <img> with its Unicode alt text
+//   • tiny icon (≤48px declared, or an emoji-ish class) → its alt text is the
+//     content; without alt it is decoration and is dropped
+//   • data: URI      → dropped (alt text kept). Real images go through the
+//     media-upload toolbar (R2); allowBase64:false was always the intent —
+//     the bare-img parse rule bypassed it and base64 blobs reached the DB.
+// Legitimate content images (real src, no tiny sizing) are untouched.
+
+// Emoji-only test: at least one pictograph/flag, and nothing but emoji
+// machinery (components, ZWJ, variation selectors, keycap, whitespace).
+// Emoji_Component alone is not enough — it matches plain digits.
+const HAS_EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+const EMOJI_ONLY_RE = /^[\p{Extended_Pictographic}\p{Emoji_Component}\p{Regional_Indicator}‍️⃣\s]+$/u;
+
+function isEmojiAlt(alt) {
+  const t = String(alt || '').trim();
+  return !!t && t.length <= 24 && HAS_EMOJI_RE.test(t) && EMOJI_ONLY_RE.test(t);
+}
+
+function declaredPx(img, name) {
+  const attr = img.getAttribute(name);
+  if (attr) {
+    const n = Number(String(attr).replace(/px$/i, '').trim());
+    if (Number.isFinite(n)) return n;
+  }
+  const style = img.getAttribute('style') || '';
+  const m = new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*(\\d+(?:\\.\\d+)?)px`, 'i').exec(style);
+  return m ? Number(m[1]) : null;
+}
+
+function normalizeEmojiImages(body) {
+  for (const img of [...body.querySelectorAll('img')]) {
+    const alt = (img.getAttribute('alt') || '').trim();
+    const cls = img.getAttribute('class') || '';
+    const w = declaredPx(img, 'width');
+    const h = declaredPx(img, 'height');
+    const tiny =
+      (w != null && w <= 48) || (h != null && h <= 48) || /(^|[\s_-])emoji([\s_-]|$)/i.test(cls);
+    const dataUri = (img.getAttribute('src') || '').trim().toLowerCase().startsWith('data:');
+    if (!isEmojiAlt(alt) && !tiny && !dataUri) continue; // real content image
+    if (alt) img.replaceWith(body.ownerDocument.createTextNode(alt));
+    else img.remove();
   }
 }
 
