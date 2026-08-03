@@ -10,8 +10,12 @@ import { countryName, isoForIntlDigits } from '../../lib/phone.js';
 // Since 2026-07-30 this is a thin wrapper: prefix detection lives in the ONE
 // shared table (lib/phone.js isoForIntlDigits) and rendering is the ONE shared
 // <CountryFlag> — the duplicate WhatsApp-only table and span are gone.
-export default function PhoneFlag({ phone }) {
+//
+// `className` sets the SIZE (flag-icons scale with font-size): identity title
+// lines use a large readable flag (e.g. text-[16px]); the tiny default suits
+// secondary phone lines.
+export default function PhoneFlag({ phone, className = 'text-[9px]' }) {
   const iso = isoForIntlDigits(phone);
   if (!iso) return null;
-  return <CountryFlag iso={iso} name={countryName(iso)} className="shrink-0 text-[9px]" />;
+  return <CountryFlag iso={iso} name={countryName(iso)} className={`shrink-0 ${className}`} />;
 }

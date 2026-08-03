@@ -227,6 +227,14 @@ export default function ChatListRow({
             מוסתרת
           </span>
         )}
+        {/* Foreign-number flag — FIRST line, beside the identity, large enough
+            to actually read (flag-icons scale with font-size). Outside the
+            name span so the RTL row keeps it on the leading edge for Hebrew
+            and English names alike. Israeli numbers render nothing (PhoneFlag
+            policy). */}
+        {!isGroup && chat.phoneNumber && (
+          <PhoneFlag phone={chat.phoneNumber} className="text-[16px]" />
+        )}
         <span
           className={`min-w-0 flex-1 truncate text-right text-[14px] ${
             unread ? 'font-bold text-gray-900' : 'font-normal text-gray-600'
@@ -236,14 +244,7 @@ export default function ChatListRow({
           {chat.displayName && chat.displayName !== chat.phoneNumber ? (
             chat.displayName
           ) : chat.phoneNumber ? (
-            // Phone-titled row (no name anywhere): the flag must ride the
-            // TITLE. The phone badge row below only renders when a NAME holds
-            // the title (showPhone), so before this, unknown foreign numbers —
-            // the rows that need a flag most — never showed one.
-            <span dir="ltr" className="inline-flex items-center gap-1">
-              <PhoneFlag phone={chat.phoneNumber} />
-              {formatPhoneDisplay(chat.phoneNumber)}
-            </span>
+            <span dir="ltr">{formatPhoneDisplay(chat.phoneNumber)}</span>
           ) : (
             'לא מזוהה'
           )}
@@ -294,11 +295,10 @@ export default function ChatListRow({
             {chat.account.label}
           </span>
         )}
-        {/* Phone — always visible, on the identity edge; foreign numbers
-            carry a small country flag (Israeli numbers stay bare). */}
+        {/* Phone — always visible, on the identity edge. The country flag now
+            rides the TITLE line (large), so this stays digits-only. */}
         {showPhone && (
           <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-gray-400" dir="ltr">
-            <PhoneFlag phone={chat.phoneNumber} />
             {formatPhoneDisplay(chat.phoneNumber)}
           </span>
         )}
@@ -307,6 +307,17 @@ export default function ChatListRow({
           // they are read/reply conversations, outside the CRM workflow.
           <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-500">
             👥 קבוצה
+          </span>
+        ) : chat.staff ? (
+          // INTERNAL STAFF conversation — canonical Staff-module identity
+          // (PersonRef, matched server-side). Replaces the CRM chips entirely:
+          // a staff chat is never a lead needing שיוך or a deal. Violet is
+          // deliberately a color no other badge in this module uses.
+          <span
+            className="rounded-full bg-violet-600 px-2 py-0.5 text-[10.5px] font-bold text-white shadow-sm"
+            title={`שיחת צוות פנימית${chat.staff.name ? ` — ${chat.staff.name}` : ''}`}
+          >
+            צוות
           </span>
         ) : chat.deal ? (
           // The EXACT Deal-header badge (shared resolver + shared tones).

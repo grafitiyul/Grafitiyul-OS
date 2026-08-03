@@ -650,8 +650,14 @@ export const api = {
     update: (id, data) => request(`/api/whatsapp-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/whatsapp-templates/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/whatsapp-templates/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
-    resolved: (id, dealId, lang) =>
-      request(`/api/whatsapp-templates/${id}/resolved${qs({ dealId, lang })}`),
+    // subject: a dealId string (Deal modal) OR { chatId } (standalone inbox).
+    resolved: (id, subject, lang) =>
+      request(
+        `/api/whatsapp-templates/${id}/resolved${qs({
+          ...(typeof subject === 'string' ? { dealId: subject } : subject || {}),
+          lang,
+        })}`,
+      ),
   },
   // ── Tours catalogs (Settings → Tours) ────────────────────────────
   activityComponents: {

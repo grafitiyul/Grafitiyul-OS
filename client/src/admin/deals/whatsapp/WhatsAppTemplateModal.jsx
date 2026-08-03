@@ -7,6 +7,7 @@ import SearchSelect from '../../communication/SearchSelect.jsx';
 import ChatComposer from '../../whatsapp/ChatComposer.jsx';
 import AccountBubbles from '../../whatsapp/AccountBubbles.jsx';
 import { useSubjectChats } from '../../whatsapp/useSubjectChats.js';
+import { formatPhoneDisplay } from '../../../lib/phone.js';
 
 // Deal → "תבנית ווטסאפ". Pick an internal template + language, get the resolved
 // wording as an ORDINARY editable draft, edit it, send.
@@ -32,19 +33,32 @@ import { useSubjectChats } from '../../whatsapp/useSubjectChats.js';
 // surfaces can never disagree about who this goes to or which of our numbers
 // it leaves from. Picking a number here is also the global sending mode, so
 // the dock follows, and vice versa.
+//
+// TWO entry doors, ONE implementation:
+//   dealId — the Deal surface (unchanged): contact × account selection via
+//            useSubjectChats, deal-context variable resolution.
+//   chat   — the standalone WhatsApp inbox: the conversation is ALREADY chosen
+//            (the open thread), so there is nothing to select — the identity
+//            row shows who/from-where as facts. Variable resolution goes by
+//            chatId and the SERVER re-derives the deal through the shared
+//            confident-resolution rule, so a deal-linked chat behaves exactly
+//            like the Deal door; without a deal, only what the linked contact
+//            can truthfully answer resolves (missing → reported, never a raw
+//            token).
 
 const LANGS = [
   { key: 'he', label: 'עברית' },
   { key: 'en', label: 'English' },
 ];
 
-export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent }) {
+export default function WhatsAppTemplateModal({ open, dealId = null, chat: chatProp = null, onClose, onSent }) {
   const [templates, setTemplates] = useState(null);
   const [loadError, setLoadError] = useState(null);
 
   const [templateId, setTemplateId] = useState('');
   const [lang, setLang] = useState('he');
 
+  const inboxMode = !dealId && !!chatProp;
   const {
     loading: chatsLoading,
     contacts,
@@ -52,13 +66,14 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
     activeContact,
     accounts,
     activeAccountId,
-    activeChat: chat,
+    activeChat: subjectChat,
     chatByAccount,
     unreadByAccount,
     selectContact,
     selectAccount,
     adoptChat,
-  } = useSubjectChats('deal', dealId, { enabled: open });
+  } = useSubjectChats('deal', dealId, { enabled: open && !!dealId });
+  const chat = inboxMode ? chatProp : subjectChat;
 
   // The resolved copy currently seeded into the composer + the composer's live
   // text, so an edited draft can be told from an untouched one.
@@ -129,7 +144,11 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
       setResolveError(null);
       setMissingVars([]);
       try {
-        const r = await api.whatsappTemplates.resolved(id, dealId, language);
+        const r = await api.whatsappTemplates.resolved(
+          id,
+          inboxMode ? { chatId: chatProp.id } : dealId,
+          language,
+        );
         nonceRef.current += 1;
         setSeed({ text: r.text || '', nonce: nonceRef.current });
         setLiveText(r.text || '');
@@ -146,7 +165,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
         setResolving(false);
       }
     },
-    [dealId],
+    [dealId, inboxMode, chatProp?.id],
   );
 
   // Apply a template/language choice, warning first when it would throw away
@@ -199,15 +218,31 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
             </p>
-          ) : !templates || chatsLoading ? (
+          ) : !templates || (!inboxMode && chatsLoading) ? (
             <p className="py-12 text-center text-sm text-gray-400">טוען…</p>
           ) : (
             <>
               {/* Row 1 — WHO this goes to and FROM WHICH of our numbers. The
                   same two axes as the Deal's WhatsApp panel, in the same order,
-                  through the same shared control. */}
+                  through the same shared control. In inbox mode both are FACTS
+                  (the open conversation), not choices. */}
               <div className="flex min-h-[26px] flex-wrap items-center gap-x-3 gap-y-1.5">
-                {contacts.length > 1 ? (
+                {inboxMode ? (
+                  <>
+                    <span className="truncate text-[12.5px] font-medium text-gray-700" dir="auto">
+                      {chatProp.contact?.name ||
+                        (chatProp.displayName && chatProp.displayName !== chatProp.phoneNumber
+                          ? chatProp.displayName
+                          : formatPhoneDisplay(chatProp.phoneNumber)) ||
+                        'לא מזוהה'}
+                    </span>
+                    {chatProp.account?.label && (
+                      <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                        דרך {chatProp.account.label}
+                      </span>
+                    )}
+                  </>
+                ) : contacts.length > 1 ? (
                   <select
                     value={activeContact?.id || ''}
                     onChange={(e) => selectContact(e.target.value)}
@@ -226,13 +261,15 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     <span className="truncate text-[12.5px] font-medium text-gray-700">{activeContact.name}</span>
                   )
                 )}
-                <AccountBubbles
-                  accounts={accounts}
-                  activeId={activeAccountId}
-                  chatByAccount={chatByAccount}
-                  unreadByAccount={unreadByAccount}
-                  onSelect={selectAccount}
-                />
+                {!inboxMode && (
+                  <AccountBubbles
+                    accounts={accounts}
+                    activeId={activeAccountId}
+                    chatByAccount={chatByAccount}
+                    unreadByAccount={unreadByAccount}
+                    onSelect={selectAccount}
+                  />
+                )}
                 {resolving && <span className="shrink-0 text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
               </div>
 
@@ -296,9 +333,11 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   "no first name saved" there would be untrue. */}
               {missingVars.includes('customer_first_name') && (
                 <p className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
-                  {lang === 'en'
-                    ? 'לאיש הקשר אין שם פרטי באנגלית, ולכן הפנייה נפתחה בלי שם. בכוונה לא משתמשים בשם העברי בהודעה באנגלית — אפשר להשלים ידנית לפני השליחה.'
-                    : 'לאיש הקשר אין שם פרטי בעברית, ולכן הפנייה נפתחה בלי שם. אפשר להשלים ידנית לפני השליחה.'}
+                  {inboxMode && !chatProp.contact
+                    ? 'השיחה לא מקושרת לאיש קשר במערכת, ולכן משתני הלקוח לא זמינים והפנייה נפתחה בלי שם. אפשר להשלים ידנית לפני השליחה (או לשייך את השיחה לאיש קשר).'
+                    : lang === 'en'
+                      ? 'לאיש הקשר אין שם פרטי באנגלית, ולכן הפנייה נפתחה בלי שם. בכוונה לא משתמשים בשם העברי בהודעה באנגלית — אפשר להשלים ידנית לפני השליחה.'
+                      : 'לאיש הקשר אין שם פרטי בעברית, ולכן הפנייה נפתחה בלי שם. אפשר להשלים ידנית לפני השליחה.'}
                 </p>
               )}
               {resolveError && (
@@ -347,8 +386,8 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                       // sending number must keep the wording the operator already
                       // edited, not reset it to the template.
                       chat={chat}
-                      dealId={dealId}
-                      onMaterialized={adoptChat}
+                      dealId={inboxMode ? chatProp.deal?.id || null : dealId}
+                      onMaterialized={inboxMode ? undefined : adoptChat}
                       fill
                       // This is a message EDITOR, not a chat input: Enter inserts
                       // a newline and the שליחה button is the ONLY way to send.

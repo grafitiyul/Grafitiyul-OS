@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { normalizeTokensToChips } from '../../../shared/variableTokens.mjs';
-import { loadTriggerContext } from '../communication/context.js';
+import { loadTriggerContext, publicOrigin } from '../communication/context.js';
 import { variableByKey } from '../communication/variables.js';
+import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import {
   resolveTemplateBody,
   templateVariables,
@@ -174,15 +175,26 @@ router.delete(
   }),
 );
 
-// Resolve ONE template for ONE deal + language → plain WhatsApp markup, ready to
-// become the composer's editable draft. Read-only: resolves nothing else, sends
-// nothing, writes nothing.
+// Resolve ONE template for ONE subject + language → plain WhatsApp markup,
+// ready to become the composer's editable draft. Read-only: resolves nothing
+// else, sends nothing, writes nothing.
+//
+// Two subjects, ONE resolution stack:
+//   ?dealId=  — the Deal modal (unchanged): full trigger context.
+//   ?chatId=  — the standalone inbox. The server re-derives the deal through
+//     the SHARED confident-resolution rule (crm/dealResolution — exactly one
+//     open/recent-WON candidate), so a deal-linked conversation gets the same
+//     deal-aware variables as the Deal modal. No confident deal → the context
+//     carries exactly what can truthfully be known (the linked contact, or
+//     nothing); a missing value resolves to EMPTY and is REPORTED, never
+//     shipped as a raw token (same policy as the deal path).
 router.get(
   '/:id/resolved',
   handle(async (req, res) => {
     const dealId = String(req.query.dealId || '').trim();
+    const chatId = String(req.query.chatId || '').trim();
     const lang = req.query.lang === 'en' ? 'en' : 'he';
-    if (!dealId) return res.status(400).json({ error: 'deal_id_required' });
+    if (!dealId && !chatId) return res.status(400).json({ error: 'deal_id_required' });
 
     const template = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
     if (!template) return res.status(404).json({ error: 'not_found' });
@@ -192,10 +204,37 @@ router.get(
     // the selector shows it as unavailable and this stays an honest error.
     if (!bodyHtml) return res.status(409).json({ error: 'language_unavailable' });
 
-    const deal = await prisma.deal.findUnique({ where: { id: dealId }, select: { id: true } });
-    if (!deal) return res.status(404).json({ error: 'deal_not_found' });
-
-    const ctx = await loadTriggerContext({ dealId });
+    let ctx;
+    if (dealId) {
+      const deal = await prisma.deal.findUnique({ where: { id: dealId }, select: { id: true } });
+      if (!deal) return res.status(404).json({ error: 'deal_not_found' });
+      ctx = await loadTriggerContext({ dealId });
+    } else {
+      const chat = await prisma.whatsAppChat.findUnique({
+        where: { id: chatId },
+        select: { id: true, contactId: true, contact: { include: { phones: true, emails: true } } },
+      });
+      if (!chat) return res.status(404).json({ error: 'chat_not_found' });
+      let resolvedDealId = null;
+      if (chat.contactId) {
+        const outcome = classifyDealsForContact(await dealsForContact(chat.contactId));
+        if (outcome.kind === 'open') resolvedDealId = outcome.dealId;
+      }
+      ctx = resolvedDealId
+        ? await loadTriggerContext({ dealId: resolvedDealId })
+        : {
+            deal: null,
+            contact: chat.contact || null,
+            fieldContact: null,
+            org: null,
+            tour: null,
+            payment: null,
+            reservation: null,
+            quoteDoc: null,
+            owner: null,
+            links: { origin: publicOrigin(), paymentUrl: null },
+          };
+    }
     const { text, missing } = resolveTemplateBody(bodyHtml, ctx, lang);
 
     res.set('Cache-Control', 'no-store');

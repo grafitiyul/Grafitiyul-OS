@@ -7,6 +7,7 @@ import ChatThread from './ChatThread.jsx';
 import ChatListRow from './ChatListRow.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import DealDrawer from '../common/DealDrawer.jsx';
+import WhatsAppTemplateModal from '../deals/whatsapp/WhatsAppTemplateModal.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { useIsMobile } from '../../lib/useIsMobile.js';
@@ -321,6 +322,9 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [busy, setBusy] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [drawerDealId, setDrawerDealId] = useState(null);
+  // Template modal on the OPEN conversation (standalone-inbox door to the
+  // shared Deal template picker/editor).
+  const [waTemplateOpen, setWaTemplateOpen] = useState(false);
   // Work-queue drawer follow: a chat waiting for "switch despite unsaved
   // deal edits" confirmation (null = no pending confirmation).
   const [followConfirm, setFollowConfirm] = useState(null);
@@ -468,8 +472,9 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
 
   // Passive drawer follow — never opens create/confirm flows on its own.
   async function followDrawer(chat) {
-    // Groups have no CRM identity — never resolve deals for them.
-    if (chat.type === 'group') {
+    // Groups have no CRM identity; STAFF chats are internal conversations —
+    // never resolve or suggest deals for either.
+    if (chat.type === 'group' || chat.staff) {
       setDrawerDealId(null);
       return;
     }
@@ -500,6 +505,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           setFollowConfirm(null);
           return;
         }
+        if (waTemplateOpen) return; // the template dialog handles its own ESC
         if (drawerDealId) return; // the drawer handles its own ESC
         if (dialog) {
           setDialog(null);
@@ -514,7 +520,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         else if (selected) setSelected(null);
         return;
       }
-      if (inField || dialog || drawerDealId) return;
+      if (inField || dialog || drawerDealId || waTemplateOpen) return;
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         const list = filteredChats || [];
         if (list.length === 0) return;
@@ -536,7 +542,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [filteredChats, cursorId, selected, dialog, drawerDealId, snoozeMenuFor, followConfirm]);
+  }, [filteredChats, cursorId, selected, dialog, drawerDealId, snoozeMenuFor, followConfirm, waTemplateOpen]);
 
   async function link(chat, contact) {
     setBusy(chat.id);
@@ -810,16 +816,32 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                   </button>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[14px] font-semibold text-gray-900" dir="auto">
-                    {selected.displayName && selected.displayName !== selected.phoneNumber
-                      ? selected.displayName
-                      : formatPhoneDisplay(selected.phoneNumber) || 'לא מזוהה'}
+                  <p className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-900">
+                    {/* Foreign-number flag — first line, beside the name,
+                        readable size. Israeli numbers render nothing. */}
+                    {selected.type !== 'group' && selected.phoneNumber && (
+                      <PhoneFlag phone={selected.phoneNumber} className="text-[17px]" />
+                    )}
+                    <span className="min-w-0 truncate" dir="auto">
+                      {selected.displayName && selected.displayName !== selected.phoneNumber
+                        ? selected.displayName
+                        : formatPhoneDisplay(selected.phoneNumber) || 'לא מזוהה'}
+                    </span>
+                    {/* Internal staff conversation — canonical Staff-module
+                        identity (PersonRef), matched server-side. */}
+                    {selected.staff && (
+                      <span
+                        className="shrink-0 rounded-full bg-violet-600 px-2 py-px text-[10.5px] font-bold text-white"
+                        title={`שיחת צוות פנימית${selected.staff.name ? ` — ${selected.staff.name}` : ''}`}
+                      >
+                        צוות
+                      </span>
+                    )}
                   </p>
                   <p className="flex items-center gap-2 text-[11.5px] text-gray-500">
                     {selected.type === 'group' && <span>👥 קבוצה</span>}
                     {selected.phoneNumber && (
                       <span className="flex items-center gap-1" dir="ltr">
-                        <PhoneFlag phone={selected.phoneNumber} />
                         {formatPhoneDisplay(selected.phoneNumber)}
                       </span>
                     )}
@@ -853,7 +875,21 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                       ))}
                   </p>
                 </div>
+                {/* Templates — the SAME picker/editor the Deal surface uses
+                    (one implementation), mounted on THIS conversation. */}
                 {selected.type !== 'group' && (
+                  <button
+                    type="button"
+                    onClick={() => setWaTemplateOpen(true)}
+                    className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-50"
+                  >
+                    תבנית
+                  </button>
+                )}
+                {/* Deal actions never appear for internal staff conversations —
+                    a staff chat is not a lead and must never suggest a CRM
+                    deal. */}
+                {selected.type !== 'group' && !selected.staff && (
                   <button
                     type="button"
                     disabled={busy === selected.id}
@@ -901,6 +937,22 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           )}
         </section>
       </div>
+
+      {/* THE shared template picker/editor (deals/whatsapp) in inbox mode —
+          mounted per conversation (key) so switching chats never carries a
+          half-edited draft across. */}
+      {selected && selected.type !== 'group' && (
+        <WhatsAppTemplateModal
+          key={selected.id}
+          open={waTemplateOpen}
+          chat={selected}
+          onClose={() => setWaTemplateOpen(false)}
+          onSent={() => {
+            setWaTemplateOpen(false);
+            load();
+          }}
+        />
+      )}
 
       {dialog?.kind === 'no_contact' && (
         <CreateDealDialog

@@ -351,6 +351,43 @@ async function autoMatchChats(chats) {
   }
 }
 
+// Staff (internal) identity per chat — resolved against the CANONICAL Staff
+// module identity, PersonRef, never a name/label heuristic: a private chat
+// whose number is a Staff person's number is an internal staff conversation.
+// Both sides normalize through the ONE shared normalizer (normalizePhoneIntl),
+// the same notion of "same number" the contact matcher uses. ANY PersonRef row
+// counts — active, blocked, trainee, evaluator, legacy-null lifecycle:
+// existing in the Staff module IS the rule; lifecycle/status only ride along.
+// Returns Map<intlPhone, staffDto>.
+async function staffByPhone(chats) {
+  const wanted = new Set(
+    chats
+      .filter((c) => c.type === 'private' && c.phoneNumber)
+      .map((c) => normalizePhoneIntl(c.phoneNumber) ?? c.phoneNumber),
+  );
+  if (wanted.size === 0) return new Map();
+  const people = await prisma.personRef.findMany({
+    select: { id: true, displayName: true, phone: true, status: true, lifecycleHint: true },
+  });
+  const map = new Map();
+  for (const p of people) {
+    const intl = normalizePhoneIntl(p.phone);
+    if (!intl || !wanted.has(intl) || map.has(intl)) continue;
+    map.set(intl, {
+      personRefId: p.id,
+      name: p.displayName,
+      status: p.status,
+      lifecycleHint: p.lifecycleHint,
+    });
+  }
+  return map;
+}
+
+function staffFor(chat, staffMap) {
+  if (chat.type !== 'private' || !chat.phoneNumber) return null;
+  return staffMap.get(normalizePhoneIntl(chat.phoneNumber) ?? chat.phoneNumber) ?? null;
+}
+
 // Chat list for one account (inbox order). ?search= filters by any identity
 // facet; ?unmatched=1 keeps only chats without a linked contact.
 router.get(
@@ -855,11 +892,15 @@ router.get(
         }
       }
     }
+    // Internal staff identification — rides on every private chat so the
+    // client can badge צוות and suppress deal actions.
+    const staffMap = await staffByPhone(chats);
     res.set('Cache-Control', 'no-store');
     res.json({
       chats: chats.map((c) => ({
         ...toClientChat(c),
         account: c.account,
+        staff: staffFor(c, staffMap),
         deal: c.contactId ? dealByContact.get(c.contactId) ?? null : null,
       })),
       unmatchedCount,
