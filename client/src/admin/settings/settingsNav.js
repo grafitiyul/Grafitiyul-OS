@@ -20,7 +20,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/lost-reasons': { label: 'סיבות LOST', parent: '/admin/settings/crm' },
   '/admin/settings/crm/deal-sources': { label: 'מקורות דיל', parent: '/admin/settings/crm' },
   '/admin/settings/crm/task-types': { label: 'סוגי משימות', parent: '/admin/settings/crm' },
-  '/admin/settings/crm/quote-sections': { label: 'הצעות מחיר', parent: '/admin/settings/crm' },
+  '/admin/settings/crm/quote-sections': { label: 'נוסחים ספציפיים להצעות מחיר ומייל אישור', parent: '/admin/settings/crm' },
   '/admin/settings/crm/quote-layout': { label: 'מבנה הצעת מחיר', parent: '/admin/settings/crm' },
   '/admin/settings/crm/products-area': { label: 'מוצרים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/products': { label: 'מוצרים ראשיים', parent: '/admin/settings/crm/products-area' },

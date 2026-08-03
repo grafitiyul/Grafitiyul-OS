@@ -5,6 +5,7 @@ import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TranslateButton from '../../common/TranslateButton.jsx';
+import SpecialTextsSection from './SpecialTextsSection.jsx';
 
 // CRM settings → Quote Content Sections. Reusable fixed content blocks for
 // FUTURE quote templates. Content management only — quote generation is not
@@ -97,8 +98,8 @@ export default function QuoteSectionsSettings() {
   return (
     <SettingsShell
       width="wide"
-      title="הצעות מחיר"
-      subtitle="סעיפי תוכן קבועים לשימוש חוזר בהצעות מחיר עתידיות. כרגע ניהול תוכן בלבד — עדיין לא נבנית הפקת הצעות מחיר."
+      title="נוסחים ספציפיים להצעות מחיר ומייל אישור"
+      subtitle="סעיפי תוכן להצעות מחיר, וטקסטים מיוחדים למייל אישור (מדיניות ביטול ועוד) שהמשרד בוחר מהם בתוך הדיל."
     >
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
@@ -207,6 +208,14 @@ export default function QuoteSectionsSettings() {
           />
         </SettingsCard>
       )}
+
+      {/* Special texts for the Confirmation Email — category-generic (the
+          server registry owns the category list; cancellation policies are
+          the first). Office name + explanation are internal; only the
+          customer texts are ever sent. */}
+      <div className="mt-8">
+        <SpecialTextsSection />
+      </div>
     </SettingsShell>
   );
 }

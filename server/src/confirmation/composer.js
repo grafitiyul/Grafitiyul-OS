@@ -79,6 +79,9 @@ const L = {
 export const TOUR_DURATION_SELECT = {
   id: true,
   openTourTemplateId: true,
+  // Canonical ACTIVITY language: the booked tour's own language beats the
+  // deal working copy (the {{tour_language}} variable reads this chain).
+  tourLanguage: true,
   productVariant: { select: { durationHours: true } },
 };
 
@@ -185,14 +188,18 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
   const meetingPoint = tour ? await resolveMeetingPoint(tour.id, language, { db }) : null;
 
   const fillers = normalizeFillers(deal.confirmation?.fillers);
-  // A chosen predefined cancellation policy is a library row.
+  // Cancellation policies live in ConfirmationSpecialText (CRM Settings —
+  // NOT the Shared Content Library): the filler's chosen row + the category
+  // default (rendered when the deal made no choice).
   const policyId = fillers.find((f) => f.kind === 'cancellation_policy' && f.mode === 'policy')?.policyId;
+  const POLICY_SELECT = { id: true, internalName: true, bodyHe: true, bodyEn: true, active: true, isDefault: true };
   const policyRow = policyId
-    ? await db.sharedContent.findUnique({
-      where: { id: policyId },
-      select: { id: true, type: true, internalName: true, bodyHe: true, bodyEn: true, active: true },
-    })
+    ? await db.confirmationSpecialText.findUnique({ where: { id: policyId }, select: POLICY_SELECT })
     : null;
+  const defaultPolicy = await db.confirmationSpecialText.findFirst({
+    where: { category: 'cancellation_policy', isDefault: true, active: true },
+    select: POLICY_SELECT,
+  });
 
   // Variable-catalog context: primary phone, active-bookings count on the
   // booked tour, and the public brand contact (quote-template singleton).
@@ -205,7 +212,7 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
 
   return {
     deal, template, contact, email, language, tour: pseudoTour, meetingPoint,
-    fillers, policyRow, contactPhone, tourBookingsCount, brandContact,
+    fillers, policyRow, defaultPolicy, contactPhone, tourBookingsCount, brandContact,
     persistentOverrides: deal.confirmation?.overrideState || null,
   };
 }
@@ -213,7 +220,7 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
 // ── pure composition ─────────────────────────────────────────────────────────
 
 export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
-  const { deal, template, contact, email, language: lang, tour, meetingPoint, fillers, policyRow } = ctx;
+  const { deal, template, contact, email, language: lang, tour, meetingPoint, fillers, policyRow, defaultPolicy } = ctx;
   const t = L[lang] || L.he;
   const warnings = [];
   const overrides = mergeOverrides(ctx.persistentOverrides, overrideOverlay);
@@ -246,26 +253,9 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
       const block = blockById[entry.sharedContentId];
       if (!block || !block.active) continue;
       const sectionId = `block:${block.id}`;
-      let html = pickStrict(block.bodyHe, block.bodyEn, lang);
-      let source = 'library';
-      // The cancellation filler REPLACES a cancellation-policy block entirely.
-      if (block.type === 'confirmation_cancellation_policy' && cancelFiller && cancelFiller.mode !== 'default') {
-        if (cancelFiller.mode === 'policy') {
-          if (policyRow?.active) {
-            html = pickStrict(policyRow.bodyHe, policyRow.bodyEn, lang);
-            source = 'filler_policy';
-            if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(policyRow.bodyEn, policyRow.bodyHe, lang)), policyRow.internalName);
-          } else {
-            html = null;
-            source = 'filler_policy';
-            warnings.push({ code: 'missing_policy', sectionId, label: block.internalName });
-          }
-        } else {
-          html = pickStrict(cancelFiller.noteHe, cancelFiller.noteEn, lang);
-          source = 'filler_override';
-          if (!hasText(html)) warnMissing(sectionId, hasText(pickStrict(cancelFiller.noteEn, cancelFiller.noteHe, lang)), block.internalName);
-        }
-      } else if (!hasText(html)) {
+      const html = pickStrict(block.bodyHe, block.bodyEn, lang);
+      const source = 'library';
+      if (!hasText(html)) {
         warnMissing(sectionId, hasText(pickStrict(block.bodyEn, block.bodyHe, lang)), block.internalName);
       }
       sections.push({
@@ -352,6 +342,39 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
           warnMissing('location_logistics', true);
           sections.push({ id: 'location_logistics', kind: 'auto', key: 'location_logistics', html: null, editable: true });
         }
+        break;
+      }
+      case 'cancellation_policy': {
+        // Deal choice (override note → chosen predefined) → category default.
+        let html = null;
+        let source = 'default_policy';
+        let label = 'מדיניות ביטול';
+        if (cancelFiller?.mode === 'override') {
+          html = pickStrict(cancelFiller.noteHe, cancelFiller.noteEn, lang);
+          source = 'filler_override';
+          if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(cancelFiller.noteEn, cancelFiller.noteHe, lang)), label);
+        } else if (cancelFiller?.mode === 'policy') {
+          source = 'filler_policy';
+          if (policyRow?.active) {
+            label = policyRow.internalName;
+            html = pickStrict(policyRow.bodyHe, policyRow.bodyEn, lang);
+            if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(policyRow.bodyEn, policyRow.bodyHe, lang)), label);
+          } else {
+            warnings.push({ code: 'missing_policy', sectionId: 'cancellation_policy', label });
+          }
+        } else if (defaultPolicy) {
+          label = defaultPolicy.internalName;
+          html = pickStrict(defaultPolicy.bodyHe, defaultPolicy.bodyEn, lang);
+          if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(defaultPolicy.bodyEn, defaultPolicy.bodyHe, lang)), label);
+        } else {
+          // No default configured at all — visible, never silent.
+          warnings.push({ code: 'missing_policy', sectionId: 'cancellation_policy', label });
+        }
+        sections.push({
+          id: 'cancellation_policy', kind: 'auto', key: 'cancellation_policy',
+          title: lang === 'en' ? 'Cancellation policy' : 'מדיניות ביטול',
+          customerTitle: true, html, source, editable: true,
+        });
         break;
       }
       case 'special_terms': {

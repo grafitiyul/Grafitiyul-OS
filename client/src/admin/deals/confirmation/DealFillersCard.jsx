@@ -126,12 +126,18 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
     }
   }
 
+  // Hide is allowed ONLY while the canonical filler state is truly empty:
+  // nothing saved AND nothing selected in the working draft. Selecting even
+  // one filler type removes Hide immediately; deselecting restores it.
+  const canHide = !hasSaved && draft.length === 0;
+  const lang = state.language === 'en' ? 'en' : 'he';
+
   return (
     <PanelCard
       variant="panel"
       title="תנאי עסקה מיוחדים (פילרים)"
       action={
-        !hasSaved && (
+        canHide && (
           <button
             type="button"
             onClick={onHide}
@@ -167,6 +173,7 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
           <CancellationEditor
             filler={fillerOf('cancellation_policy')}
             policies={state.policies}
+            lang={lang}
             onChange={(p) => patchFiller('cancellation_policy', p)}
           />
         )}
@@ -174,17 +181,18 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
           <DurationEditor
             filler={fillerOf('activity_duration')}
             durationInfo={state.durationInfo}
+            lang={lang}
             onChange={(p) => patchFiller('activity_duration', p)}
           />
         )}
         {active('new_guide') && (
           <FillerSection title="מדריך חדש">
-            <CustomerNote filler={fillerOf('new_guide')} onChange={(p) => patchFiller('new_guide', p)} />
+            <CustomerNote filler={fillerOf('new_guide')} lang={lang} onChange={(p) => patchFiller('new_guide', p)} />
           </FillerSection>
         )}
         {active('other_note') && (
           <FillerSection title="הערה נוספת ללקוח">
-            <CustomerNote filler={fillerOf('other_note')} onChange={(p) => patchFiller('other_note', p)} />
+            <CustomerNote filler={fillerOf('other_note')} lang={lang} onChange={(p) => patchFiller('other_note', p)} />
           </FillerSection>
         )}
 
@@ -236,45 +244,42 @@ function FillerSection({ title, children }) {
   );
 }
 
-// The ONE customer-facing note editor — always headed "הערה ללקוח". The panel
-// is ~460px wide, so the two languages stack (side-by-side is a settings-screen
-// luxury, not a panel one).
-function CustomerNote({ filler, onChange, optional = false }) {
+// The ONE customer-facing note editor — always headed "הערה ללקוח", and
+// deliberately ONE language only: the customer's communication language
+// (Hebrew fallback). Bilingual editing belongs to Settings; the Deal applies
+// an exception to one customer. Compact so the card fits the right panel.
+function CustomerNote({ filler, onChange, lang, optional = false }) {
+  const key = lang === 'en' ? 'noteEn' : 'noteHe';
   return (
-    <div className="space-y-2">
-      <div className="text-[12px] font-semibold text-gray-700">
-        הערה ללקוח{optional ? ' (אופציונלי)' : ''}
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[12px] font-semibold text-gray-700">
+          הערה ללקוח{optional ? ' (אופציונלי)' : ''}
+        </span>
+        <span className="text-[10.5px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">
+          {lang === 'en' ? 'English' : 'עברית'}
+        </span>
       </div>
-      <div>
-        <span className={LABEL}>עברית</span>
+      <div dir={lang === 'en' ? 'ltr' : 'rtl'}>
         <RichEditor
-          value={filler?.noteHe || ''}
-          onChange={(v) => onChange({ noteHe: v })}
-          ariaLabel="הערה ללקוח — עברית"
-          minContentHeight={70}
+          value={filler?.[key] || ''}
+          onChange={(v) => onChange({ [key]: v })}
+          ariaLabel="הערה ללקוח"
+          minContentHeight={60}
+          placeholder={lang === 'en' ? 'Write here...' : 'כתבו כאן…'}
         />
-      </div>
-      <div>
-        <span className={LABEL}>English</span>
-        <div dir="ltr">
-          <RichEditor
-            value={filler?.noteEn || ''}
-            onChange={(v) => onChange({ noteEn: v })}
-            ariaLabel="Customer note — English"
-            minContentHeight={70}
-            placeholder="Write here..."
-          />
-        </div>
       </div>
     </div>
   );
 }
 
-function CancellationEditor({ filler, policies, onChange }) {
+function CancellationEditor({ filler, policies, lang, onChange }) {
   const mode = filler?.mode || 'default';
+  const defaultPolicy = policies.find((p) => p.isDefault) || null;
+  const chosen = policies.find((p) => p.id === filler?.policyId) || null;
   const OPTIONS = [
-    { value: 'default', label: 'מדיניות ברירת המחדל' },
-    { value: 'policy', label: 'מדיניות מוגדרת מראש' },
+    { value: 'default', label: defaultPolicy ? `ברירת המחדל — ${defaultPolicy.internalName}` : 'מדיניות ברירת המחדל' },
+    { value: 'policy', label: 'מדיניות מוגדרת מראש אחרת' },
     { value: 'override', label: 'נוסח מותאם לעסקה זו' },
   ];
   return (
@@ -292,6 +297,14 @@ function CancellationEditor({ filler, policies, onChange }) {
           </label>
         ))}
       </div>
+      {mode === 'default' && defaultPolicy?.internalNote && (
+        <p className="text-[12px] text-gray-500">{defaultPolicy.internalNote}</p>
+      )}
+      {mode === 'default' && !defaultPolicy && (
+        <p className="text-[11px] text-amber-600">
+          לא הוגדרה מדיניות ברירת מחדל — הגדירו אחת בהגדרות CRM → נוסחים ספציפיים.
+        </p>
+      )}
       {mode === 'policy' && (
         <div>
           <span className={LABEL}>בחרו מדיניות</span>
@@ -303,24 +316,29 @@ function CancellationEditor({ filler, policies, onChange }) {
             <option value="">— בחרו —</option>
             {policies.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.internalName}
+                {p.internalName}{p.isDefault ? ' ★' : ''}
               </option>
             ))}
           </select>
+          {/* Office-facing explanation of the chosen option — the customer
+              never sees this; they receive only the customer text. */}
+          {chosen?.internalNote && (
+            <p className="text-[12px] text-gray-500 mt-1">{chosen.internalNote}</p>
+          )}
           {policies.length === 0 && (
             <p className="text-[11px] text-amber-600 mt-1">
-              אין מדיניות מוגדרת מראש — צרו אחת בספריית התוכן המשותף (״מדיניות ביטול — מייל אישור״).
+              אין מדיניות מוגדרת — צרו אחת בהגדרות CRM → נוסחים ספציפיים להצעות מחיר ומייל אישור.
             </p>
           )}
         </div>
       )}
-      {mode === 'override' && <CustomerNote filler={filler} onChange={onChange} />}
-      <p className="text-[11px] text-gray-400">הבחירה מחליפה לגמרי את בלוק מדיניות הביטול במייל האישור.</p>
+      {mode === 'override' && <CustomerNote filler={filler} onChange={onChange} lang={lang} />}
+      <p className="text-[11px] text-gray-400">הבחירה מחליפה את מדיניות הביטול במייל האישור של עסקה זו.</p>
     </FillerSection>
   );
 }
 
-function DurationEditor({ filler, durationInfo, onChange }) {
+function DurationEditor({ filler, durationInfo, lang, onChange }) {
   return (
     <FillerSection title="משך הפעילות">
       <div className="text-[12px] text-gray-500">
@@ -342,7 +360,7 @@ function DurationEditor({ filler, durationInfo, onChange }) {
       <p className="text-[11px] text-gray-400">
         המשך החדש נשמר על העסקה ומחליף את המשך הרגיל במייל האישור.
       </p>
-      <CustomerNote filler={filler} onChange={onChange} optional />
+      <CustomerNote filler={filler} onChange={onChange} lang={lang} optional />
     </FillerSection>
   );
 }

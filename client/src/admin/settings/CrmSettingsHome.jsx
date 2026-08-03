@@ -57,8 +57,8 @@ export default function CrmSettingsHome() {
         <CategoryCard
           to="/admin/settings/crm/quote-sections"
           icon="📝"
-          title="הצעות מחיר"
-          description="סעיפי תוכן קבועים לשימוש בהצעות מחיר עתידיות."
+          title="נוסחים ספציפיים להצעות מחיר ומייל אישור"
+          description="סעיפי תוכן להצעות מחיר + טקסטים מיוחדים למייל אישור (מדיניות ביטול ועוד)."
         />
         <CategoryCard
           to="/admin/settings/crm/quote-layout"

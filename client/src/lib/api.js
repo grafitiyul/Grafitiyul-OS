@@ -1116,6 +1116,14 @@ export const api = {
     send: (dealId, data = {}) =>
       request(`/api/confirmation-email/deal/${dealId}/send`, { method: 'POST', body: JSON.stringify(data) }),
     getSend: (sendId) => request(`/api/confirmation-email/sends/${sendId}`),
+    // Special texts (CRM Settings) — office-curated per-deal wording options.
+    specialTexts: () => request('/api/confirmation-email/special-texts'),
+    createSpecialText: (data) =>
+      request('/api/confirmation-email/special-texts', { method: 'POST', body: JSON.stringify(data) }),
+    updateSpecialText: (id, data) =>
+      request(`/api/confirmation-email/special-texts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeSpecialText: (id) =>
+      request(`/api/confirmation-email/special-texts/${id}`, { method: 'DELETE' }),
   },
   payment: {
     listTerms: () => request('/api/payment-config/terms'),

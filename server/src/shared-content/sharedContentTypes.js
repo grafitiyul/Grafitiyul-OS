@@ -31,8 +31,12 @@ export const SHARED_CONTENT_TYPE_KEYS = SHARED_CONTENT_TYPES.map((t) => t.key);
 
 // The subset a confirmation-email template may reference (block picker +
 // block-link validation read THIS, never a hardcoded list).
-export const CONFIRMATION_CONTENT_TYPES = SHARED_CONTENT_TYPE_KEYS.filter((k) =>
-  k.startsWith('confirmation_'),
+// confirmation_cancellation_policy is EXCLUDED: cancellation moved to the
+// ConfirmationSpecialText model (an auto section) — the type stays in the
+// vocabulary only so any legacy rows remain valid, but no template can add
+// new blocks of it.
+export const CONFIRMATION_CONTENT_TYPES = SHARED_CONTENT_TYPE_KEYS.filter(
+  (k) => k.startsWith('confirmation_') && k !== 'confirmation_cancellation_policy',
 );
 
 const BY_KEY = Object.fromEntries(SHARED_CONTENT_TYPES.map((t) => [t.key, t]));

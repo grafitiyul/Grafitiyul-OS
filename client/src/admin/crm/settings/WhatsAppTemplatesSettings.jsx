@@ -8,6 +8,7 @@ import AlertDialog from '../../common/AlertDialog.jsx';
 import Toggle from '../../common/Toggle.jsx';
 import WhatsAppLogo from '../../common/WhatsAppLogo.jsx';
 import WhatsAppBodyEditor from '../../communication/WhatsAppBodyEditor.jsx';
+import TranslateButton from '../../common/TranslateButton.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import { registerDynamicFields } from '../../../lib/dynamicFields.js';
 
@@ -171,8 +172,16 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
               </button>
             );
           })}
-          <span className="mr-auto pb-1.5 text-[11.5px] text-gray-400">
+          <span className="mr-auto flex items-center gap-2 pb-1.5 text-[11.5px] text-gray-400">
             אפשר למלא שפה אחת בלבד — השנייה פשוט לא תוצע בדיל.
+            {/* Shared AI translate between the two language TABS of the same
+                record: source = the other tab, target = the open one. */}
+            <TranslateButton
+              direction={lang === 'en' ? 'he_to_en' : 'en_to_he'}
+              getSource={() => draft[lang === 'en' ? 'bodyHeHtml' : 'bodyEnHtml']}
+              getTarget={() => draft[bodyKey]}
+              onResult={(v) => setDraft((d) => ({ ...d, [bodyKey]: v }))}
+            />
           </span>
         </div>
 
@@ -257,7 +266,7 @@ export default function WhatsAppTemplatesSettings() {
   }
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-5xl mx-auto">
+    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-6xl mx-auto">
       <header className="mb-8">
         <SettingsChrome />
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900">נוסחים לתבניות ווטסאפ</h1>

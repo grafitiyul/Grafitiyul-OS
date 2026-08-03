@@ -146,10 +146,12 @@ export const CONFIRMATION_VARIABLES = [
   },
   {
     key: 'tour_language', category: 'activity',
-    labelHe: 'שפת הסיור', labelEn: 'Tour language',
-    descriptionHe: 'השפה שבה יועבר הסיור, בשפת השליחה',
+    labelHe: 'שפת הפעילות', labelEn: 'Activity language',
+    descriptionHe: 'השפה שבה תועבר הפעילות (לא שפת התקשורת) — מהסיור המשובץ, אחרת מהעסקה',
     resolve: (ctx, lang) => {
-      const code = ctx.deal?.tourLanguage;
+      // Canonical ACTIVITY language: the booked tour's own language beats the
+      // deal working copy. NEVER the communication language.
+      const code = ctx.tour?.tourLanguage || ctx.deal?.tourLanguage;
       return code ? TOUR_LANG_LABELS[lang === 'en' ? 'en' : 'he']?.[code] || null : null;
     },
   },

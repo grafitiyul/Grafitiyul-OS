@@ -3502,6 +3502,31 @@ model ConfirmationEmailSend {
   @@index([scheduledEmailId])
 }
 
+// Confirmation Email SPECIAL TEXTS — office-curated wording options the
+// operator picks from inside a Deal (מדיניות ביטול is the FIRST category;
+// future ones — new-guide wording, shortened tour, route change, weather… —
+// are registry entries in src/confirmation/specialTexts.js, NOT new models).
+// Owned by CRM Settings, deliberately NOT the Shared Content Library (these
+// are per-deal selection options, not location-anchored reusable content).
+// Exactly ONE default per category, API-enforced (PriceList.isDefault
+// convention); the default is undeletable and must stay active.
+model ConfirmationSpecialText {
+  id           String   @id @default(cuid())
+  category     String // registry key — e.g. cancellation_policy
+  internalName String // office-facing option name (never sent to customers)
+  internalNote String? // office-facing explanation shown when selecting in a Deal
+  bodyHe       String? // customer text (rich HTML)
+  bodyEn       String? // customer text (rich HTML)
+  active       Boolean  @default(true)
+  isDefault    Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([category, active, sortOrder])
+  @@index([category, isDefault])
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tour Content domain (Phase 1a — foundation)
 //

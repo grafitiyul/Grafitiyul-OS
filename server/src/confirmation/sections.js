@@ -14,6 +14,10 @@ export const AUTO_SECTIONS = [
   { key: 'meeting_point', labelHe: 'נקודת מפגש' },
   { key: 'meeting_point_image', labelHe: 'תמונת נקודת המפגש' },
   { key: 'location_logistics', labelHe: 'לוגיסטיקה במיקום' },
+  // Cancellation policy — an AUTO section since the special-texts move:
+  // renders the deal's filler choice (predefined / override) or the category
+  // DEFAULT ConfirmationSpecialText. No longer a Shared-Content block.
+  { key: 'cancellation_policy', labelHe: 'מדיניות ביטול' },
   // Synthesized from new_guide / other_note fillers; renders nothing when the
   // deal has no special-term fillers, whatever the template says.
   { key: 'special_terms', labelHe: 'תנאים מיוחדים שסוכמו' },

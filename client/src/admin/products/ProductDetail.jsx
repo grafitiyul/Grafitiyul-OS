@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
+import TranslateButton from '../common/TranslateButton.jsx';
 import { durationDisplay } from '../../lib/duration.js';
 
 const INPUT =
@@ -96,7 +97,7 @@ export default function ProductDetail() {
   const availableLocations = locations.filter((l) => !usedLocationIds.has(l.id));
 
   return (
-    <div className="mx-auto max-w-3xl px-5 py-8 lg:px-8 lg:py-10 space-y-6">
+    <div className="mx-auto max-w-6xl px-5 py-8 lg:px-8 lg:py-10 space-y-6">
       <SettingsChrome currentLabel={product?.nameHe} />
 
       {/* Product fields */}
@@ -109,12 +110,23 @@ export default function ProductDetail() {
             <input value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} dir="ltr" className={INPUT} />
           </Field>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-4">
+        {/* Bilingual marketing description — side-by-side (wide layout) with
+            the shared AI translate action; stacks below lg. */}
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Field label="תיאור שיווקי (עברית)">
             <RichEditor value={form.marketingDescHe} onChange={(html) => set('marketingDescHe', html)} ariaLabel="תיאור שיווקי עברית" />
           </Field>
           <Field label="Marketing description (EN)">
-            <RichEditor value={form.marketingDescEn} onChange={(html) => set('marketingDescEn', html)} ariaLabel="marketing description english" placeholder="Write here..." />
+            <div dir="rtl" className="mb-1 flex justify-end">
+              <TranslateButton
+                getSource={() => form.marketingDescHe}
+                getTarget={() => form.marketingDescEn}
+                onResult={(v) => set('marketingDescEn', v)}
+              />
+            </div>
+            <div dir="ltr">
+              <RichEditor value={form.marketingDescEn} onChange={(html) => set('marketingDescEn', html)} ariaLabel="marketing description english" placeholder="Write here..." />
+            </div>
           </Field>
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-700 mt-3">
