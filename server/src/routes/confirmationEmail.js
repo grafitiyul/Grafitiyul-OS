@@ -19,7 +19,8 @@ import {
   TOUR_DURATION_SELECT,
 } from '../confirmation/composer.js';
 import { normalizeOverrideState } from '../confirmation/overrides.js';
-import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
+import { sendConfirmationEmail } from '../confirmation/sendService.js';
+import { resolveConfirmationReview } from '../confirmation/wonHook.js';
 import {
   FILLER_KINDS,
   normalizeFillers,
@@ -377,145 +378,35 @@ router.put(
   }),
 );
 
-// Warnings that BLOCK a send unless the operator explicitly approved them in
-// the preview (acknowledgeWarnings). Recipient/subject are hard requirements
-// and are never acknowledgeable — they must be provided or exist.
-const ACKNOWLEDGEABLE = new Set([
-  'missing_content',
-  'missing_policy',
-  'no_tour',
-  'missing_variable',
-  'unknown_variable',
-]);
-
-// POST /deal/:dealId/send — compose (same pipeline as preview), validate,
-// hand ONE email to the canonical queue (ScheduledEmail, scheduledAt=now) and
-// write the immutable ConfirmationEmailSend snapshot. The queue owns delivery:
-// connected Gmail account frozen at enqueue, retries, connection-deferral,
-// customer×email sending windows, thread mirror + CRM linking.
+// POST /deal/:dealId/send — thin HTTP shell over confirmation/sendService.js,
+// THE one send path (also used by the automatic WON hook and the tour-update
+// resend). Validation, first-vs-repeat subject, queue row + immutable
+// snapshot and the timeline entry all live in the service.
 router.post(
   '/deal/:dealId/send',
   handle(async (req, res) => {
-    const composed = await composeConfirmationEmail(prisma, req.params.dealId, {
+    const out = await sendConfirmationEmail({
+      dealId: req.params.dealId,
       language: req.body?.language,
       overrideOverlay: req.body?.overrideOverlay || null,
+      to: req.body?.to,
+      subject: req.body?.subject,
+      test: !!req.body?.test,
+      acknowledgeWarnings: !!req.body?.acknowledgeWarnings,
+      allowNotWon: !!req.body?.allowNotWon,
+      trigger: req.body?.test ? 'test' : 'manual',
+      actorUserId: req.adminAuth?.userId || null,
+      languageOverridden: !!req.body?.languageOverridden,
+      contactLanguageUpdated: !!req.body?.contactLanguageUpdated,
     });
-    if (composed.error === 'deal_not_found') return res.status(404).json({ error: composed.error });
-    if (composed.error) return res.status(422).json({ error: composed.error, ...composed.meta });
-
-    // Test send (QA): the EXACT same composer/resolver/queue pipeline — the
-    // only differences are the recipient, a trailing '[בדיקה]' subject marker, no
-    // deal/contact thread linking and no timeline entry (a QA probe is not
-    // customer communication). Everything else, including sending windows and
-    // the snapshot, is production behavior.
-    const isTest = !!req.body?.test;
-
-    // Operator-edited recipient/subject from the send step win over composed.
-    const to = cleanRecipientList([
-      { email: req.body?.to || composed.recipient?.email, name: isTest ? null : composed.recipient?.name },
-    ]);
-    const baseSubject = String(req.body?.subject ?? composed.subject ?? '').trim();
-    // Suffix, not prefix: the real subject stays readable at a glance in the
-    // inbox list, with the test marker trailing it.
-    const subject = isTest && baseSubject ? `${baseSubject} [בדיקה]` : baseSubject;
-    if (!to.length) return res.status(422).json({ error: 'no_recipient_email' });
-    if (!subject) return res.status(422).json({ error: 'missing_subject' });
-
-    const blocking = composed.warnings.filter((w) => ACKNOWLEDGEABLE.has(w.code));
-    if (blocking.length && !req.body?.acknowledgeWarnings) {
-      return res.status(422).json({ error: 'send_blocked', warnings: blocking });
+    if (out.error === 'deal_not_found') return res.status(404).json({ error: out.error });
+    if (out.error === 'duplicate_send') return res.status(409).json({ error: out.error });
+    if (out.error) {
+      return res.status(422).json({ error: out.error, ...(out.meta || {}), ...(out.warnings ? { warnings: out.warnings } : {}), ...(out.status ? { status: out.status } : {}) });
     }
-
-    // Double-click guard: a second send for the same deal within 10s is a
-    // duplicate, not a decision. Deliberate resends after that are allowed.
-    const recent = await prisma.confirmationEmailSend.findFirst({
-      where: { dealId: composed.dealId, createdAt: { gt: new Date(Date.now() - 10_000) } },
-      select: { id: true },
-    });
-    if (recent) return res.status(409).json({ error: 'duplicate_send' });
-
-    // ONE derivation: the composer already assembled + sanitized the exact
-    // body (composed.emailHtml) — the preview's final view showed this string.
-    const bodyHtml = composed.emailHtml;
-    if (!bodyHtml) return res.status(422).json({ error: 'empty_body' });
-
-    // Freeze the sending account NOW (the queue contract) — fails with
-    // no_connected_account before anything is written.
-    let account;
-    try {
-      account = await resolveSendAccount(null);
-    } catch (e) {
-      return res.status(422).json({ error: e.code || 'no_connected_account' });
-    }
-
-    const origin = await userOrigin(req.adminAuth?.userId);
-    const { scheduled, snapshot } = await prisma.$transaction(async (tx) => {
-      const scheduled = await tx.scheduledEmail.create({
-        data: {
-          accountId: account.id,
-          toJson: to,
-          subject,
-          bodyHtml,
-          dealId: isTest ? null : composed.dealId,
-          contactId: isTest ? null : composed.recipient?.contactId || null,
-          scheduledAt: new Date(),
-          createdById: req.adminAuth?.userId || null,
-        },
-      });
-      const snapshot = await tx.confirmationEmailSend.create({
-        data: {
-          dealId: composed.dealId,
-          templateId: composed.template.id,
-          templateName: composed.template.internalName,
-          language: composed.language,
-          recipientSnapshot: {
-            ...to[0],
-            contactId: isTest ? null : composed.recipient?.contactId || null,
-            ...(isTest ? { test: true } : {}),
-          },
-          subject,
-          bodyHtml,
-          fillersSnapshot: composed.fillers,
-          overridesSnapshot: req.body?.overrideOverlay || null,
-          imagesSnapshot: composed.sections
-            .filter((s) => s.key === 'meeting_point_image' && s.data?.url)
-            .map((s) => ({ role: 'meeting_point', url: s.data.url })),
-          // Frozen "generated from" — the archive's debugging answer even
-          // after the template/blocks are edited or deleted.
-          generationMeta: {
-            templateName: composed.template.internalName,
-            language: composed.language,
-            blocks: composed.sections
-              .filter((s) => s.kind === 'block')
-              .map((s) => ({ id: s.id.replace(/^block:/, ''), internalName: s.title, type: s.type })),
-            fillers: composed.fillers.map((f) => f.kind),
-            ...(isTest ? { test: true } : {}),
-          },
-          scheduledEmailId: scheduled.id,
-          createdById: req.adminAuth?.userId || null,
-        },
-      });
-      if (!isTest) {
-        await emitTimelineEvent(tx, {
-          subjectId: composed.dealId,
-          kind: 'communication',
-          origin,
-          data: {
-            event: 'confirmation_email_queued',
-            sendId: snapshot.id,
-            channel: 'email',
-            language: composed.language,
-            recipientName: to[0].name || to[0].email,
-            subject,
-            eventName: 'מייל אישור',
-            messageName: composed.template.internalName,
-          },
-        });
-      }
-      return { scheduled, snapshot };
-    });
-
-    res.json({ ok: true, sendId: snapshot.id, scheduledEmailId: scheduled.id, queued: true });
+    // A real send closes any open "review this confirmation email" card.
+    if (!req.body?.test) await resolveConfirmationReview(out.sendId, req.params.dealId, req.adminAuth);
+    res.json({ ok: true, sendId: out.sendId, scheduledEmailId: out.scheduledEmailId, queued: true, subject: out.subject, sendKind: out.sendKind });
   }),
 );
 

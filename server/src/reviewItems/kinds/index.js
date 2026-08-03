@@ -5,3 +5,4 @@ import './tourSummary.js';
 import './logisticsReport.js';
 import './participantChange.js';
 import './coordinationIssue.js';
+import './confirmationEmailReview.js';

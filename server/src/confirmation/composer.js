@@ -537,6 +537,9 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
 
   return {
     dealId: deal.id,
+    // The confirmation email is a WON workflow — the send service gates on
+    // this rather than re-reading the deal.
+    dealStatus: deal.status || null,
     template: { id: template.id, internalName: template.internalName },
     language: lang,
     subject: subject || null,

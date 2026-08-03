@@ -23,6 +23,7 @@
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildWonQuoteRef } from '../quote/quoteOffers.js';
 import { fireDealWonReport } from '../adminReports/dealWonEvent.js';
+import { runConfirmationOnWon } from '../confirmation/wonHook.js';
 
 /**
  * The final stage of the pipeline: the last ACTIVE stage in the canonical
@@ -140,4 +141,12 @@ export function emitWonTransitionEffects(
     },
     log,
   );
+  // Confirmation email (מייל אישור). Hooked HERE so every WON path — operator,
+  // card payment, IPN, Cardcom — behaves identically and no provider needs to
+  // know about email. Deals with special terms produce a review card instead
+  // of a blind send; see confirmation/wonHook.js. Fire-and-forget.
+  runConfirmationOnWon(
+    { dealId, transitionKey: wonTransitionKey(dealId, wonAt), closedByUserId },
+    { log },
+  ).catch(() => {});
 }
