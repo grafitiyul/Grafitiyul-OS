@@ -1106,6 +1106,10 @@ export const api = {
       request(`/api/confirmation-email/deal/${dealId}/state`, { method: 'PUT', body: JSON.stringify(data) }),
     compose: (dealId, data = {}) =>
       request(`/api/confirmation-email/deal/${dealId}/compose`, { method: 'POST', body: JSON.stringify(data) }),
+    saveOverrides: (dealId, data) =>
+      request(`/api/confirmation-email/deal/${dealId}/overrides`, { method: 'PUT', body: JSON.stringify(data) }),
+    send: (dealId, data = {}) =>
+      request(`/api/confirmation-email/deal/${dealId}/send`, { method: 'POST', body: JSON.stringify(data) }),
   },
   payment: {
     listTerms: () => request('/api/payment-config/terms'),

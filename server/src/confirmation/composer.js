@@ -303,6 +303,7 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
         sections.push({
           id: 'special_terms', kind: 'auto', key: 'special_terms',
           title: lang === 'en' ? 'Special terms agreed' : 'תנאים מיוחדים שסוכמו',
+          customerTitle: true, // this title IS customer-facing (block titles are internal names)
           html: items.map((i) => i.html).filter(hasText).join('') || null,
           data: { items }, editable: true,
         });
@@ -327,7 +328,10 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
     const ov = overrideFor(overrides, s.id);
     if (!ov) continue;
     if (ov.html) s.html = ov.html;
-    if (ov.title) s.title = ov.title;
+    if (ov.title) {
+      s.title = ov.title;
+      s.customerTitle = true; // an operator-authored title is meant for the customer
+    }
     s.overridden = true;
   }
 
@@ -361,6 +365,23 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
     sections,
     warnings,
   };
+}
+
+/**
+ * Assemble the composed sections into ONE email body HTML — used for the send
+ * AND stored verbatim in the snapshot, so the archive shows exactly what was
+ * mailed. Pure. Block titles are internal names and are NEVER rendered; the
+ * only headings are customer-facing ones (special_terms + operator-authored
+ * override titles), flagged `customerTitle` by the composer.
+ */
+export function buildEmailHtml(composeResult) {
+  const parts = [];
+  for (const s of composeResult.sections || []) {
+    if (!hasText(s.html)) continue;
+    if (s.customerTitle && s.title) parts.push(`<h3>${esc(s.title)}</h3>`);
+    parts.push(s.html);
+  }
+  return parts.join('\n');
 }
 
 /** The one entry point: load + compose. Template-resolution errors surface as

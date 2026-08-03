@@ -13,7 +13,10 @@ import {
   blockIdsInSections,
 } from '../confirmation/sections.js';
 import { CONFIRMATION_CONTENT_TYPES } from '../shared-content/sharedContentTypes.js';
-import { composeConfirmationEmail } from '../confirmation/composer.js';
+import { composeConfirmationEmail, buildEmailHtml } from '../confirmation/composer.js';
+import { normalizeOverrideState } from '../confirmation/overrides.js';
+import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
+import { sanitizeEmailHtml } from '../email/sanitize.js';
 import {
   FILLER_KINDS,
   NEW_GUIDE_DEFAULT_NOTE,
@@ -246,6 +249,7 @@ router.get(
     res.json({
       fillers,
       hasFillers: fillers.length > 0,
+      overrideState: deal.confirmation?.overrideState || null,
       durationInfo: {
         canonicalHours: tourDurationHours(tour),
         effectiveHours: effectiveDurationHours(deal, tour),
@@ -316,6 +320,131 @@ router.put(
     await recordDealChanges(prisma, { dealId: deal.id, before, after, origin });
 
     res.json({ ok: true, fillers, hasFillers: fillers.length > 0 });
+  }),
+);
+
+// PUT /deal/:dealId/overrides — save the PERSISTENT per-deal override layer
+// (the preview's "החל גם על מיילים עתידיים" checkbox). The temporary layer is
+// never stored — it rides the compose/send request bodies only.
+router.put(
+  '/deal/:dealId/overrides',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.dealId }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'deal_not_found' });
+    const overrideState = normalizeOverrideState(req.body?.overrideState);
+    await prisma.dealConfirmation.upsert({
+      where: { dealId: deal.id },
+      create: { dealId: deal.id, overrideState, updatedById: req.adminAuth?.userId || null },
+      update: { overrideState, updatedById: req.adminAuth?.userId || null },
+    });
+    res.json({ ok: true, overrideState });
+  }),
+);
+
+// Warnings that BLOCK a send unless the operator explicitly approved them in
+// the preview (acknowledgeWarnings). Recipient/subject are hard requirements
+// and are never acknowledgeable — they must be provided or exist.
+const ACKNOWLEDGEABLE = new Set(['missing_content', 'missing_policy', 'no_tour']);
+
+// POST /deal/:dealId/send — compose (same pipeline as preview), validate,
+// hand ONE email to the canonical queue (ScheduledEmail, scheduledAt=now) and
+// write the immutable ConfirmationEmailSend snapshot. The queue owns delivery:
+// connected Gmail account frozen at enqueue, retries, connection-deferral,
+// customer×email sending windows, thread mirror + CRM linking.
+router.post(
+  '/deal/:dealId/send',
+  handle(async (req, res) => {
+    const composed = await composeConfirmationEmail(prisma, req.params.dealId, {
+      language: req.body?.language,
+      overrideOverlay: req.body?.overrideOverlay || null,
+    });
+    if (composed.error === 'deal_not_found') return res.status(404).json({ error: composed.error });
+    if (composed.error) return res.status(422).json({ error: composed.error, ...composed.meta });
+
+    // Operator-edited recipient/subject from the send step win over composed.
+    const to = cleanRecipientList([
+      { email: req.body?.to || composed.recipient?.email, name: composed.recipient?.name },
+    ]);
+    const subject = String(req.body?.subject ?? composed.subject ?? '').trim();
+    if (!to.length) return res.status(422).json({ error: 'no_recipient_email' });
+    if (!subject) return res.status(422).json({ error: 'missing_subject' });
+
+    const blocking = composed.warnings.filter((w) => ACKNOWLEDGEABLE.has(w.code));
+    if (blocking.length && !req.body?.acknowledgeWarnings) {
+      return res.status(422).json({ error: 'send_blocked', warnings: blocking });
+    }
+
+    // Double-click guard: a second send for the same deal within 10s is a
+    // duplicate, not a decision. Deliberate resends after that are allowed.
+    const recent = await prisma.confirmationEmailSend.findFirst({
+      where: { dealId: composed.dealId, createdAt: { gt: new Date(Date.now() - 10_000) } },
+      select: { id: true },
+    });
+    if (recent) return res.status(409).json({ error: 'duplicate_send' });
+
+    const bodyHtml = sanitizeEmailHtml(buildEmailHtml(composed));
+    if (!bodyHtml) return res.status(422).json({ error: 'empty_body' });
+
+    // Freeze the sending account NOW (the queue contract) — fails with
+    // no_connected_account before anything is written.
+    let account;
+    try {
+      account = await resolveSendAccount(null);
+    } catch (e) {
+      return res.status(422).json({ error: e.code || 'no_connected_account' });
+    }
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const { scheduled, snapshot } = await prisma.$transaction(async (tx) => {
+      const scheduled = await tx.scheduledEmail.create({
+        data: {
+          accountId: account.id,
+          toJson: to,
+          subject,
+          bodyHtml,
+          dealId: composed.dealId,
+          contactId: composed.recipient?.contactId || null,
+          scheduledAt: new Date(),
+          createdById: req.adminAuth?.userId || null,
+        },
+      });
+      const snapshot = await tx.confirmationEmailSend.create({
+        data: {
+          dealId: composed.dealId,
+          templateId: composed.template.id,
+          templateName: composed.template.internalName,
+          language: composed.language,
+          recipientSnapshot: { ...to[0], contactId: composed.recipient?.contactId || null },
+          subject,
+          bodyHtml,
+          fillersSnapshot: composed.fillers,
+          overridesSnapshot: req.body?.overrideOverlay || null,
+          imagesSnapshot: composed.sections
+            .filter((s) => s.key === 'meeting_point_image' && s.data?.url)
+            .map((s) => ({ role: 'meeting_point', url: s.data.url })),
+          scheduledEmailId: scheduled.id,
+          createdById: req.adminAuth?.userId || null,
+        },
+      });
+      await emitTimelineEvent(tx, {
+        subjectId: composed.dealId,
+        kind: 'communication',
+        origin,
+        data: {
+          event: 'confirmation_email_queued',
+          sendId: snapshot.id,
+          channel: 'email',
+          language: composed.language,
+          recipientName: to[0].name || to[0].email,
+          subject,
+          eventName: 'מייל אישור',
+          messageName: composed.template.internalName,
+        },
+      });
+      return { scheduled, snapshot };
+    });
+
+    res.json({ ok: true, sendId: snapshot.id, scheduledEmailId: scheduled.id, queued: true });
   }),
 );
 

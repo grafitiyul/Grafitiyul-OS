@@ -43,6 +43,7 @@ import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import DealCollectionCard from './DealCollectionCard.jsx';
 import DealFillersCard from './confirmation/DealFillersCard.jsx';
+import ConfirmationEmailModal from './confirmation/ConfirmationEmailModal.jsx';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
@@ -171,6 +172,47 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Hide returns it). A deal WITH saved fillers always shows the card.
   const [fillersRevealed, setFillersRevealed] = useState(false);
   const [hasFillers, setHasFillers] = useState(false);
+  // מייל אישור: fillers → the large preview dialog; none → direct queue send
+  // (approved D3). Blocked sends offer the preview as the escape hatch.
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmailBusy, setConfirmEmailBusy] = useState(false);
+  const sendConfirmationEmail = async () => {
+    setConfirmEmailBusy(true);
+    try {
+      const composed = await api.confirmationEmail.compose(id, {});
+      if (composed.hasFillers) {
+        setConfirmEmailOpen(true);
+        return;
+      }
+      await api.confirmationEmail.send(id, {});
+      alert('מייל האישור נכנס לתור השליחה ✓');
+      refresh();
+    } catch (e) {
+      const code = e.payload?.error;
+      if (code === 'send_blocked') {
+        const t = {
+          missing_content: 'חסר תוכן בשפת השליחה',
+          missing_policy: 'מדיניות הביטול שנבחרה אינה זמינה עוד',
+          no_tour: 'אין סיור משויך — נקודת המפגש חסרה',
+        };
+        const list = (e.payload.warnings || []).map((w) => t[w.code] || w.code).join('\n• ');
+        if (confirm(`לא ניתן לשלוח אוטומטית:\n• ${list}\n\nלפתוח תצוגה מקדימה לטיפול ושליחה?`)) setConfirmEmailOpen(true);
+      } else if (code === 'no_recipient_email' || code === 'missing_subject') {
+        const msg = code === 'no_recipient_email' ? 'לאיש הקשר אין כתובת מייל.' : 'חסר נושא לשפת השליחה בתבנית.';
+        if (confirm(`${msg}\nלפתוח תצוגה מקדימה להשלמה ידנית?`)) setConfirmEmailOpen(true);
+      } else if (code === 'ambiguous_confirmation_template') {
+        alert('לא ניתן לבחור תבנית — יש תבניות חופפות בהגדרות ״מייל אישור״. תקנו את החפיפה ונסו שוב.');
+      } else if (code === 'no_confirmation_template') {
+        alert('לא הוגדרה תבנית מייל אישור. הגדירו תבנית תחת הגדרות CRM → מייל אישור.');
+      } else if (code === 'no_connected_account') {
+        alert('אין חשבון Gmail מחובר — חברו חשבון בהגדרות המייל.');
+      } else {
+        alert('שגיאה: ' + (code || e.message));
+      }
+    } finally {
+      setConfirmEmailBusy(false);
+    }
+  };
   // Pending Tour Update actions + the leave-with-pending confirmation target.
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
   const [leaveHref, setLeaveHref] = useState(null);
@@ -785,6 +827,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                       תנאי עסקה מיוחדים (פילרים)
                     </button>
                   )}
+                  {/* LIVE: fillers → large preview dialog; none → direct
+                      queue send with validation popups (approved D3). */}
+                  <button
+                    type="button"
+                    disabled={confirmEmailBusy}
+                    onClick={() => { close(); sendConfirmationEmail(); }}
+                    className="flex w-full items-center px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 disabled:text-gray-400"
+                  >
+                    {confirmEmailBusy ? 'שולח מייל אישור…' : 'שליחת מייל אישור'}
+                  </button>
                   {TOUR_PLACEHOLDER_ACTIONS.map((label) => (
                     <MenuSoonItem key={label} label={label} />
                   ))}
@@ -962,6 +1014,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           onVisibilityInfo={setHasFillers}
           onDealChanged={refresh}
         />
+        {confirmEmailOpen && (
+          <ConfirmationEmailModal
+            deal={deal}
+            onClose={() => setConfirmEmailOpen(false)}
+            onSent={() => {
+              alert('מייל האישור נכנס לתור השליחה ✓');
+              refresh();
+            }}
+          />
+        )}
 
         {/* Quote Module — the COMPLETE proposal workspace (business deals only:
             group/private deals don't send proposals). Generation, versions,
@@ -2112,8 +2174,9 @@ function OrgHoverCard({ org, orgTypeLabel, subtypeLabel, onEdit }) {
 // ("טופס סיכום סיור" is the guide-facing counterpart — it belongs to the Tour
 // page.) The real group action (שבץ/החלף סיור) renders above these; private/
 // business tours are created automatically on WON, so they have no manual
-// creation entry.
-const TOUR_PLACEHOLDER_ACTIONS = ['שליחת מייל אישור'];
+// creation entry. "שליחת מייל אישור" went LIVE with the Confirmation Email
+// module — it renders above this list.
+const TOUR_PLACEHOLDER_ACTIONS = [];
 
 // Disabled "coming soon" menu entry — the same visual language as the header
 // ⋮'s "איחוד דילים" placeholder, so unbuilt actions are never mistaken for live.

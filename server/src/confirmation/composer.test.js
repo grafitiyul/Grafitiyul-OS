@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { composeFromContext } from './composer.js';
+import { composeFromContext, buildEmailHtml } from './composer.js';
 import { mergeOverrides, overrideFor, withoutOverride, normalizeOverrideState } from './overrides.js';
 import { defaultSections } from './sections.js';
 
@@ -210,6 +210,36 @@ test('warnings: missing subject language + missing recipient email', () => {
   const r = composeFromContext(c);
   assert.ok(r.warnings.some((w) => w.code === 'missing_subject' && w.otherLanguageHasContent));
   assert.ok(r.warnings.some((w) => w.code === 'no_recipient_email'));
+});
+
+// ── buildEmailHtml ───────────────────────────────────────────────────────────
+
+test('email HTML: internal block names never render; customer titles do', () => {
+  const r = composeFromContext(
+    ctx({ fillers: [{ kind: 'other_note', noteHe: '<p>תנאי</p>' }] }),
+  );
+  const html = buildEmailHtml(r);
+  // block internal name must NOT appear
+  assert.doesNotMatch(html, /מדיניות ביטול רגילה/);
+  assert.match(html, /<p>מדיניות רגילה<\/p>/);
+  // special_terms customer title DOES appear as a heading
+  assert.match(html, /<h3>תנאים מיוחדים שסוכמו<\/h3>/);
+  assert.match(html, /<p>תנאי<\/p>/);
+});
+
+test('email HTML: an operator override title renders as a customer heading', () => {
+  const r = composeFromContext(ctx(), {
+    overrideOverlay: { sections: { 'block:sc_bring': { html: '<p>ציוד</p>', title: 'מה להביא לסיור' } } },
+  });
+  const html = buildEmailHtml(r);
+  assert.match(html, /<h3>מה להביא לסיור<\/h3>/);
+});
+
+test('email HTML: empty sections are skipped entirely', () => {
+  const r = composeFromContext(ctx({ language: 'en' })); // sc_bring has no English
+  const html = buildEmailHtml(r);
+  assert.doesNotMatch(html, /נעליים/);
+  assert.match(html, /Standard policy/);
 });
 
 // ── overrides.js unit ────────────────────────────────────────────────────────
