@@ -22,6 +22,8 @@ const WARNING_TEXT = {
   missing_policy: 'מדיניות הביטול שנבחרה אינה זמינה עוד',
   missing_variable: 'משתנה ללא ערך בעסקה זו',
   unknown_variable: 'משתנה לא מוכר',
+  // label carries the location name; configured under הגדרות CRM → מיקומים.
+  missing_meeting_image: 'תמונת נקודת מפגש חסרה (הגדרות CRM → מיקומים)',
 };
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';

@@ -429,6 +429,18 @@ test('email HTML: the meeting-point image survives into the sent body', () => {
   assert.match(r.emailHtml, /max-width:100%/);
 });
 
+test('a wanted image section with NO configured image warns with the location name', () => {
+  const c = ctx();
+  c.meetingPoint = { ...c.meetingPoint, image: null }; // tour exists, photo does not
+  const r = composeFromContext(c);
+  const w = r.warnings.find((x) => x.code === 'missing_meeting_image');
+  assert.ok(w, 'operator must see WHY the photo is absent');
+  assert.match(w.label, /לא הוגדרה תמונת נקודת מפגש למיקום תל אביב/);
+  // Informational only — it must NOT block automatic sends (not in the
+  // acknowledgeable set), and no fake image is invented.
+  assert.equal(byId(r, 'meeting_point_image'), undefined);
+});
+
 test('email HTML: a section with neither text nor media is still skipped', () => {
   const c = ctx({ meetingPoint: null, tour: null });
   const r = composeFromContext(c);

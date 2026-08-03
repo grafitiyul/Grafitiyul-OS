@@ -391,6 +391,21 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
       }
       case 'meeting_point_image': {
         const url = meetingPoint?.image?.url || null;
+        // The template WANTS this section (we are inside the non-hidden case)
+        // but no image resolves for this variant/location — say so instead of
+        // silently omitting it. Informational, NOT send-blocking: locations
+        // without a photo are legitimate, and blocking would break automatic
+        // WON sends for them. (A missing TOUR is already covered by no_tour.)
+        if (!url && meetingPoint) {
+          const locName = deal.location?.nameHe || deal.location?.nameEn || '';
+          warnings.push({
+            code: 'missing_meeting_image',
+            sectionId: 'meeting_point_image',
+            label: locName
+              ? `לא הוגדרה תמונת נקודת מפגש למיקום ${locName}`
+              : 'לא הוגדרה תמונת נקודת מפגש למיקום',
+          });
+        }
         if (url) {
           // Stable PUBLIC R2 URL (never a signed/expiring one) so the photo
           // still loads days later. The inline max-width keeps it inside the
