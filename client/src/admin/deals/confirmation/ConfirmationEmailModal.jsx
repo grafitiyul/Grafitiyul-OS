@@ -50,15 +50,41 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
   const [error, setError] = useState(null);
   // 'sections' = per-section editing; 'final' = the exact assembled email body.
   const [viewMode, setViewMode] = useState('sections');
+  // Explicit language choice. null = follow the contact's preference; setting
+  // it RECOMPOSES through the canonical composer (never a visual translation).
+  const [langChoice, setLangChoice] = useState(null);
+  const [mismatch, setMismatch] = useState(null); // pending 3-option decision
+  const [contactLangUpdated, setContactLangUpdated] = useState(false);
+  const [notWon, setNotWon] = useState(false); // explicit pre-WON override
 
   const recompose = useCallback(
-    async (overlay) => {
-      const d = await api.confirmationEmail.compose(deal.id, { overrideOverlay: overlay || null });
+    async (overlay, language) => {
+      const d = await api.confirmationEmail.compose(deal.id, {
+        overrideOverlay: overlay || null,
+        ...(language ? { language } : {}),
+      });
       setData(d);
       return d;
     },
     [deal.id],
   );
+
+  // Switching language re-runs the WHOLE composer in that language: sections,
+  // subject, warnings and emailHtml are all rebuilt from canonical sources.
+  async function switchLanguage(next) {
+    if (next === lang) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const d = await recompose(temps, next);
+      setLangChoice(next);
+      setSubject(d.subject || '');
+    } catch (e) {
+      setError(e.payload?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     let on = true;
@@ -88,11 +114,11 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
       // A promoted edit must not stay shadowed by a temp copy (quote rule).
       const nextTemps = withoutKey(temps, section.id);
       setTemps(nextTemps);
-      await recompose(nextTemps);
+      await recompose(nextTemps, langChoice);
     } else {
       const nextTemps = mergeState(temps, section.id, { html, ...(title ? { title } : {}) });
       setTemps(nextTemps);
-      await recompose(nextTemps);
+      await recompose(nextTemps, langChoice);
     }
     setEditing(null);
   }
@@ -107,7 +133,11 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
     setEditing(null);
   }
 
-  async function send() {
+  // The customer's OWN preference, as stored on the contact.
+  const contactLang = data?.recipient?.language === 'en' ? 'en' : 'he';
+  const languageOverridden = !!langChoice && langChoice !== contactLang;
+
+  async function doSend({ allowNotWon = false, contactLanguageUpdated = false } = {}) {
     setBusy(true);
     setError(null);
     try {
@@ -115,12 +145,23 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
         overrideOverlay: temps || null,
         subject: subject.trim(),
         to: toEmail.trim(),
+        ...(langChoice ? { language: langChoice } : {}),
         acknowledgeWarnings: true,
+        allowNotWon,
+        languageOverridden,
+        contactLanguageUpdated: contactLanguageUpdated || contactLangUpdated,
       });
       onSent?.();
       onClose();
     } catch (e) {
       const code = e.payload?.error;
+      if (code === 'deal_not_won') {
+        // The confirmation email is a WON workflow. Never silently sent for an
+        // open/lost deal — the operator must state the exception.
+        setError('העסקה אינה WON. מייל אישור נשלח בדרך כלל לאחר סגירה — אפשר לשלוח בכל זאת מהכפתור למטה.');
+        setNotWon(true);
+        return;
+      }
       setError(
         code === 'duplicate_send'
           ? 'מייל אישור נשלח ממש עכשיו — המתינו רגע לפני שליחה חוזרת.'
@@ -128,6 +169,39 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
             ? 'אין חשבון Gmail מחובר — חברו חשבון בהגדרות המייל.'
             : WARNING_TEXT[code] || 'שגיאה בשליחה: ' + (code || e.message),
       );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Send gate: a language that differs from the contact's stored preference
+  // must be an explicit decision, never a silent one-off.
+  function send() {
+    if (languageOverridden) {
+      setMismatch({ from: contactLang, to: langChoice });
+      return;
+    }
+    doSend();
+  }
+
+  // "שנה את שפת ההתקשרות" — updates the CONTACT (canonical field, normal
+  // contact audit history), then sends. Never the org/guide/deal language.
+  async function changeContactLanguageAndSend() {
+    const contactId = data?.recipient?.contactId;
+    if (!contactId) {
+      setError('אין איש קשר לעדכון שפה.');
+      setMismatch(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.contacts.update(contactId, { communicationLanguage: langChoice });
+      setContactLangUpdated(true);
+      setMismatch(null);
+      await doSend({ contactLanguageUpdated: true });
+    } catch (e) {
+      setError('עדכון שפת ההתקשרות נכשל: ' + (e.payload?.error || e.message));
+      setMismatch(null);
     } finally {
       setBusy(false);
     }
@@ -145,6 +219,16 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
           <input value={subject} onChange={(e) => setSubject(e.target.value)} dir={lang === 'en' ? 'ltr' : 'rtl'} className={INPUT} />
         </label>
       </div>
+      {notWon && (
+        <button
+          type="button"
+          onClick={() => doSend({ allowNotWon: true })}
+          disabled={busy}
+          className="h-10 shrink-0 self-end rounded-lg border border-amber-400 bg-amber-50 px-4 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+        >
+          שלח בכל זאת (לפני WON)
+        </button>
+      )}
       <button
         type="button"
         onClick={send}
@@ -176,9 +260,28 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
             <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-900 px-3 py-1 text-[12px] font-medium text-white">
               תבנית: {data.template.internalName}
             </span>
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[12px] text-gray-600">
-              {lang === 'en' ? 'English' : 'עברית'}
+            {/* Language switch — recomposes the WHOLE email through the
+                canonical composer in that language. */}
+            <span className="inline-flex overflow-hidden rounded-full border border-gray-200">
+              {[{ v: 'he', label: 'עברית' }, { v: 'en', label: 'English' }].map((o) => (
+                <button
+                  key={o.v}
+                  type="button"
+                  onClick={() => switchLanguage(o.v)}
+                  disabled={busy}
+                  className={`px-3 py-1 text-[12px] font-medium transition ${
+                    lang === o.v ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
             </span>
+            {languageOverridden && (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11.5px] text-amber-700 ring-1 ring-amber-200">
+                שונה משפת ההתקשרות של הלקוח ({contactLang === 'en' ? 'English' : 'עברית'})
+              </span>
+            )}
             <div className="ms-auto flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
               <button
                 type="button"
@@ -247,14 +350,14 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
                  sanitized) — what Gmail receives, headings and images included. */
               <article
                 dir={lang === 'en' ? 'ltr' : 'rtl'}
-                className="mx-auto max-w-2xl rounded-lg bg-white px-6 py-8 sm:px-10 shadow-sm"
+                className="rounded-lg bg-white px-6 py-10 lg:px-16 lg:py-12 shadow-sm ring-1 ring-gray-200/70"
               >
                 <RichText html={data.emailHtml || ''} dir={lang === 'en' ? 'ltr' : 'rtl'} />
               </article>
             ) : (
             <article
               dir={lang === 'en' ? 'ltr' : 'rtl'}
-              className="mx-auto max-w-2xl rounded-lg bg-white px-6 py-8 sm:px-10 space-y-5 shadow-sm"
+              className="rounded-lg bg-white px-6 py-10 lg:px-16 lg:py-12 space-y-8 shadow-sm ring-1 ring-gray-200/70"
             >
               {data.sections.map((s) => (
                 <section key={s.id} className="group relative">
@@ -318,6 +421,17 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
             </article>
             )}
           </div>
+
+          {mismatch && (
+            <LanguageMismatchDialog
+              contactLang={mismatch.from}
+              sendLang={mismatch.to}
+              busy={busy}
+              onOnce={() => { setMismatch(null); doSend(); }}
+              onChangeContact={changeContactLanguageAndSend}
+              onClose={() => setMismatch(null)}
+            />
+          )}
 
           {editing && (
             <OverrideEditor
@@ -420,6 +534,59 @@ function OverrideEditor({ section, hasTemp, hasPersistent, onSave, onReset, onCl
             </span>
           </span>
         </label>
+      </div>
+    </Dialog>
+  );
+}
+
+// Sending in a language the customer did not ask for is a decision, not a
+// default. Three explicit outcomes (the WaiverDecisionDialog pattern: stacked
+// option cards, no ambiguous OK/Cancel).
+function LanguageMismatchDialog({ contactLang, sendLang, busy, onOnce, onChangeContact, onClose }) {
+  const nameOf = (l) => (l === 'en' ? 'אנגלית' : 'עברית');
+  return (
+    <Dialog open onClose={onClose} title="שפת השליחה שונה משפת הלקוח" size="md-wide">
+      <div className="space-y-3" dir="rtl">
+        <p className="text-[13.5px] text-gray-700">
+          שפת ההתקשרות של הלקוח היא <strong>{nameOf(contactLang)}</strong>, והמייל מוכן לשליחה ב
+          <strong>{nameOf(sendLang)}</strong>.
+        </p>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onOnce}
+          className="block w-full rounded-lg border border-blue-300 bg-blue-50 px-3.5 py-2.5 text-right transition hover:bg-blue-100 disabled:opacity-50"
+        >
+          <span className="block text-[14px] font-semibold text-blue-900">
+            שלח חד-פעמית ב{nameOf(sendLang)}
+          </span>
+          <span className="block text-[12px] text-blue-800/80">
+            שפת ההתקשרות של הלקוח לא משתנה; מיילים עתידיים יישלחו ב{nameOf(contactLang)}.
+          </span>
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onChangeContact}
+          className="block w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-right transition hover:bg-gray-50 disabled:opacity-50"
+        >
+          <span className="block text-[14px] font-semibold text-gray-900">
+            שנה את שפת ההתקשרות של הלקוח ל{nameOf(sendLang)}
+          </span>
+          <span className="block text-[12px] text-gray-500">
+            מעדכן את איש הקשר (עם רישום בהיסטוריה) ואז שולח. גם תקשורת עתידית תהיה ב{nameOf(sendLang)}.
+          </span>
+        </button>
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="h-10 rounded-lg border border-gray-300 bg-white px-4 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            סגור
+          </button>
+        </div>
       </div>
     </Dialog>
   );

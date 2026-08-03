@@ -217,6 +217,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         alert('לא הוגדרה תבנית מייל אישור. הגדירו תבנית תחת הגדרות CRM → מייל אישור.');
       } else if (code === 'no_connected_account') {
         alert('אין חשבון Gmail מחובר — חברו חשבון בהגדרות המייל.');
+      } else if (code === 'deal_not_won') {
+        // WON workflow: never a silent send for an open/lost deal. The
+        // preview carries the explicit override.
+        if (confirm('העסקה אינה WON. מייל אישור נשלח בדרך כלל לאחר סגירת העסקה.\nלפתוח תצוגה מקדימה?')) {
+          setConfirmEmailOpen(true);
+        }
       } else {
         alert('שגיאה: ' + (code || e.message));
       }
@@ -847,6 +853,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                     className="flex w-full items-center px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 disabled:text-gray-400"
                   >
                     {confirmEmailBusy ? 'שולח מייל אישור…' : 'שליחת מייל אישור'}
+                  </button>
+                  {/* Always available — inspect the full email, switch
+                      language, edit fields, then send from the preview.
+                      Never hidden by deal status or filler state. */}
+                  <button
+                    type="button"
+                    onClick={() => { close(); setConfirmEmailOpen(true); }}
+                    className="flex w-full items-center px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                  >
+                    תצוגה מקדימה למייל אישור
                   </button>
                   {TOUR_PLACEHOLDER_ACTIONS.map((label) => (
                     <MenuSoonItem key={label} label={label} />
