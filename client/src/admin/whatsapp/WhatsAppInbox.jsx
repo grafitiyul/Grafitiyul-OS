@@ -817,16 +817,17 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                 )}
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 text-[14px] font-semibold text-gray-900">
-                    {/* Foreign-number flag — first line, beside the name,
-                        readable size. Israeli numbers render nothing. */}
-                    {selected.type !== 'group' && selected.phoneNumber && (
-                      <PhoneFlag phone={selected.phoneNumber} className="text-[17px]" />
-                    )}
                     <span className="min-w-0 truncate" dir="auto">
                       {selected.displayName && selected.displayName !== selected.phoneNumber
                         ? selected.displayName
                         : formatPhoneDisplay(selected.phoneNumber) || 'לא מזוהה'}
                     </span>
+                    {/* Foreign-number flag — first line, TRAILING side of the
+                        name (RTL: to its left; mirrors by direction),
+                        readable size. Israeli numbers render nothing. */}
+                    {selected.type !== 'group' && selected.phoneNumber && (
+                      <PhoneFlag phone={selected.phoneNumber} className="text-[17px]" />
+                    )}
                     {/* Internal staff conversation — canonical Staff-module
                         identity (PersonRef), matched server-side. */}
                     {selected.staff && (

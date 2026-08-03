@@ -351,28 +351,26 @@ async function autoMatchChats(chats) {
   }
 }
 
-// Staff (internal) identity per chat — resolved against the CANONICAL Staff
+// Staff (internal) identity by phone — resolved against the CANONICAL Staff
 // module identity, PersonRef, never a name/label heuristic: a private chat
 // whose number is a Staff person's number is an internal staff conversation.
 // Both sides normalize through the ONE shared normalizer (normalizePhoneIntl),
 // the same notion of "same number" the contact matcher uses. ANY PersonRef row
 // counts — active, blocked, trainee, evaluator, legacy-null lifecycle:
 // existing in the Staff module IS the rule; lifecycle/status only ride along.
-// Returns Map<intlPhone, staffDto>.
-async function staffByPhone(chats) {
-  const wanted = new Set(
-    chats
-      .filter((c) => c.type === 'private' && c.phoneNumber)
-      .map((c) => normalizePhoneIntl(c.phoneNumber) ?? c.phoneNumber),
-  );
-  if (wanted.size === 0) return new Map();
+//
+// The FULL map (every staff phone, a few dozen rows) is built once per request
+// and is the single population behind BOTH the per-chat `staff` DTO field and
+// the ללא-שיוך exclusion below — the badge and the repair scope can never
+// disagree about who is staff. Returns Map<intlPhone, staffDto>.
+async function staffPhoneMap() {
   const people = await prisma.personRef.findMany({
     select: { id: true, displayName: true, phone: true, status: true, lifecycleHint: true },
   });
   const map = new Map();
   for (const p of people) {
     const intl = normalizePhoneIntl(p.phone);
-    if (!intl || !wanted.has(intl) || map.has(intl)) continue;
+    if (!intl || map.has(intl)) continue;
     map.set(intl, {
       personRefId: p.id,
       name: p.displayName,
@@ -798,22 +796,35 @@ router.get(
         );
       }
     }
+    // Internal staff identification — ONE canonical population (PersonRef by
+    // phone) driving the per-chat `staff` field, the ללא-שיוך row exclusion
+    // and the ללא-שיוך counter below.
+    const staffMap = await staffPhoneMap();
     // Snoozed chats leave the active work queue (until they wake); they stay
     // findable under 'all', in search, and in the unmatched repair view.
-    const chats =
+    // STAFF chats leave the unmatched repair view entirely: an internal staff
+    // conversation is not CRM repair work even when no Contact is linked (it
+    // still shows under שיחות/הכל with its צוות badge).
+    let chats =
       scope === 'active' && !search ? chatsRaw.filter((c) => !isSnoozedNow(c)) : chatsRaw;
-    const unmatchedCount = await prisma.whatsAppChat.count({
+    if (scope === 'unmatched') chats = chats.filter((c) => !staffFor(c, staffMap));
+    // The repair badge counts only chats that need ACTIVE work — not ones
+    // archived/deleted on the phone or manually hidden, and not staff chats.
+    // Same where-shape as the unmatched scope + the SAME staffMap test as the
+    // rows, so the visible count and the filtered list derive from one
+    // population.
+    const unmatchedRows = await prisma.whatsAppChat.findMany({
       where: {
         contactId: null,
         type: 'private',
-        // The repair badge counts only chats that need ACTIVE work — not ones
-        // archived/deleted on the phone or manually hidden.
         providerArchivedAt: null,
         providerDeletedAt: null,
         hiddenAt: null,
         ...(accountId ? { accountId } : {}),
       },
+      select: { type: true, phoneNumber: true },
     });
+    const unmatchedCount = unmatchedRows.filter((c) => !staffFor(c, staffMap)).length;
     // Attach the CONFIDENTLY-resolved deal per linked conversation (same
     // exactly-one candidate rule as deal-resolution: open deals + WON deals
     // toured ≤7 days ago) so the row can show the deal's activity type.
@@ -892,9 +903,6 @@ router.get(
         }
       }
     }
-    // Internal staff identification — rides on every private chat so the
-    // client can badge צוות and suppress deal actions.
-    const staffMap = await staffByPhone(chats);
     res.set('Cache-Control', 'no-store');
     res.json({
       chats: chats.map((c) => ({

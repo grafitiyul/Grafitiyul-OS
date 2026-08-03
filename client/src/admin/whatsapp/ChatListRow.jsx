@@ -227,26 +227,30 @@ export default function ChatListRow({
             מוסתרת
           </span>
         )}
-        {/* Foreign-number flag — FIRST line, beside the identity, large enough
-            to actually read (flag-icons scale with font-size). Outside the
-            name span so the RTL row keeps it on the leading edge for Hebrew
-            and English names alike. Israeli numbers render nothing (PhoneFlag
-            policy). */}
-        {!isGroup && chat.phoneNumber && (
-          <PhoneFlag phone={chat.phoneNumber} className="text-[16px]" />
-        )}
-        <span
-          className={`min-w-0 flex-1 truncate text-right text-[14px] ${
-            unread ? 'font-bold text-gray-900' : 'font-normal text-gray-600'
-          }`}
-          dir="auto"
-        >
-          {chat.displayName && chat.displayName !== chat.phoneNumber ? (
-            chat.displayName
-          ) : chat.phoneNumber ? (
-            <span dir="ltr">{formatPhoneDisplay(chat.phoneNumber)}</span>
-          ) : (
-            'לא מזוהה'
+        {/* Identity cluster — the NAME leads, the foreign-number flag follows
+            on its TRAILING side (RTL: to the left of the name; mirrors by
+            inherited direction in an LTR context), large enough to actually
+            read (flag-icons scale with font-size). One cluster so the flag
+            rides the NAME — the stretch gap sits between it and the
+            timestamp, never between the name and its flag. Israeli numbers
+            render nothing (PhoneFlag policy). */}
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span
+            className={`min-w-0 truncate text-right text-[14px] ${
+              unread ? 'font-bold text-gray-900' : 'font-normal text-gray-600'
+            }`}
+            dir="auto"
+          >
+            {chat.displayName && chat.displayName !== chat.phoneNumber ? (
+              chat.displayName
+            ) : chat.phoneNumber ? (
+              <span dir="ltr">{formatPhoneDisplay(chat.phoneNumber)}</span>
+            ) : (
+              'לא מזוהה'
+            )}
+          </span>
+          {!isGroup && chat.phoneNumber && (
+            <PhoneFlag phone={chat.phoneNumber} className="text-[16px]" />
           )}
         </span>
         <span
