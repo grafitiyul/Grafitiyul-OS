@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import DealDrawer from '../common/DealDrawer.jsx';
@@ -37,6 +37,28 @@ export default function ManagementTasksPage() {
   // ONE deal at a time — a single state slot structurally prevents duplicate
   // drawers; clicking another customer while open just switches the deal.
   const [drawerDealId, setDrawerDealId] = useState(null);
+
+  // ── drawer boundary (the CRM Tasks record-navigation rule) ──
+  // Desktop: the drawer covers ~70% of the pane via DealDrawer's existing
+  // startOffset, leaving ~30% of the inbox visible behind it. Mobile: 0 —
+  // full-screen detail is the intended behavior. Measured from the real pane,
+  // re-measured on resize; no second drawer, no duplicated styles.
+  const paneRef = useRef(null);
+  const [drawerStartPx, setDrawerStartPx] = useState(0);
+  useEffect(() => {
+    if (!drawerDealId) return undefined;
+    const measure = () => {
+      const pane = paneRef.current;
+      if (!pane || !window.matchMedia('(min-width: 768px)').matches) {
+        setDrawerStartPx(0);
+        return;
+      }
+      setDrawerStartPx(Math.floor(pane.clientWidth * 0.3));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [drawerDealId]);
 
   const load = useCallback(async () => {
     try {
@@ -84,7 +106,7 @@ export default function ManagementTasksPage() {
     // The outer div is the drawer's positioning pane and does NOT scroll; the
     // inner div scrolls — so the open drawer covers exactly the inbox pane
     // (TopBar + NavRail stay put) and closing restores the untouched scroll.
-    <div className="relative h-full" dir="rtl">
+    <div ref={paneRef} className="relative h-full" dir="rtl">
     <div className="h-full overflow-y-auto">
     <div className="w-full px-5 py-6 lg:px-10 lg:py-8">
       <header className="mb-6">
@@ -180,7 +202,11 @@ export default function ManagementTasksPage() {
           behavior of CRM Tasks / the inboxes: slides from the left, full pane,
           ESC / × close, DealDetail embedded. No second implementation. */}
       {drawerDealId && (
-        <DealDrawer dealId={drawerDealId} onClose={() => setDrawerDealId(null)} />
+        <DealDrawer
+          dealId={drawerDealId}
+          onClose={() => setDrawerDealId(null)}
+          startOffset={drawerStartPx}
+        />
       )}
     </div>
   );
