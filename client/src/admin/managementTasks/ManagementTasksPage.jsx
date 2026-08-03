@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import DealDrawer from '../common/DealDrawer.jsx';
 
 // משימות הנהלה — the operational review inbox.
 //
@@ -10,6 +11,12 @@ import { api } from '../../lib/api.js';
 //
 // The logistics card is deliberately loud (red, on the leading side in RTL):
 // it is the one that means somebody has to go and do something.
+//
+// The customer name opens the deal in the SHARED DealDrawer (the same
+// component the CRM Tasks workspace and both inboxes use) — the inbox stays
+// mounted and keeps its scroll position underneath. The page root is the
+// drawer's positioning pane (relative + inner scroller), the exact structure
+// the CRM Tasks grid uses.
 
 const TABS = [
   { key: 'open', labelHe: 'ממתין לטיפול' },
@@ -27,6 +34,9 @@ export default function ManagementTasksPage() {
   const [kinds, setKinds] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  // ONE deal at a time — a single state slot structurally prevents duplicate
+  // drawers; clicking another customer while open just switches the deal.
+  const [drawerDealId, setDrawerDealId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -71,7 +81,12 @@ export default function ManagementTasksPage() {
   };
 
   return (
-    <div className="w-full px-5 py-6 lg:px-10 lg:py-8" dir="rtl">
+    // The outer div is the drawer's positioning pane and does NOT scroll; the
+    // inner div scrolls — so the open drawer covers exactly the inbox pane
+    // (TopBar + NavRail stay put) and closing restores the untouched scroll.
+    <div className="relative h-full" dir="rtl">
+    <div className="h-full overflow-y-auto">
+    <div className="w-full px-5 py-6 lg:px-10 lg:py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">משימות הנהלה</h1>
         <p className="mt-1 text-[14px] text-gray-500">מה מחכה לקריאה ולאישור?</p>
@@ -88,7 +103,8 @@ export default function ManagementTasksPage() {
             }`}
           >
             {t.labelHe}
-            {status === t.key && data ? <span className="ms-1.5 opacity-70" dir="ltr">{data.total}</span> : null}
+            {/* Breathing room between label and count — gap only, same pill. */}
+            {status === t.key && data ? <span className="ms-2.5 opacity-70" dir="ltr">{data.total}</span> : null}
           </button>
         ))}
         {data?.counts ? (
@@ -138,6 +154,7 @@ export default function ManagementTasksPage() {
               busy={busy}
               focusId={focusId}
               onAct={act}
+              onOpenDeal={setDrawerDealId}
             />
           ))}
         </div>
@@ -157,6 +174,15 @@ export default function ManagementTasksPage() {
         </section>
       ) : null}
     </div>
+    </div>
+
+      {/* The SHARED Deal drawer (common/DealDrawer) — the exact component and
+          behavior of CRM Tasks / the inboxes: slides from the left, full pane,
+          ESC / × close, DealDetail embedded. No second implementation. */}
+      {drawerDealId && (
+        <DealDrawer dealId={drawerDealId} onClose={() => setDrawerDealId(null)} />
+      )}
+    </div>
   );
 }
 
@@ -171,7 +197,7 @@ export default function ManagementTasksPage() {
  * They stay completely independent: separate rows, separate handle buttons,
  * separate dedupeKeys. The container is presentation only.
  */
-function TourGroup({ group, status, busy, focusId, onAct }) {
+function TourGroup({ group, status, busy, focusId, onAct, onOpenDeal }) {
   const cards = [...group.cards].sort((a, b) => {
     // Summary leads (right in RTL); the alert card sits beside it.
     if (a.kind === b.kind) return 0;
@@ -184,9 +210,8 @@ function TourGroup({ group, status, busy, focusId, onAct }) {
   const party = [d.customerName, d.orgName].filter(Boolean).join(' · ');
   const product = [d.productName, d.variantName].filter(Boolean).join(' · ');
   const hasAlert = cards.some((c) => c.tone === 'alert');
-  // The SAME direct photo link the guide got in WhatsApp (server-resolved on
-  // the summary card) — the office jumps straight to the tour's photos.
-  const galleryUrl = cards.find((c) => c.galleryUrl)?.galleryUrl || null;
+  // The related deal — frozen on the cards at creation (loose ref).
+  const dealId = cards.map((c) => c.dealId || c.data?.dealId).find(Boolean) || null;
 
   return (
     <section
@@ -194,22 +219,26 @@ function TourGroup({ group, status, busy, focusId, onAct }) {
         hasAlert ? 'border-red-200' : 'border-gray-200'
       }`}
     >
-      {/* Tour header — the container's identity */}
+      {/* Tour header — the container's identity. The customer opens the deal
+          in the shared drawer (in place — the inbox stays underneath). */}
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-200/80 bg-white/60 px-4 py-2.5">
-        <h2 className="text-[14px] font-bold text-gray-900">{party || 'ללא לקוח'}</h2>
+        <h2 className="text-[14px] font-bold text-gray-900">
+          {dealId ? (
+            <button
+              type="button"
+              onClick={() => onOpenDeal(dealId)}
+              title="פתיחת הדיל"
+              className="hover:text-blue-700 hover:underline"
+            >
+              {party || 'ללא לקוח'}
+            </button>
+          ) : (
+            party || 'ללא לקוח'
+          )}
+        </h2>
         {when ? <span className="text-[12.5px] font-medium text-gray-600">{when}</span> : null}
         {product ? <span className="text-[12px] text-gray-500">{product}</span> : null}
         {d.guideName ? <span className="text-[12px] text-gray-500">· {d.guideName}</span> : null}
-        {galleryUrl ? (
-          <a
-            href={galleryUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[12px] font-medium text-blue-600 hover:underline"
-          >
-            📸 תמונות מהסיור ↗
-          </a>
-        ) : null}
         <span className="ms-auto text-[11.5px] text-gray-400">
           {cards.length === 1 ? 'משימה אחת' : `${cards.length} משימות נפרדות`}
         </span>
@@ -265,6 +294,22 @@ function ReviewCard({ card, status, busy, focused, onAct }) {
           >
             {open ? 'הסתרת הפרטים' : 'הצגת הפרטים המלאים'}
           </button>
+        ) : null}
+
+        {/* The SAME direct photo link the guide got in WhatsApp — as a real
+            action button, directly under the details toggle. */}
+        {card.galleryUrl ? (
+          <div className="mt-2">
+            <a
+              href={card.galleryUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[12.5px] font-medium text-blue-700 hover:bg-blue-50"
+            >
+              <span aria-hidden>📸</span>
+              תמונות מהסיור
+            </a>
+          </div>
         ) : null}
 
         {open ? (
