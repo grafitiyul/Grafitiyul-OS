@@ -140,9 +140,11 @@ router.post(
     if (!access) return;
     if (!access.permissions.canUpload) return res.status(403).json({ error: 'uploads_disabled' });
     if (!r2.isConfigured()) return res.status(503).json({ error: 'r2_not_configured' });
+    // Attribution comes from the resolved link, never hardcoded: a customer
+    // link uploads as 'לקוח', a guide's staff link uploads as the guide.
     const result = await initiateUploadBatch(prisma, {
       tour: access.tour,
-      uploader: { type: 'customer', linkId: access.link.id, label: 'לקוח' },
+      uploader: access.uploader,
       files: req.body?.files,
     });
     if (result.error) return res.status(409).json({ error: result.error });
@@ -150,7 +152,16 @@ router.post(
   }),
 );
 
-// A customer may only touch PENDING rows created through THEIR link — never
+// Timeline origin for link-authenticated actions — labeled by who the link
+// belongs to, so a guide's upload never reads as a customer action.
+function linkOrigin(access) {
+  const label = access.uploader.type === 'guide'
+    ? `מדריך · ${access.uploader.label}`
+    : 'לקוח (קישור גלריה)';
+  return { actorType: 'api', actorLabel: label, createdBy: null, createdByName: null };
+}
+
+// A link holder may only touch PENDING rows created through THEIR link — never
 // other uploads in the gallery.
 async function ownPendingMedia(req, res, access) {
   const media = await prisma.tourMedia.findFirst({
@@ -189,7 +200,7 @@ router.post(
     const media = await ownPendingMedia(req, res, access);
     if (!media) return;
     const result = await completeUpload(prisma, media, req.body || {}, {
-      origin: { actorType: 'api', actorLabel: 'לקוח (קישור גלריה)', createdBy: null, createdByName: null },
+      origin: linkOrigin(access),
     });
     if (result.error) return res.status(result.status || 409).json({ error: result.error });
     res.json(await mediaToClient(result.media));
@@ -233,8 +244,8 @@ router.post(
     const result = await requestExport(prisma, {
       tourEventId: access.tour.id,
       gallery: access.gallery,
-      requestedBy: { type: 'customer', linkId: access.link.id },
-      origin: { actorType: 'api', actorLabel: 'לקוח (קישור גלריה)', createdBy: null, createdByName: null },
+      requestedBy: { type: access.uploader.type, linkId: access.link.id },
+      origin: linkOrigin(access),
     });
     if (result.error) return res.status(result.status || 409).json({ error: result.error });
     res.status(result.reused ? 200 : 201).json(exportToCustomer(result.export));

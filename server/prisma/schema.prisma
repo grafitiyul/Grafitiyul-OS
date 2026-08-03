@@ -5011,16 +5011,27 @@ model TourMedia {
   @@index([batchId])
 }
 
-// Secure customer access to ONE tour gallery. Capability-URL model (same
+// Secure scoped access to ONE tour gallery. Capability-URL model (same
 // convention as QuestionnaireLink / portal tokens): 24-byte base64url token,
 // unique, stored as-is. Rotation = revoke old row + create a new one; tour
-// cancellation revokes all active links. The public routes derive the gallery
-// from the token — a client-supplied tour id is never trusted.
+// cancellation revokes all active links (every audience). The public routes
+// derive the gallery from the token — a client-supplied tour id is never
+// trusted.
+//
+// Two audiences, deliberately non-interchangeable in behavior:
+//   'customer' — the shareable event-page link (upload gated by
+//                customerUploadEnabled, uploads attributed 'לקוח');
+//   'staff'    — ONE guide's direct upload link for the WhatsApp summary
+//                reminders (personRefId required; assignment re-checked at
+//                every resolve; uploads attributed to the guide). Customer
+//                rotation/revocation never touches staff links.
 model TourGalleryLink {
   id            String      @id @default(cuid())
   gallery       TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
   galleryId     String
   token         String      @unique
+  audience      String      @default("customer") // customer | staff
+  personRefId   String? // PersonRef.id (loose) — required for staff links
   status        String      @default("active") // active | revoked
   createdById   String? // AdminUser.id (loose)
   createdAt     DateTime    @default(now())

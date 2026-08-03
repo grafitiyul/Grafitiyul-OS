@@ -125,30 +125,108 @@ test('#13 announces the joiner and their count', () => {
   assert.match(text, /👤 משפחת כהן \(2\)/);
 });
 
-test('the summary ladder greets by FIRST name and names the customer', () => {
+test('#14 is greeting-first, one tight block, then photo + summary sections', () => {
   const ctx = {
     recipient: { name: 'יואב כהן', firstName: 'יואב' },
-    guideNotice: { customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x' },
+    guideNotice: {
+      customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
+      formUrl: 'https://x/f/FORM', photoUploadUrl: 'https://x/g/GALLERY',
+    },
   };
-  const first = renderReport(14, ctx);
-  assert.ok(first.startsWith('📝 הגיע הזמן למלא סיכום סיור'));
-  assert.match(first, /היי יואב,/);
-  assert.match(first, /מקווים שהיה סיור מוצלח עם עיריית תל אביב\./);
+  // The exact layout the owner specified (2026-08-03): no blank lines inside
+  // the opening block, one blank line before each link section.
+  assert.equal(renderReport(14, ctx), [
+    'היי יואב',
+    '👋 הגיע הזמן למלא סיכום סיור',
+    'מקווים שהיה סיור מוצלח עם עיריית תל אביב.',
+    '📅 04/08/2026 | 10:00',
+    '',
+    '📸 לינק להעלאת תמונות:',
+    'https://x/g/GALLERY',
+    '',
+    '📝 לינק לסיכום סיור:',
+    'https://x/f/FORM',
+  ].join('\n'));
+});
 
-  const r1 = renderReport(15, ctx);
-  assert.ok(r1.startsWith('📝 תזכורת למילוי סיכום סיור'));
-  assert.match(r1, /יאללה, עכשיו כשזה עדיין חם 😊/);
+test('#15/#16 drop the greeting and keep their reminder wording in the tight block', () => {
+  const ctx = {
+    recipient: { name: 'יואב כהן', firstName: 'יואב' },
+    guideNotice: {
+      customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
+      formUrl: 'https://x/f/FORM', photoUploadUrl: 'https://x/g/GALLERY',
+    },
+  };
+  assert.equal(renderReport(15, ctx), [
+    '⏰ תזכורת למילוי סיכום סיור',
+    '',
+    'עדיין לא קיבלנו את סיכום הסיור של עיריית תל אביב.',
+    'יאללה, עכשיו כשזה עדיין חם 😊',
+    '📅 04/08/2026 | 10:00',
+    '',
+    '📸 לינק להעלאת תמונות:',
+    'https://x/g/GALLERY',
+    '',
+    '📝 לינק לסיכום סיור:',
+    'https://x/f/FORM',
+  ].join('\n'));
+  assert.equal(renderReport(16, ctx), [
+    '⚠️ סיכום הסיור עדיין ממתין',
+    '',
+    'עדיין לא קיבלנו את סיכום הסיור של עיריית תל אביב.',
+    'בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏',
+    '📅 04/08/2026 | 10:00',
+    '',
+    '📸 לינק להעלאת תמונות:',
+    'https://x/g/GALLERY',
+    '',
+    '📝 לינק לסיכום סיור:',
+    'https://x/f/FORM',
+  ].join('\n'));
+  for (const n of [15, 16]) assert.ok(!renderReport(n, ctx).includes('היי'), `#${n} has no greeting`);
+});
 
-  const r2 = renderReport(16, ctx);
-  assert.ok(r2.startsWith('🔔 סיכום הסיור עדיין ממתין'));
-  assert.match(r2, /בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏/);
+test('the English ladder mirrors the Hebrew structure line for line', () => {
+  const ctx = {
+    recipient: { name: 'Yoav Cohen', firstName: 'Yoav' },
+    guideNotice: {
+      customerName: 'Tel Aviv Municipality', tourDate: '2026-08-04', tourTime: '10:00',
+      formUrl: 'https://x/f/FORM', photoUploadUrl: 'https://x/g/GALLERY',
+    },
+  };
+  for (const n of [14, 15, 16]) {
+    const he = renderReport(n, ctx);
+    const en = reportByNumber(n).renderEn(ctx);
+    // Same skeleton: identical line count, blank lines and links in the same
+    // positions — a manager comparing the two sees ONE message.
+    const heLines = he.split('\n');
+    const enLines = en.split('\n');
+    assert.equal(enLines.length, heLines.length, `#${n} same line count`);
+    heLines.forEach((l, i) => {
+      if (l === '' || l.startsWith('📅') || l.startsWith('https://')) {
+        assert.equal(enLines[i], l, `#${n} line ${i} structural`);
+      }
+    });
+    assert.ok(en.includes('📸 Photo upload link:'), `#${n} en photo section`);
+    assert.ok(en.includes('📝 Tour summary link:'), `#${n} en summary section`);
+  }
+});
 
-  for (const t of [first, r1, r2]) assert.ok(t.endsWith('https://x'));
+test('without a photo link the section is omitted entirely — never a dead link or blank gap', () => {
+  const ctx = {
+    guideNotice: { customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x/f/FORM' },
+  };
+  for (const n of [14, 15, 16]) {
+    const text = renderReport(n, ctx);
+    assert.ok(!text.includes('📸'), `#${n} omits the photo section`);
+    assert.ok(!text.includes('\n\n\n'), `#${n} has no double gap`);
+    assert.ok(text.endsWith('📝 לינק לסיכום סיור:\nhttps://x/f/FORM'), `#${n} still carries the form`);
+  }
 });
 
 test('a guide with no known first name is still greeted, never with "undefined"', () => {
   const text = renderReport(14, { guideNotice: { customerName: 'א', formUrl: 'https://x' } });
-  assert.match(text, /היי מדריך,/);
+  assert.match(text, /היי מדריך/);
 });
 
 // ── scheduling contract ──────────────────────────────────────────────────────

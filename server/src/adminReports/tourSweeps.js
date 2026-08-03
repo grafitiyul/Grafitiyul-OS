@@ -21,6 +21,9 @@ import { notifiableGuides, guideFirstName, guideFullName, GUIDE_ASSIGNMENT_SELEC
 // SECURITY: guide-portal deep links are NEVER sent in operational messages —
 // they are the whole-portal token with a path appended. Scoped form links only.
 import { staffFormLinkUrl } from '../questionnaires/staffLinks.js';
+// Same rule for photos: the direct upload link is a per-guide gallery-scoped
+// capability (/g/<token>), never a portal path.
+import { guideGalleryUploadUrl } from '../tours/gallery/links.js';
 import { COORDINATION_LEAD_DAYS, DONE_STATUSES } from './coordination.js';
 import { fireAdminReport } from './dispatch.js';
 import { openTourParticipants, tourNotificationFacts } from './tourFacts.js';
@@ -251,7 +254,20 @@ export async function sweepTourSummaries({ nowMs = Date.now(), client = prisma, 
           // participants on one tour still means ONE summary for this guide.
           // The key is already tour+guide, which is correct — only the link
           // changes, from a portal deep link to a form-scoped one.
-          data: { guideNotice: { ...facts, formUrl: await summaryFormUrl(tour.id, a.externalPersonId, client, log) } },
+          data: {
+            guideNotice: {
+              ...facts,
+              formUrl: await summaryFormUrl(tour.id, a.externalPersonId, client, log),
+              // Null when the gallery is off for guides (or no PersonRef) —
+              // the renderer then omits the photo section rather than send a
+              // dead link.
+              photoUploadUrl: await guideGalleryUploadUrl(
+                client,
+                { tourEventId: tour.id, personRefId: a.personRef?.id || null },
+                { log },
+              ),
+            },
+          },
         }, log);
         if (r?.ok) fired.push({ number: step.number, tourEventId: tour.id, guide: recipient.name });
       }

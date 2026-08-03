@@ -10,6 +10,10 @@ import { findActiveAssignment, getGuidePortalSettings } from '../guidePortal/acc
 //     delete/share rights come from TourGallerySettings.
 //   * customer — TourGalleryLink token; view/upload/download only, never
 //     delete, and the gallery identity ALWAYS derives from the token.
+//   * guide via staff link — a TourGalleryLink with audience='staff': the
+//     direct upload URL from the summary reminders. Same /g/:token surface,
+//     but the assignment is re-checked on EVERY resolve and uploads are
+//     attributed to the guide, not to "לקוח".
 //
 // Failures return { ok: false, status, error } so routes translate 1:1 to
 // HTTP. 404 (not 403) for unknown tokens — no enumeration signal.
@@ -88,6 +92,36 @@ export async function resolveCustomerGalleryAccess(client, { token }) {
   if (!tour || tour.status === 'cancelled' || tour.status === 'postponed') {
     return { ok: false, status: 404, error: 'not_found' };
   }
+
+  // Staff link: the guide's direct upload capability. Everything a portal
+  // session would check is re-checked HERE, per resolve — person alive and
+  // portal-enabled, still assigned to THIS tour, gallery switched on for
+  // guides. Every refusal is the same generic 404 as an unknown token: a
+  // link surface must not explain itself to a probing caller.
+  if (link.audience === 'staff') {
+    const person = link.personRefId
+      ? await client.personRef.findUnique({ where: { id: link.personRefId } })
+      : null;
+    if (!person || !person.portalEnabled || person.status === 'blocked') {
+      return { ok: false, status: 404, error: 'not_found' };
+    }
+    const assignment = await findActiveAssignment(client, person, tour.id);
+    if (!assignment) return { ok: false, status: 404, error: 'not_found' };
+    const portalSettings = await getGuidePortalSettings(client);
+    if (!portalSettings.useTourGallery) return { ok: false, status: 404, error: 'not_found' };
+    return {
+      ok: true,
+      link,
+      gallery: link.gallery,
+      tour,
+      person,
+      // Upload is the link's whole purpose — it is never gated by the
+      // CUSTOMER upload switch. Delete/manage stay office+portal-only.
+      permissions: { canUpload: true, canDelete: false },
+      uploader: { type: 'guide', personRefId: person.id, linkId: link.id, label: person.displayName },
+    };
+  }
+
   return {
     ok: true,
     link,
@@ -97,5 +131,6 @@ export async function resolveCustomerGalleryAccess(client, { token }) {
       canUpload: !!link.gallery.customerUploadEnabled,
       canDelete: false,
     },
+    uploader: { type: 'customer', linkId: link.id, label: 'לקוח' },
   };
 }

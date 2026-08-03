@@ -324,7 +324,9 @@ router.delete(
     if (!tour) return;
     const gallery = await prisma.tourGallery.findUnique({ where: { tourEventId: tour.id } });
     if (!gallery) return res.status(404).json({ error: 'not_found' });
-    const count = await revokeGalleryLinks(prisma, gallery.id, 'manual');
+    // Customer-scoped on purpose: deleting the shareable customer link must
+    // not kill the guides' upload links from the WhatsApp reminders.
+    const count = await revokeGalleryLinks(prisma, gallery.id, 'manual', { audience: 'customer' });
     if (count > 0) {
       await emitTimelineEvent(prisma, {
         subjectType: 'tour_event',

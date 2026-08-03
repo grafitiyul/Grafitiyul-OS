@@ -157,3 +157,71 @@ test('gallery-level customerUploadEnabled=false blocks customer uploads', async 
   assert.equal(res.ok, true);
   assert.equal(res.permissions.canUpload, false);
 });
+
+test('customer uploads are attributed "לקוח"; a customer link never carries a guide identity', async () => {
+  const res = await resolveCustomerGalleryAccess(
+    fakeClient({
+      link: { id: 'l1', status: 'active', gallery: { id: 'g1', tourEventId: 't1', customerUploadEnabled: true } },
+      customerTour: { id: 't1', status: 'scheduled', product: null, bookings: [] },
+    }),
+    { token: 'ctok' },
+  );
+  assert.deepEqual(res.uploader, { type: 'customer', linkId: 'l1', label: 'לקוח' });
+});
+
+// ---------- staff (guide) upload link — the /g/:token capability the summary
+// reminders carry ----------
+
+const STAFF_LINK = {
+  id: 'sl1',
+  status: 'active',
+  audience: 'staff',
+  personRefId: 'p1',
+  gallery: { id: 'g1', tourEventId: 't1', customerUploadEnabled: false },
+};
+
+test('a staff link uploads as the GUIDE, ignoring the customer upload switch', async () => {
+  const res = await resolveCustomerGalleryAccess(
+    fakeClient({
+      link: STAFF_LINK,
+      person: GUIDE,
+      assignment: { id: 'a1' },
+      customerTour: { id: 't1', status: 'scheduled', product: null, bookings: [] },
+    }),
+    { token: 'stok' },
+  );
+  assert.equal(res.ok, true);
+  // customerUploadEnabled=false above — upload is the staff link's purpose.
+  assert.equal(res.permissions.canUpload, true);
+  assert.equal(res.permissions.canDelete, false);
+  assert.deepEqual(res.uploader, { type: 'guide', personRefId: 'p1', linkId: 'sl1', label: 'דנה' });
+});
+
+test('a staff link dies (generic 404) when the guide is unassigned, blocked, or the gallery is off', async () => {
+  const base = {
+    link: STAFF_LINK,
+    person: GUIDE,
+    assignment: { id: 'a1' },
+    customerTour: { id: 't1', status: 'scheduled', product: null, bookings: [] },
+  };
+  const unassigned = await resolveCustomerGalleryAccess(
+    fakeClient({ ...base, assignment: null }), { token: 'stok' },
+  );
+  assert.deepEqual(unassigned, { ok: false, status: 404, error: 'not_found' });
+  const blocked = await resolveCustomerGalleryAccess(
+    fakeClient({ ...base, person: { ...GUIDE, status: 'blocked' } }), { token: 'stok' },
+  );
+  assert.equal(blocked.status, 404, 'blocked reads as unknown — no enumeration');
+  const portalOff = await resolveCustomerGalleryAccess(
+    fakeClient({ ...base, person: { ...GUIDE, portalEnabled: false } }), { token: 'stok' },
+  );
+  assert.equal(portalOff.status, 404);
+  const galleryOff = await resolveCustomerGalleryAccess(
+    fakeClient({ ...base, portalSettings: { useTourGallery: false } }), { token: 'stok' },
+  );
+  assert.equal(galleryOff.status, 404);
+  const cancelled = await resolveCustomerGalleryAccess(
+    fakeClient({ ...base, customerTour: { id: 't1', status: 'cancelled' } }), { token: 'stok' },
+  );
+  assert.equal(cancelled.status, 404);
+});

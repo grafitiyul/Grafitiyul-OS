@@ -165,9 +165,12 @@ export function newGalleryToken() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
+// The CUSTOMER link — every display/share/rotate surface means this one.
+// Staff (guide) links live beside it in the same table and must never leak
+// into the customer-share UI, so the audience filter is part of the query.
 export async function getActiveGalleryLink(client, galleryId) {
   return client.tourGalleryLink.findFirst({
-    where: { galleryId, status: 'active' },
+    where: { galleryId, audience: 'customer', status: 'active' },
     orderBy: { createdAt: 'desc' },
   });
 }
@@ -178,7 +181,7 @@ export async function ensureGalleryLink(client, tourEventId, { createdById, orig
   const existing = await getActiveGalleryLink(client, gallery.id);
   if (existing) return { link: existing, created: false };
   const link = await client.tourGalleryLink.create({
-    data: { galleryId: gallery.id, token: newGalleryToken(), createdById: createdById || null },
+    data: { galleryId: gallery.id, audience: 'customer', token: newGalleryToken(), createdById: createdById || null },
   });
   await emitTimelineEvent(client, {
     subjectType: 'tour_event',
@@ -190,15 +193,17 @@ export async function ensureGalleryLink(client, tourEventId, { createdById, orig
   return { link, created: true };
 }
 
-// Rotation: revoke every active link, mint a fresh token. Old URLs die.
+// Rotation: revoke every active CUSTOMER link, mint a fresh token. Old URLs
+// die. Deliberately customer-scoped — rotating a leaked customer link must not
+// kill the guide upload links already sent in WhatsApp reminders.
 export async function rotateGalleryLink(client, tourEventId, { createdById, origin }) {
   const gallery = await ensureGallery(client, tourEventId);
   await client.tourGalleryLink.updateMany({
-    where: { galleryId: gallery.id, status: 'active' },
+    where: { galleryId: gallery.id, audience: 'customer', status: 'active' },
     data: { status: 'revoked', revokedAt: new Date(), revokedReason: 'rotated' },
   });
   const link = await client.tourGalleryLink.create({
-    data: { galleryId: gallery.id, token: newGalleryToken(), createdById: createdById || null },
+    data: { galleryId: gallery.id, audience: 'customer', token: newGalleryToken(), createdById: createdById || null },
   });
   await emitTimelineEvent(client, {
     subjectType: 'tour_event',
@@ -210,9 +215,12 @@ export async function rotateGalleryLink(client, tourEventId, { createdById, orig
   return link;
 }
 
-export async function revokeGalleryLinks(client, galleryId, reason) {
+// Revoke active links. Default = EVERY audience (cancellation/deletion kills
+// the whole capability surface); pass audience:'customer' for the manual
+// "delete customer link" action so guide upload links survive it.
+export async function revokeGalleryLinks(client, galleryId, reason, { audience = null } = {}) {
   const res = await client.tourGalleryLink.updateMany({
-    where: { galleryId, status: 'active' },
+    where: { galleryId, status: 'active', ...(audience ? { audience } : {}) },
     data: { status: 'revoked', revokedAt: new Date(), revokedReason: reason },
   });
   return res.count;

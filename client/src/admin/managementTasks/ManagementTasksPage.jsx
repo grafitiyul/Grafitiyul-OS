@@ -184,6 +184,9 @@ function TourGroup({ group, status, busy, focusId, onAct }) {
   const party = [d.customerName, d.orgName].filter(Boolean).join(' · ');
   const product = [d.productName, d.variantName].filter(Boolean).join(' · ');
   const hasAlert = cards.some((c) => c.tone === 'alert');
+  // The SAME direct photo link the guide got in WhatsApp (server-resolved on
+  // the summary card) — the office jumps straight to the tour's photos.
+  const galleryUrl = cards.find((c) => c.galleryUrl)?.galleryUrl || null;
 
   return (
     <section
@@ -197,6 +200,16 @@ function TourGroup({ group, status, busy, focusId, onAct }) {
         {when ? <span className="text-[12.5px] font-medium text-gray-600">{when}</span> : null}
         {product ? <span className="text-[12px] text-gray-500">{product}</span> : null}
         {d.guideName ? <span className="text-[12px] text-gray-500">· {d.guideName}</span> : null}
+        {galleryUrl ? (
+          <a
+            href={galleryUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[12px] font-medium text-blue-600 hover:underline"
+          >
+            📸 תמונות מהסיור ↗
+          </a>
+        ) : null}
         <span className="ms-auto text-[11.5px] text-gray-400">
           {cards.length === 1 ? 'משימה אחת' : `${cards.length} משימות נפרדות`}
         </span>

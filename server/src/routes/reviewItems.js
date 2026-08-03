@@ -5,6 +5,7 @@ import { handle } from '../asyncHandler.js';
 import { prisma } from '../db.js';
 import { loadInbox, handleReviewItem, reopenReviewItem, openCounts } from '../reviewItems/service.js';
 import { listReviewKinds, reviewKindDef } from '../reviewItems/registry.js';
+import { guideGalleryUploadUrl } from '../tours/gallery/links.js';
 import '../reviewItems/kinds/index.js';
 
 const router = Router();
@@ -37,6 +38,16 @@ router.get('/', handle(async (req, res) => {
       card.link = reviewKindDef(card.kind)?.buildLink?.(card) || null;
       card.tone = reviewKindDef(card.kind)?.tone || 'default';
       card.kindLabelHe = reviewKindDef(card.kind)?.labelHe || card.kind;
+      // Tour Summary cards carry the SAME direct photo-upload/gallery link the
+      // guide received in WhatsApp (idempotent mint — reuses the sent one), so
+      // the office jumps straight to the uploaded photos. Resolved at read
+      // time, never frozen: revocation/cancellation must always win.
+      if (card.kind === 'tour_summary' && card.tourEventId) {
+        card.galleryUrl = await guideGalleryUploadUrl(prisma, {
+          tourEventId: card.tourEventId,
+          personRefId: card.personRefId || card.data?.guidePersonRefId || null,
+        });
+      }
     }
   }
   res.json(inbox);

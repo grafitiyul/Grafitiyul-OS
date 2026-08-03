@@ -67,6 +67,22 @@ const guideFirst = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || '
 const guideFirstEn = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'guide';
 // The DIRECT link to this one form. Never a portal link — see staffLinks.js.
 const formLink = (ctx) => ctx.guideNotice?.formUrl || '—';
+// The two labeled link sections of the summary ladder (#14-#16) — the same
+// structure in every message and both languages. The photo link is the
+// guide's gallery-scoped upload capability (tours/gallery/links.js); when it
+// could not be built (gallery off for guides, no PersonRef) the whole photo
+// section is omitted rather than sending a dead link.
+const summaryLinkSections = (ctx, lang = 'he') => {
+  const photo = ctx.guideNotice?.photoUploadUrl || null;
+  return [
+    ...(photo
+      ? ['', lang === 'en' ? '📸 Photo upload link:' : '📸 לינק להעלאת תמונות:', photo]
+      : []),
+    '',
+    lang === 'en' ? '📝 Tour summary link:' : '📝 לינק לסיכום סיור:',
+    formLink(ctx),
+  ];
+};
 // Day/month/year is read the same way in both languages, so the date itself
 // needs no translation — only the words around it do.
 const dateTimeLine = (f) => `${formatDateHe(f.tourDate) || '—'} | ${f.tourTime || '—'}`;
@@ -333,36 +349,27 @@ export const GUIDE_REPORTS = [
     triggerHe:
       'מיד עם סיום הסיור — לפי שעת הסיום המחושבת (שעת התחלה + משך הפעילות, כולל משך מיוחד לסיור פתוח).',
     dataHe: 'נשלח לכל מדריך שחייב סיכום ועדיין לא הגיש. מדריך שהגיש כבר לא מקבל את התזכורות הבאות.',
+    // Layout (owner spec 2026-08-03): greeting + reminder + customer + when as
+    // one tight block, then the photo section, then the summary-form section —
+    // one blank line between blocks, none inside them.
     render: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '📝 הגיע הזמן למלא סיכום סיור',
-        '',
-        `היי ${guideFirst(ctx)},`,
-        '',
+        `היי ${guideFirst(ctx)}`,
+        '👋 הגיע הזמן למלא סיכום סיור',
         `מקווים שהיה סיור מוצלח עם ${f.customerName || '—'}.`,
-        '',
         `📅 ${dateTimeLine(f)}`,
-        '',
-        'הנה הטופס למילוי סיכום הסיור:',
-        '',
-        formLink(ctx),
+        ...summaryLinkSections(ctx, 'he'),
       ]);
     },
     renderEn: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '📝 Time to fill in the tour summary',
-        '',
-        `Hi ${guideFirstEn(ctx)},`,
-        '',
+        `Hi ${guideFirstEn(ctx)}`,
+        '👋 Time to fill in the tour summary',
         `We hope the tour with ${f.customerName || '—'} went well.`,
-        '',
         `📅 ${dateTimeLine(f)}`,
-        '',
-        'Here is the tour summary form:',
-        '',
-        formLink(ctx),
+        ...summaryLinkSections(ctx, 'en'),
       ]);
     },
     sample: () => ({
@@ -370,6 +377,7 @@ export const GUIDE_REPORTS = [
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
         formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
+        photoUploadUrl: 'https://app.grafitiyul.co.il/g/GALLERYTOKEN',
       },
     }),
   },
@@ -383,36 +391,29 @@ export const GUIDE_REPORTS = [
     audience: 'guides',
     triggerHe: '3 שעות אחרי סיום הסיור, ורק אם עדיין לא הוגש סיכום.',
     dataHe: 'נשלח למדריך שחייב סיכום ולא הגיש. מי שהגיש בינתיים לא מקבל.',
+    // Layout (owner spec 2026-08-03): no greeting; title, then the reminder
+    // lines + when as one tight block, then the two link sections. Wording of
+    // the existing lines is unchanged on purpose.
     render: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '📝 תזכורת למילוי סיכום סיור',
-        '',
-        `היי ${guideFirst(ctx)},`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
+        '⏰ תזכורת למילוי סיכום סיור',
         '',
         `עדיין לא קיבלנו את סיכום הסיור של ${f.customerName || '—'}.`,
-        '',
         'יאללה, עכשיו כשזה עדיין חם 😊',
-        '',
-        formLink(ctx),
+        `📅 ${dateTimeLine(f)}`,
+        ...summaryLinkSections(ctx, 'he'),
       ]);
     },
     renderEn: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '📝 Reminder: the tour summary',
-        '',
-        `Hi ${guideFirstEn(ctx)},`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
+        '⏰ Reminder: the tour summary',
         '',
         `We have not received your summary for ${f.customerName || '—'} yet.`,
-        '',
         'Best to do it now, while it is still fresh 😊',
-        '',
-        formLink(ctx),
+        `📅 ${dateTimeLine(f)}`,
+        ...summaryLinkSections(ctx, 'en'),
       ]);
     },
     sample: () => ({
@@ -420,6 +421,7 @@ export const GUIDE_REPORTS = [
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
         formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
+        photoUploadUrl: 'https://app.grafitiyul.co.il/g/GALLERYTOKEN',
       },
     }),
   },
@@ -433,36 +435,27 @@ export const GUIDE_REPORTS = [
     audience: 'guides',
     triggerHe: '6 שעות אחרי סיום הסיור, ורק אם הסיכום עדיין חסר.',
     dataHe: 'נשלח למדריך שחייב סיכום ולא הגיש. מי שהגיש בינתיים לא מקבל.',
+    // Same layout contract as #15; the warning line rides in the tight block.
     render: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '🔔 סיכום הסיור עדיין ממתין',
-        '',
-        `היי ${guideFirst(ctx)},`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
+        '⚠️ סיכום הסיור עדיין ממתין',
         '',
         `עדיין לא קיבלנו את סיכום הסיור של ${f.customerName || '—'}.`,
-        '',
         'בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏',
-        '',
-        formLink(ctx),
+        `📅 ${dateTimeLine(f)}`,
+        ...summaryLinkSections(ctx, 'he'),
       ]);
     },
     renderEn: (ctx) => {
       const f = ctx.guideNotice || {};
       return lines([
-        '🔔 The tour summary is still waiting',
-        '',
-        `Hi ${guideFirstEn(ctx)},`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
+        '⚠️ The tour summary is still waiting',
         '',
         `We have not received your summary for ${f.customerName || '—'} yet.`,
-        '',
         'Without the summary, the tour is not really finished 🙏',
-        '',
-        formLink(ctx),
+        `📅 ${dateTimeLine(f)}`,
+        ...summaryLinkSections(ctx, 'en'),
       ]);
     },
     sample: () => ({
@@ -470,6 +463,7 @@ export const GUIDE_REPORTS = [
       guideNotice: {
         customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00',
         formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
+        photoUploadUrl: 'https://app.grafitiyul.co.il/g/GALLERYTOKEN',
       },
     }),
   },
