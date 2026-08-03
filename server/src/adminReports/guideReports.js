@@ -199,12 +199,13 @@ export const GUIDE_REPORTS = [
     audience: 'guides',
     schedule: { hour: 8, minute: 0 },
     triggerHe:
-      `כל יום ב-08:00 (שעון ישראל), לכל מדריך בנפרד: שיחות התיאום שטרם בוצעו לסיורים שלו ב-${COORDINATION_MONITOR_DAYS} הימים הקרובים, `
+      `כל יום ב-08:00 (שעון ישראל), לכל מדריך בנפרד: תמונה כרונולוגית של שיחות התיאום לסיורים שלו ב-${COORDINATION_MONITOR_DAYS} הימים הקרובים, `
       + 'ואחריהן סיכומי סיור שלו שכבר עברו את המועד.',
     dataHe:
-      'מוצגות רק שיחות תיאום שטרם בוצעו — שיחה שהוגשה יורדת מהרשימה מיד, ותזכורות ישנות לא חוזרות. '
-      + '🚨 הסיור היום או מחר · 🔵 בעוד 2–3 ימים · 🟡 בעוד 4 ימים, בסדר כרונולוגי. '
-      + 'עיר מוצגת רק כשהיא אינה מיקום הבית. הסיכומים החסרים כוללים רק סיורים מאתמול ואחורה, עם לינק ישיר לכל טופס.',
+      'תמונה מלאה בסדר כרונולוגי (הסיור הקרוב ראשון) — שיחות שבוצעו נשארות ברשימה במקומן: '
+      + '✅ בוצעה · 🚨 טרם בוצעה והסיור היום או מחר · 🔵 בעוד 2–3 ימים · 🟡 בעוד 4 ימים. '
+      + 'תזכורות ישנות לא חוזרות. עיר מוצגת רק כשהיא אינה מיקום הבית. '
+      + 'הסיכומים החסרים כוללים רק סיורים מאתמול ואחורה, עם לינק ישיר לכל טופס.',
     emptyHe: 'אין למדריך שיחות תיאום או סיכומים פתוחים',
     // ONE body for both languages — the digest lists the same facts in the
     // same order; `en` only swaps day names, labels and the English data
@@ -217,12 +218,12 @@ export const GUIDE_REPORTS = [
       guideDigest: {
         coordination: [
           // Deliberately out of order — the renderer's chronological sort is
-          // part of the layout contract. All PENDING: a submitted call never
-          // reaches the digest at all (guideDigest.js relevance rules).
-          { done: false, daysAway: 1, tourDate: '2026-08-03', tourStartMs: 2, customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי', productNameEn: 'Culinary Tour', cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', locationId: 'loc_jlm', homeLocationId: 'loc_tlv' },
-          { done: false, daysAway: 0, tourDate: '2026-08-02', tourStartMs: 1, customerName: 'משפחת כהן', participants: 4, productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour' },
+          // part of the layout contract, and the ✅ line stays FIRST in its
+          // chronological place (a complete picture, not a pending-only list).
+          { done: false, daysAway: 0, tourDate: '2026-08-02', tourStartMs: 2, customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי', productNameEn: 'Culinary Tour', cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', locationId: 'loc_jlm', homeLocationId: 'loc_tlv' },
+          { done: true, daysAway: 0, tourDate: '2026-08-02', tourStartMs: 1, customerName: 'משפחת כהן', participants: 4, productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour' },
           { done: false, daysAway: 4, tourDate: '2026-08-06', tourStartMs: 4, customerName: 'משפחת ישראלי', participants: 6, productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour' },
-          { done: false, daysAway: 3, tourDate: '2026-08-05', tourStartMs: 3, customerName: 'רות לוי', participants: 2, productNameHe: 'סדנת גרפיטי', productNameEn: 'Graffiti Workshop' },
+          { done: false, daysAway: 1, tourDate: '2026-08-03', tourStartMs: 3, customerName: 'רות לוי', participants: 2, productNameHe: 'סדנת גרפיטי', productNameEn: 'Graffiti Workshop' },
         ],
         missingSummaries: [
           { tourDate: '2026-07-30', tourStartMs: 0, customerName: 'עיריית תל אביב', productNameHe: 'סיור וסדנת גרפיטי', productNameEn: 'Graffiti Tour & Workshop', formUrl: 'https://app.grafitiyul.co.il/f/SUMMARYTOKEN' },

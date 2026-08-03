@@ -27,11 +27,12 @@ const LIVE = ['scheduled', 'completed'];
 /** How far back an unfiled summary keeps appearing in the digest. */
 export const MISSING_SUMMARY_LOOKBACK_DAYS = 30;
 
-// ── #11 coordination relevance (owner correction, 2026-08-03) ────────────────
-// The digest lists only calls the guide can still act on. A submitted form
-// leaves the list immediately, and two floors guarantee old reminders can
-// never be resurfaced (the monitor window is already forward-looking, so the
-// floors are hard safety rails, not day-to-day filters):
+// ── #11 coordination relevance (owner rules, 2026-08-03) ─────────────────────
+// The digest is a chronological OVERVIEW of the upcoming tours — completed
+// calls stay in the list (✅) in their chronological position; the icon, not
+// the membership, marks what is still open. Two floors guarantee old
+// reminders can never be resurfaced (the monitor window is already
+// forward-looking, so the floors are hard safety rails):
 /** Nothing older than this many days is ever a coordination item. */
 export const COORDINATION_RELEVANCE_DAYS = 7;
 /** Deployment floor: tours before this date are out of #11 for good. */
@@ -153,12 +154,11 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma,
       for (const a of notifiableGuides(tour.assignments)) {
         const bucket = ensure(a);
         for (const b of tour.bookings) {
-          // A submitted coordination form is no longer the guide's to-do —
-          // it leaves the digest entirely rather than showing as ✅.
-          if (coordDone.has(b.id)) continue;
+          // Completed calls STAY in the list (owner rule: a complete
+          // chronological picture) — `done` only drives the ✅ icon.
           const deal = b.deal;
           bucket.coordination.push({
-            done: false,
+            done: coordDone.has(b.id),
             daysAway,
             tourDate: tour.date,
             tourStartMs: tourStartMs(tour),
