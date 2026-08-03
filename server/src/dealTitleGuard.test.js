@@ -49,6 +49,9 @@ const CUSTOMER_FACING = [
   'server/src/routes/payment.js',
   // Customer capability links (public link context for messages).
   'server/src/publicLinks.js',
+  // Tour-change impact — the affected-customers list Part 4 ("עדכן לקוחות")
+  // will feed into customer notifications; guarded BEFORE it goes customer-facing.
+  'server/src/tours/changeImpact.js',
   // Agent reservations — public /r/:token form + document composition.
   'server/src/reservations',
   // Quote — customer-facing quote documents.

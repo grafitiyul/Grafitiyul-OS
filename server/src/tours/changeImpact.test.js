@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emitTourChangeImpact, IMPACT_TYPE } from './changeImpact.js';
+import { Prisma } from '@prisma/client';
+import {
+  AFFECTED_REGISTRATIONS_SELECT,
+  affectedRegistrations,
+  emitTourChangeImpact,
+  IMPACT_TYPE,
+} from './changeImpact.js';
+import { GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
 
 // The canonical impact record: a first-class OperationalIssue (not an inline
 // warning) that Part 4 consumes. Deduped by (impactType, tourEvent); repeated
@@ -83,4 +90,63 @@ test('capacity below occupancy is actionable even without a customer list', asyn
   assert.ok(issue);
   assert.equal(issue.severity, 'critical');
   assert.equal(issue.data.requiredAction, 'review_capacity');
+});
+
+// ── Prisma-shape contract (the fake-db blind spot, made concrete here) ────────
+// The original select asked Deal for contactName/contactEmail/contactPhone —
+// fields that DO NOT EXIST — so every emit threw PrismaClientValidationError
+// in production (0 impact issues ever created) while this fixture suite stayed
+// green. The select is now walked against the GENERATED DMMF, same walker as
+// confirmation/prismaShape.test.js.
+
+const MODELS = Object.fromEntries(Prisma.dmmf.datamodel.models.map((m) => [m.name, m]));
+
+function walk(modelName, tree, path) {
+  assert.ok(MODELS[modelName], `${path}: unknown model ${modelName}`);
+  for (const [key, value] of Object.entries(tree)) {
+    const field = MODELS[modelName].fields.find((f) => f.name === key);
+    assert.ok(field, `${path}.${key}: no such field on ${modelName}`);
+    if (value === true) continue;
+    assert.equal(field.kind, 'object', `${path}.${key}: nested select on a scalar`);
+    const nested = value.include || value.select;
+    if (nested) walk(field.type, nested, `${path}.${key}`);
+  }
+}
+
+test('AFFECTED_REGISTRATIONS_SELECT matches the real schema (regression: contactName did not exist)', () => {
+  walk('TicketRegistration', AFFECTED_REGISTRATIONS_SELECT, 'TicketRegistration');
+});
+
+// ── privacy: the affected-customers list feeds Part 4 customer notifications ──
+
+test('privacy: the select never fetches Deal.title', () => {
+  assert.ok(!('title' in AFFECTED_REGISTRATIONS_SELECT.deal.select));
+  assert.ok(!JSON.stringify(AFFECTED_REGISTRATIONS_SELECT).includes('"title"'));
+});
+
+const regClient = (rows) => ({ ticketRegistration: { findMany: async () => rows } });
+const leadDeal = (over = {}) => ({ id: 'd1', orderNo: 27001, organization: null, contacts: [], ...over });
+
+test('privacy: name is registration → organization → contact → generic, NEVER Deal.title', async () => {
+  const rows = [
+    // The registration's own recorded customer wins.
+    { id: 'r1', status: 'active', quantity: 2, dealId: 'd1', customerName: 'דנה מהאתר', customerEmail: null, customerPhone: null, deal: leadDeal() },
+    // No registration identity → organization.
+    { id: 'r2', status: 'active', quantity: 1, dealId: 'd1', customerName: null, customerEmail: null, customerPhone: null,
+      deal: leadDeal({ organization: { name: 'עיריית תל אביב' } }) },
+    // No organization → primary contact full name + primary phone/email.
+    { id: 'r3', status: 'held', quantity: 3, dealId: 'd1', customerName: null, customerEmail: null, customerPhone: null,
+      deal: leadDeal({ contacts: [{ contact: {
+        firstNameHe: 'לילי', lastNameHe: 'כהן', firstNameEn: '', lastNameEn: '',
+        phones: [{ value: '050-2', isPrimary: false }, { value: '050-1', isPrimary: true }],
+        emails: [{ value: 'lili@x.co', isPrimary: true }],
+      } }] }) },
+    // Nothing at all → generic wording, never null and never the internal title.
+    { id: 'r4', status: 'active', quantity: 1, dealId: 'd1', customerName: null, customerEmail: null, customerPhone: null, deal: leadDeal() },
+  ];
+  const out = await affectedRegistrations(regClient(rows), 't1');
+  assert.deepEqual(out.map((c) => c.name), ['דנה מהאתר', 'עיריית תל אביב', 'לילי כהן', GENERIC_CUSTOMER_HE]);
+  assert.equal(out[2].phone, '050-1', 'primary phone wins over list order');
+  assert.equal(out[2].email, 'lili@x.co');
+  assert.ok(!JSON.stringify(out).includes('ליד חדש'));
 });
