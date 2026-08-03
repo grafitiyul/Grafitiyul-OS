@@ -30,6 +30,10 @@ export default function AnchoredMenu({
 }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState(null);
+  // A caller-supplied fixed width must never exceed the viewport (phones):
+  // clamp to viewport minus margins, so the panel always fits on-screen.
+  const effWidth =
+    typeof window !== 'undefined' ? Math.min(width, window.innerWidth - 16) : width;
 
   useLayoutEffect(() => {
     if (!open) {
@@ -45,7 +49,7 @@ export default function AnchoredMenu({
         placeAnchored({
           anchor: a.getBoundingClientRect(),
           viewport: { width: window.innerWidth, height: window.innerHeight },
-          width,
+          width: effWidth,
           height: menuRef.current?.offsetHeight || 0,
           align,
         }),
@@ -84,11 +88,11 @@ export default function AnchoredMenu({
           position: 'fixed',
           top: pos?.top ?? -9999,
           left: pos?.left ?? -9999,
-          width,
+          width: effWidth,
           maxHeight: pos?.maxHeight,
           overflowY: 'auto',
         }}
-        className={`z-[91] border border-gray-200 bg-white shadow-lg ${panelClassName}`}
+        className={`z-[91] overscroll-contain border border-gray-200 bg-white shadow-lg ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}

@@ -1,4 +1,6 @@
 import { createContext, useEffect, useMemo, useRef, useState } from 'react';
+import MobileScreenTabs from '../admin/common/MobileScreenTabs.jsx';
+import { useIsMobile } from '../lib/useIsMobile.js';
 
 // Reusable 3-column workspace shell (VS Code / Linear style), RTL-first.
 //
@@ -6,8 +8,23 @@ import { createContext, useEffect, useMemo, useRef, useState } from 'react';
 //
 // Both side panels are collapsible + resizable, and their width / open state is
 // persisted in localStorage under `storageKey`. The center always takes the
-// remaining width. On mobile (<lg) it degrades to a single vertical stack
-// (center first, then the panels' content) — no rails, no resizing.
+// remaining width.
+//
+// MOBILE (<lg), two modes:
+//   * default — a single vertical stack (center first, then the panels'
+//     content) — no rails, no resizing. Legacy behavior, kept for pages that
+//     haven't defined a mobile composition yet (Contact / Organization).
+//   * `mobileTabs` — the page supplies bottom TABS (MobileScreenTabs design):
+//     [{ key, label, icon, badge?, fill?, main?, content }]. One tab is shown
+//     at a time; ALL tabs stay mounted (hidden, not unmounted) so chat threads,
+//     timelines and unread badges keep their state across switches. A tab with
+//     `main: true` renders the layout's children (the center workspace); a tab
+//     with `fill: true` gets the full column height with NO outer scroll (for
+//     self-scrolling surfaces like a chat thread). `mobileTab` +
+//     `onMobileTabChange` make the active tab controlled — screens may need to
+//     switch programmatically (e.g. "שלח ללקוח → WhatsApp" jumps to the chat
+//     tab). `seamLeft` is NOT rendered in this mode: the floating accessory's
+//     job (the WhatsApp dock) is replaced by a dedicated tab.
 //
 // This is intentionally module-agnostic: pass `right`/`left` (each { title,
 // content, defaultWidth, minWidth, maxWidth, defaultOpen }) and the center as
@@ -157,11 +174,26 @@ function SidePanel({ side, title, open, width, onCollapse, children }) {
 // center and the LEFT panel (e.g. the Deal page's WhatsApp bubble). Rendered
 // as a zero-width relative container so it never affects the flex layout;
 // the accessory positions itself absolutely from that anchor.
-export default function WorkspaceLayout({ storageKey, right = {}, left = {}, seamLeft = null, children }) {
+export default function WorkspaceLayout({
+  storageKey,
+  right = {},
+  left = {},
+  seamLeft = null,
+  mobileTabs = null,
+  mobileTab = null,
+  onMobileTabChange = null,
+  children,
+}) {
   // Either side panel is optional — a page may show only a right details panel
   // (Contact / Organization) or none at all; the center always fills the rest.
   const hasRight = !!(right && right.content);
   const hasLeft = !!(left && left.content);
+  const isMobile = useIsMobile();
+  // Uncontrolled fallback for pages that don't need programmatic switching.
+  const [localTab, setLocalTab] = useState(() => mobileTabs?.[0]?.key || null);
+  const activeMobileTab = mobileTab ?? localTab;
+  const changeMobileTab = onMobileTabChange ?? setLocalTab;
+
   const containerRef = useRef(null);
   const defaults = {
     rightWidth: right.defaultWidth ?? 360,
@@ -241,6 +273,43 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
 
   const setRightOpen = (v) => setState((s) => ({ ...s, rightOpen: v }));
   const setLeftOpen = (v) => setState((s) => ({ ...s, leftOpen: v }));
+
+  // MOBILE TAB MODE — a full-height column: one visible tab pane + the bottom
+  // tab bar. The desktop tree (panels, handles, seam accessory) is NOT mounted
+  // at all, and vice versa — heavy workspaces must never render twice. This
+  // return sits AFTER every hook above so crossing the lg breakpoint at
+  // runtime never changes the hook order.
+  if (isMobile && mobileTabs?.length) {
+    return (
+      <div dir="rtl" className="flex h-full min-h-0 flex-col bg-gray-50">
+        {mobileTabs.map((t) => {
+          const active = t.key === activeMobileTab;
+          const body = t.main ? (
+            <div className="w-full px-3 py-4 space-y-4">{children}</div>
+          ) : t.fill ? (
+            t.content
+          ) : (
+            <div className="w-full p-3">{t.content}</div>
+          );
+          return (
+            <div
+              key={t.key}
+              className={
+                active
+                  ? t.fill
+                    ? 'flex min-h-0 flex-1 flex-col'
+                    : 'min-h-0 flex-1 overflow-y-auto overscroll-contain'
+                  : 'hidden'
+              }
+            >
+              {body}
+            </div>
+          );
+        })}
+        <MobileScreenTabs tabs={mobileTabs} active={activeMobileTab} onChange={changeMobileTab} />
+      </div>
+    );
+  }
 
   return (
     <WorkspaceSeamContext.Provider value={seamCtx}>

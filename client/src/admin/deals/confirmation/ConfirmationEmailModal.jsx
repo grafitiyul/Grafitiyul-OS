@@ -260,7 +260,7 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
                     <button
                       type="button"
                       onClick={() => setEditing(s)}
-                      className="absolute -top-2 end-0 z-10 hidden group-hover:inline-flex items-center rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white shadow"
+                      className="absolute -top-2 end-0 z-10 hidden group-hover:inline-flex items-center rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white shadow [@media(hover:none)]:inline-flex"
                     >
                       ✎ עריכה
                     </button>

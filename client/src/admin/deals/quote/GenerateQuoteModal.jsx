@@ -704,7 +704,7 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
                         {bodyBlocks.map((b) => (
                           <section key={b.key} className="group relative">
                             {EDITABLE_TYPES.has(b.type) && blockHasContent(b) && (
-                              <div className="absolute -top-3 start-0 z-10 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                              <div className="absolute -top-3 start-0 z-10 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
                                 <button
                                   type="button"
                                   onClick={() => setEditing(b)}

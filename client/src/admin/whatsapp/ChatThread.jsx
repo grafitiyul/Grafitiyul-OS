@@ -127,6 +127,11 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   // 'live' | 'jump' — see the header comment.
   const [mode, setMode] = useState('live');
   const [highlightId, setHighlightId] = useState(null);
+  // Touch: which message's action buttons (reply/star) are revealed by tap —
+  // hover reveals them on pointer devices, so a phone needs this state.
+  const [actionsFor, setActionsFor] = useState(null);
+  // "↓ to latest" affordance while the reader is scrolled up in live mode.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   // Toolbar panel: null | 'search' | 'date' | 'starred'
   const [panel, setPanel] = useState(null);
   const [searchQ, setSearchQ] = useState('');
@@ -233,6 +238,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     stickToBottomRef.current = mode === 'live' && nearBottom;
+    setAwayFromBottom((cur) => (cur === !nearBottom ? cur : !nearBottom));
     if (el.scrollTop < 80) loadOlder();
     if (mode === 'jump' && nearBottom) loadNewer();
   }
@@ -446,7 +452,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
             <p className="px-2 py-2 text-center text-[12px] text-gray-400">טוען…</p>
           ) : starredList.length === 0 ? (
             <p className="px-2 py-2 text-center text-[12px] text-gray-400">
-              אין הודעות מסומנות — ריחוף על הודעה ← ☆ מסמן אותה.
+              אין הודעות מסומנות — ☆ ליד הודעה (בריחוף או בהקשה עליה) מסמן אותה.
             </p>
           ) : (
             <div className="max-h-52 overflow-y-auto">
@@ -459,7 +465,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       <div
         ref={containerRef}
         onScroll={onScroll}
-        className={`flex-1 overflow-y-auto px-3 py-3 ${fill ? 'min-h-0' : heightClass}`}
+        className={`flex-1 overflow-y-auto overscroll-contain px-3 py-3 ${fill ? 'min-h-0' : heightClass}`}
       >
         {messages === null ? (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">
@@ -513,6 +519,8 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
                     quoted={m.quotedExternalId ? byExternalId.get(m.quotedExternalId) : null}
                     onReply={canSend ? () => setReplyTo(m) : null}
                     onToggleStar={toggleStar}
+                    actionsShown={actionsFor === m.id}
+                    onBubbleTap={() => setActionsFor((cur) => (cur === m.id ? null : m.id))}
                   />
                 </div>
               );
@@ -525,6 +533,26 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
                   className="rounded-full bg-white/80 px-3 py-1 text-[12px] text-gray-600 shadow-sm hover:bg-white"
                 >
                   טען הודעות חדשות יותר ↓
+                </button>
+              </div>
+            )}
+            {/* Back-to-latest — sticky inside the scroller, so it needs no
+                knowledge of the composer's height. Live mode only (jump mode
+                has its own "חזרה להודעות האחרונות"). */}
+            {mode === 'live' && awayFromBottom && (
+              <div className="sticky bottom-1 z-10 flex h-0 justify-start">
+                <button
+                  type="button"
+                  aria-label="לתחתית השיחה"
+                  onClick={() => {
+                    const el = containerRef.current;
+                    if (!el) return;
+                    stickToBottomRef.current = true;
+                    el.scrollTop = el.scrollHeight;
+                  }}
+                  className="-translate-y-10 flex h-9 w-9 items-center justify-center rounded-full bg-white text-[16px] text-gray-600 shadow-md ring-1 ring-gray-200 active:bg-gray-100"
+                >
+                  ↓
                 </button>
               </div>
             )}

@@ -162,6 +162,12 @@ function blobToBase64(blob) {
 
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 
+// Touch keyboards: Enter must insert a NEWLINE, never send — there is no
+// Shift+Enter on a phone, and accidental sends are worse than an extra tap on
+// the send button. Evaluated once (a device's primary pointer doesn't change).
+const COARSE_POINTER =
+  typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
 function classifyFile(file) {
   if (file.type?.startsWith('image/')) return 'image';
   if (file.type?.startsWith('video/')) return 'video';
@@ -755,8 +761,9 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             onKeyDown={(e) => {
               // Editor surfaces (enterSends={false}): NO keystroke sends. Enter
               // and Shift+Enter both fall through to the textarea's native
-              // newline; the שליחה button is the only send path.
-              if (!enterSends) return;
+              // newline; the שליחה button is the only send path. Touch devices
+              // always fall through too (see COARSE_POINTER).
+              if (!enterSends || COARSE_POINTER) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 // In schedule mode the ONLY primary action is scheduling —
@@ -778,8 +785,12 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             dir="auto"
             // `fill` surfaces are read/edit-heavy (long stored templates), so the
             // text runs 1px larger there than in the thread's compact strip.
+            // Below md the font is 16px — iOS Safari auto-zooms into any
+            // focused field smaller than that, wrecking the chat layout.
             className={`block w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60 ${
-              fill ? 'min-h-0 flex-1 overflow-y-auto text-[15px]' : 'min-h-[42px] text-[14px]'
+              fill
+                ? 'min-h-0 flex-1 overflow-y-auto text-[16px] md:text-[15px]'
+                : 'min-h-[42px] text-[16px] md:text-[14px]'
             }`}
           />
           <div className={`mt-1.5 flex items-center gap-1.5 ${fill ? 'shrink-0' : ''}`}>
@@ -798,7 +809,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
               title="צירוף קובץ"
               disabled={sending}
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40 md:h-9 md:w-9"
             >
               📎
             </button>
@@ -807,7 +818,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
               title="אימוג'י"
               disabled={sending}
               onClick={() => setEmojiOpen(!emojiOpen)}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[17px] transition disabled:opacity-40 ${
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[17px] transition disabled:opacity-40 md:h-9 md:w-9 ${
                 emojiOpen ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -818,7 +829,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
               title="הקלטת הודעה קולית"
               disabled={sending}
               onClick={startRecording}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40 md:h-9 md:w-9"
             >
               🎙️
             </button>
@@ -831,7 +842,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
                 if (!scheduleAt) setScheduleAt(nextHourLocal());
                 if (!scheduleOpen) textareaRef.current?.focus();
               }}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 ${
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 md:h-9 md:w-9 ${
                 scheduleOpen ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -845,7 +856,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
                 type="button"
                 onClick={schedule}
                 disabled={sending || !text.trim() || !scheduleAt}
-                className="mr-auto h-9 shrink-0 rounded-xl bg-blue-600 px-5 text-[13px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
+                className="mr-auto h-10 shrink-0 rounded-xl bg-blue-600 px-5 text-[13px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40 md:h-9"
               >
                 {sending ? 'קובע…' : 'תזמן הודעה'}
               </button>
@@ -854,7 +865,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
                 type="button"
                 onClick={send}
                 disabled={sending || (!text.trim() && attachments.length === 0)}
-                className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                className="mr-auto h-10 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40 md:h-9"
               >
                 {sending
                   ? 'שולח…'

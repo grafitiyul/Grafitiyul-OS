@@ -102,7 +102,7 @@ export default function CollapsibleNote({ id, label, value, rich = false, placeh
             // Plain note: keep the author's line breaks (pre-wrap), never flatten.
             <div ref={contentRef} style={clip} className="text-[15px] text-gray-900 whitespace-pre-wrap leading-relaxed">{String(value)}</div>
           )}
-          <span className="absolute top-2 left-1.5 shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+          <span className="absolute top-2 left-1.5 shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity [@media(hover:none)]:opacity-60">✎</span>
         </div>
         {/* Expand control — sibling of the click-to-edit area, so it never edits. */}
         {!empty && hasMore && (

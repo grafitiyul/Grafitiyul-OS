@@ -58,7 +58,7 @@ function Lightbox({ onClose, children }) {
 
 function Placeholder({ icon, title, subtitle, media }) {
   return (
-    <div className="relative mb-1 flex min-w-[180px] items-center gap-2.5 rounded-xl border border-gray-200/70 bg-gray-50/80 px-3 py-2.5 overflow-hidden">
+    <div className="relative mb-1 flex min-w-[min(180px,55vw)] items-center gap-2.5 rounded-xl border border-gray-200/70 bg-gray-50/80 px-3 py-2.5 overflow-hidden">
       {media?.thumbBase64 && (
         <Thumb media={media} className="absolute inset-0 h-full w-full object-cover opacity-20 blur-[2px]" />
       )}
@@ -91,7 +91,9 @@ function AudioPlayer({ src }) {
   }
 
   return (
-    <div className="mb-1 flex min-w-[220px] items-center gap-1.5">
+    // min-w is viewport-clamped: a fixed 220px inside a 78%-wide bubble
+    // overflows narrow phone threads.
+    <div className="mb-1 flex min-w-[min(220px,60vw)] items-center gap-1.5">
       <audio
         ref={audioRef}
         controls
@@ -164,7 +166,7 @@ export default function MessageMedia({ message: m, typeLabel }) {
             title="הפעלת הסרטון"
           >
             {poster ? (
-              <img src={poster} alt={typeLabel} className="max-h-72 w-auto max-w-full min-w-[200px] rounded-xl object-contain" />
+              <img src={poster} alt={typeLabel} className="max-h-72 w-auto max-w-full min-w-[min(200px,55vw)] rounded-xl object-contain" />
             ) : (
               <div className="h-44 w-64 max-w-full rounded-xl" />
             )}
@@ -199,7 +201,7 @@ export default function MessageMedia({ message: m, typeLabel }) {
         href={mediaUrl(m)}
         target="_blank"
         rel="noreferrer"
-        className="mb-1 flex min-w-[200px] items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 hover:bg-gray-100"
+        className="mb-1 flex min-w-[min(200px,55vw)] items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 hover:bg-gray-100"
       >
         <span className="text-xl leading-none">{DOC_ICON}</span>
         <div className="min-w-0">

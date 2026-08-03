@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { PRIORITY_TONE, PRIORITY_OPTIONS, formatDue, toDateInput } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 
 // Open-tasks strip — lives in the Deal focus area (above the timeline FOCUS).
@@ -104,61 +105,79 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
                   {tone.label}
                 </span>
               )}
-              {/* Actions */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setMenuId(menuId === t.id ? null : t.id)}
-                  className="rounded-md px-1.5 py-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                  aria-label="פעולות"
-                >
-                  ⋮
-                </button>
-                {menuId === t.id && (
-                  <div
-                    className="absolute left-0 z-10 mt-1 w-40 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-                    onMouseLeave={() => setMenuId(null)}
-                  >
-                    {isWa && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (confirm('לשלוח את הודעת הוואטסאפ עכשיו?'))
-                            run(() => api.dealTasks.sendNow(dealId, t.id), t.id);
-                        }}
-                        className="block w-full px-3 py-1.5 text-right text-[13px] text-gray-700 hover:bg-gray-50"
-                      >
-                        שלח עכשיו
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuId(null);
-                        setEditId(t.id);
-                      }}
-                      className="block w-full px-3 py-1.5 text-right text-[13px] text-gray-700 hover:bg-gray-50"
-                    >
-                      עריכה
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm(isWa ? 'לבטל את המשימה? ההודעה המתוזמנת לא תישלח.' : 'לבטל את המשימה?'))
-                          run(() => api.dealTasks.cancel(dealId, t.id), t.id);
-                      }}
-                      className="block w-full px-3 py-1.5 text-right text-[13px] text-red-600 hover:bg-red-50"
-                    >
-                      ביטול
-                    </button>
-                  </div>
-                )}
-              </div>
+              {/* Actions — the canonical AnchoredMenu (portaled, tap-dismissable):
+                  the old hand-rolled absolute menu could only be dismissed by
+                  mouseleave (impossible on touch) and was clipped by the
+                  workspace's overflow container. */}
+              <TaskRowMenu
+                open={menuId === t.id}
+                onToggle={() => setMenuId(menuId === t.id ? null : t.id)}
+                onClose={() => setMenuId(null)}
+                isWa={isWa}
+                onSendNow={() => {
+                  if (confirm('לשלוח את הודעת הוואטסאפ עכשיו?'))
+                    run(() => api.dealTasks.sendNow(dealId, t.id), t.id);
+                }}
+                onEdit={() => {
+                  setMenuId(null);
+                  setEditId(t.id);
+                }}
+                onCancelTask={() => {
+                  if (confirm(isWa ? 'לבטל את המשימה? ההודעה המתוזמנת לא תישלח.' : 'לבטל את המשימה?'))
+                    run(() => api.dealTasks.cancel(dealId, t.id), t.id);
+                }}
+              />
             </li>
           );
         })}
       </ul>
     </section>
+  );
+}
+
+// Per-row ⋮ actions — anchored popover (portal): never clipped, closes on
+// outside tap / Esc, works identically with mouse and touch.
+function TaskRowMenu({ open, onToggle, onClose, isWa, onSendNow, onEdit, onCancelTask }) {
+  const btnRef = useRef(null);
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={onToggle}
+        className="rounded-md px-1.5 py-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+        aria-label="פעולות"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        ⋮
+      </button>
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={onClose} width={160}>
+        {isWa && (
+          <button
+            type="button"
+            onClick={onSendNow}
+            className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50"
+          >
+            שלח עכשיו
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onEdit}
+          className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50"
+        >
+          עריכה
+        </button>
+        <button
+          type="button"
+          onClick={onCancelTask}
+          className="block w-full px-3 py-2 text-right text-[13px] text-red-600 hover:bg-red-50"
+        >
+          ביטול
+        </button>
+      </AnchoredMenu>
+    </>
   );
 }
 

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Checks from './Checks.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 
@@ -126,9 +127,10 @@ function Avatar({ chat }) {
 }
 
 // Tiny icon button in the row's hover action cluster.
-function RowAction({ onClick, title, children }) {
+function RowAction({ onClick, title, children, btnRef = null }) {
   return (
     <button
+      ref={btnRef}
       type="button"
       title={title}
       onClick={(e) => {
@@ -141,6 +143,8 @@ function RowAction({ onClick, title, children }) {
     </button>
   );
 }
+
+const MENU_ITEM = 'block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50';
 
 export default function ChatListRow({
   chat,
@@ -170,8 +174,14 @@ export default function ChatListRow({
     isGroup && chat.lastMessage && chat.lastMessage.direction === 'incoming'
       ? `${chat.lastMessage.senderName || formatPhoneDisplay(chat.lastMessage.senderPhone) || 'משתתף לא מזוהה'}: `
       : '';
+  // Anchors for the canonical AnchoredMenu popovers (snooze presets on
+  // desktop; the ⋮ everything-menu on touch devices).
+  const snoozeBtnRef = useRef(null);
+  const moreBtnRef = useRef(null);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   return (
+    <>
     <div
       role="button"
       tabIndex={0}
@@ -316,8 +326,10 @@ export default function ChatListRow({
             ללא שיוך
           </span>
         )}
-        {/* Hover action cluster — pin / read / snooze */}
-        <div className="relative mr-auto hidden items-center gap-1 group-hover:flex">
+        {/* Action cluster — pin / read / snooze. Revealed by hover on
+            hover-capable devices ONLY; touch devices get the ⋮ menu instead
+            (hover-gated controls are unreachable on a phone). */}
+        <div className="relative mr-auto hidden items-center gap-1 [@media(hover:hover)]:group-hover:flex">
           <RowAction
             title={chat.pinnedAt ? 'ביטול נעיצה' : 'נעיצת השיחה'}
             onClick={() => onTogglePin(chat)}
@@ -331,62 +343,133 @@ export default function ChatListRow({
             {unread ? '✓' : '✉'}
           </RowAction>
           <RowAction
+            btnRef={snoozeBtnRef}
             title={snoozed ? 'נודניק פעיל' : 'נודניק (הסתרה זמנית)'}
             onClick={() => onToggleSnoozeMenu(chat)}
           >
             💤
           </RowAction>
         </div>
+        {/* Touch: one ⋮ opens everything (pin / read / snooze / hide). */}
+        <button
+          ref={moreBtnRef}
+          type="button"
+          aria-label="פעולות שיחה"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMoreOpen(true);
+          }}
+          className="mr-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-[16px] leading-none text-gray-400 active:bg-gray-200 [@media(hover:none)]:flex"
+        >
+          ⋮
+        </button>
       </div>
         </div>
       </div>
-
-      {snoozeMenuOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-30"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleSnoozeMenu(null);
-            }}
-          />
-          <div
-            className="absolute left-2 top-full z-40 -mt-1 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {snoozeOptions().map((o) => (
-              <button
-                key={o.label}
-                type="button"
-                onClick={() => onSnooze(o.until.toISOString())}
-                className="block w-full px-3 py-1.5 text-right text-[12.5px] text-gray-700 hover:bg-gray-50"
-              >
-                {o.label}
-              </button>
-            ))}
-            {snoozed && (
-              <button
-                type="button"
-                onClick={() => onSnooze(null)}
-                className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] font-medium text-red-600 hover:bg-red-50"
-              >
-                ביטול הנודניק
-              </button>
-            )}
-            {/* Permanent manual hide — cleanup for chats that no longer exist
-                on the phone (pre-tracking deletions). Reversible from 'הכל'. */}
-            {onToggleHidden && (
-              <button
-                type="button"
-                onClick={() => onToggleHidden(chat)}
-                className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] text-gray-600 hover:bg-gray-50"
-              >
-                {chat.hiddenAt ? 'ביטול ההסתרה' : 'הסתרה מהרשימה'}
-              </button>
-            )}
-          </div>
-        </>
-      )}
     </div>
+
+    {/* Snooze presets — the canonical anchored popover (portaled: never
+        clipped by the list's scroll container, flips near the bottom). */}
+    <AnchoredMenu
+      anchorRef={snoozeBtnRef}
+      open={snoozeMenuOpen}
+      onClose={() => onToggleSnoozeMenu(null)}
+      width={176}
+    >
+      {snoozeOptions().map((o) => (
+        <button
+          key={o.label}
+          type="button"
+          onClick={() => onSnooze(o.until.toISOString())}
+          className={MENU_ITEM}
+        >
+          {o.label}
+        </button>
+      ))}
+      {snoozed && (
+        <button
+          type="button"
+          onClick={() => onSnooze(null)}
+          className="block w-full border-t border-gray-100 px-3 py-2 text-right text-[13px] font-medium text-red-600 hover:bg-red-50"
+        >
+          ביטול הנודניק
+        </button>
+      )}
+      {/* Permanent manual hide — cleanup for chats that no longer exist
+          on the phone (pre-tracking deletions). Reversible from 'הכל'. */}
+      {onToggleHidden && (
+        <button
+          type="button"
+          onClick={() => onToggleHidden(chat)}
+          className="block w-full border-t border-gray-100 px-3 py-2 text-right text-[13px] text-gray-600 hover:bg-gray-50"
+        >
+          {chat.hiddenAt ? 'ביטול ההסתרה' : 'הסתרה מהרשימה'}
+        </button>
+      )}
+    </AnchoredMenu>
+
+    {/* Touch ⋮ menu — the row actions the hover cluster provides, plus the
+        snooze presets, in one tap-friendly anchored menu. */}
+    <AnchoredMenu anchorRef={moreBtnRef} open={moreOpen} onClose={() => setMoreOpen(false)} width={200}>
+      <button
+        type="button"
+        onClick={() => {
+          setMoreOpen(false);
+          onTogglePin(chat);
+        }}
+        className={MENU_ITEM}
+      >
+        📌 {chat.pinnedAt ? 'ביטול נעיצה' : 'נעיצת השיחה'}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setMoreOpen(false);
+          onToggleRead(chat);
+        }}
+        className={MENU_ITEM}
+      >
+        {unread ? '✓ סימון כנקראה' : '✉ סימון כלא נקראה'}
+      </button>
+      <div className="my-1 border-t border-gray-100" />
+      {snoozeOptions().map((o) => (
+        <button
+          key={o.label}
+          type="button"
+          onClick={() => {
+            setMoreOpen(false);
+            onSnooze(o.until.toISOString());
+          }}
+          className={MENU_ITEM}
+        >
+          💤 נודניק {o.label}
+        </button>
+      ))}
+      {snoozed && (
+        <button
+          type="button"
+          onClick={() => {
+            setMoreOpen(false);
+            onSnooze(null);
+          }}
+          className="block w-full px-3 py-2 text-right text-[13px] font-medium text-red-600 hover:bg-red-50"
+        >
+          ביטול הנודניק
+        </button>
+      )}
+      {onToggleHidden && (
+        <button
+          type="button"
+          onClick={() => {
+            setMoreOpen(false);
+            onToggleHidden(chat);
+          }}
+          className="block w-full border-t border-gray-100 px-3 py-2 text-right text-[13px] text-gray-600 hover:bg-gray-50"
+        >
+          {chat.hiddenAt ? 'ביטול ההסתרה' : 'הסתרה מהרשימה'}
+        </button>
+      )}
+    </AnchoredMenu>
+    </>
   );
 }

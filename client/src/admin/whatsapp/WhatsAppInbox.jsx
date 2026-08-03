@@ -9,6 +9,7 @@ import PhoneFlag from './PhoneFlag.jsx';
 import DealDrawer from '../common/DealDrawer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
+import { useIsMobile } from '../../lib/useIsMobile.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -166,7 +167,7 @@ function CreateDealDialog({ chat, suggestedName, busy, onConfirm, onClose }) {
         <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
           בדקו וערכו את הפרטים — איש הקשר והדיל ייווצרו רק לאחר אישור, והשיחה תקושר אליהם.
         </p>
-        <div className="mt-4 grid grid-cols-2 gap-2.5">
+        <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <label className="space-y-1">
             <span className="text-[11.5px] font-medium text-gray-500">שם פרטי (עברית)</span>
             <input value={form.firstNameHe} onChange={set('firstNameHe')} dir="rtl" className={field} />
@@ -339,6 +340,12 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const draggingRef = useRef(false);
   const containerRef = useRef(null);
   const searchInputRef = useRef(null);
+  // Below md the two-pane layout is a phone: ONE pane at a time — the list,
+  // or (once a chat is selected) the full-width conversation with a back
+  // button. Selection state doubles as the view switch, so Esc / back both
+  // return to the list by clearing it.
+  const isMobile = useIsMobile(767);
+  const mobileThreadOpen = isMobile && !!selected;
 
   // Optimistically patch one chat in the loaded list (immediate read/unread
   // feedback before the next fetch confirms the server SSOT).
@@ -627,10 +634,19 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
 
       <div
         ref={containerRef}
-        className="flex h-[calc(100vh-190px)] min-h-[460px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        // Mobile: dvh (the URL bar shrinks the viewport, 100vh lies) minus the
+        // page chrome above + the global bottom nav below, and a LOWER floor so
+        // short phones don't force the composer under the nav bar.
+        className="flex h-[calc(100dvh-240px)] min-h-[320px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:h-[calc(100vh-190px)] md:min-h-[460px]"
       >
-        {/* RIGHT — conversation list (pinned, resizable) */}
-        <aside style={{ width: listWidth }} className="flex min-w-0 shrink-0 flex-col border-l border-gray-200">
+        {/* RIGHT — conversation list (pinned; resizable on desktop, the whole
+            width on a phone, hidden there while a conversation is open) */}
+        <aside
+          style={isMobile ? undefined : { width: listWidth }}
+          className={`min-w-0 flex-col ${
+            isMobile ? 'w-full' : 'shrink-0 border-l border-gray-200'
+          } ${mobileThreadOpen ? 'hidden' : 'flex'}`}
+        >
           <div className="space-y-2 border-b border-gray-100 p-2.5">
             <div className="flex items-center gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1">
               {[{ id: 'all', label: 'כל המספרים' }, ...accounts.map((a) => ({ id: a.id, label: a.label }))].map((t) => (
@@ -755,26 +771,44 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           </div>
         </aside>
 
-        {/* Resize handle */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="שינוי רוחב רשימת השיחות"
-          onMouseDown={() => {
-            draggingRef.current = true;
-            document.body.style.userSelect = 'none';
-            document.body.style.cursor = 'col-resize';
-          }}
-          className="w-1 shrink-0 cursor-col-resize bg-gray-100 hover:bg-emerald-400/60"
-        />
+        {/* Resize handle — desktop only (mouse-driven drag). */}
+        {!isMobile && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="שינוי רוחב רשימת השיחות"
+            onMouseDown={() => {
+              draggingRef.current = true;
+              document.body.style.userSelect = 'none';
+              document.body.style.cursor = 'col-resize';
+            }}
+            className="w-1 shrink-0 cursor-col-resize bg-gray-100 hover:bg-emerald-400/60"
+          />
+        )}
 
         {/* LEFT — the selected conversation. position:relative so the deal
             drawer (rendered at the bottom of this section) covers exactly the
-            chat area and stops at the conversation-list boundary. */}
-        <section className="relative flex min-w-0 flex-1 flex-col">
+            chat area and stops at the conversation-list boundary. On a phone
+            it is the whole surface once a chat is open, hidden otherwise. */}
+        <section
+          className={`relative min-w-0 flex-1 flex-col ${
+            isMobile && !mobileThreadOpen ? 'hidden' : 'flex'
+          }`}
+        >
           {selected ? (
             <>
               <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+                {/* Phone back-to-list — RTL back points toward the start edge. */}
+                {isMobile && (
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    aria-label="חזרה לרשימת השיחות"
+                    className="-mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xl leading-none text-gray-500 active:bg-gray-200"
+                  >
+                    →
+                  </button>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] font-semibold text-gray-900" dir="auto">
                     {selected.displayName && selected.displayName !== selected.phoneNumber

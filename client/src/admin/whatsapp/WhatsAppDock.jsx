@@ -263,12 +263,13 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
 
   return (
     <>
-      {/* Desktop: in the content's left gutter, nudged 16px past the content
-          edge so it clears the header's 3-dot actions (the sticky seam
-          wrapper keeps it visible while scrolling). Mobile: fixed
-          bottom-left fallback. */}
+      {/* Desktop-only: in the content's left gutter, nudged 16px past the
+          content edge so it clears the header's 3-dot actions (the sticky seam
+          wrapper keeps it visible while scrolling). There is NO mobile bubble —
+          on mobile the Deal workspace renders the chat as a dedicated bottom
+          tab (DealWhatsAppTab via WorkspaceLayout mobileTabs), and the old
+          fixed-bottom fallback sat hidden UNDER the global MobileTabBar. */}
       {bubble('hidden lg:flex absolute top-0 -left-4 z-40')}
-      {bubble('flex lg:hidden fixed bottom-5 left-4 z-40')}
 
       {open && (
         <div

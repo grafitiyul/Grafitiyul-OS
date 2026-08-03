@@ -152,6 +152,16 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const [editorNonce, setEditorNonce] = useState(0);
   const [posting, setPosting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  // Composer tab strip — keeps the ACTIVE tab visible when the strip scrolls
+  // horizontally (narrow viewports).
+  const tabStripRef = useRef(null);
+  useEffect(() => {
+    const strip = tabStripRef.current;
+    if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+    strip
+      .querySelector(`[data-composer-tab="${tab}"]`)
+      ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [tab]);
   const draftKeyRef = useRef(noteDraftKey);
   const draftValRef = useRef(draft);
   draftValRef.current = draft;
@@ -356,17 +366,21 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           appears on read-only surfaces like the Tour timeline. */}
       {!historyOnly && (
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center gap-1 border-b border-gray-100 px-2 pt-2">
+        {/* The tab strip SCROLLS horizontally when it doesn't fit (phones):
+            labels never clip, every tab stays reachable, and the active tab is
+            auto-scrolled into view. Desktop is unaffected (no overflow). */}
+        <div ref={tabStripRef} className="flex items-center gap-1 overflow-x-auto no-scrollbar border-b border-gray-100 px-2 pt-2">
           {composerTabs.map((t) => (
             <button
               key={t.key}
               type="button"
+              data-composer-tab={t.key}
               onClick={() => {
                 if (!MODAL_TABS.has(t.key)) return setTab(t.key);
                 if (t.enabled) setWaTemplateOpen(true);
                 return undefined;
               }}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium rounded-t-lg -mb-px border-b-2 transition ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2 text-[13px] font-medium rounded-t-lg -mb-px border-b-2 transition ${
                 tab === t.key ? 'border-blue-500 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >

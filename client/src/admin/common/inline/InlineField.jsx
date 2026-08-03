@@ -170,7 +170,7 @@ export default function InlineField({
             className={`flex-1 min-w-0 text-right rounded-md px-1 ${BODY} flex items-center gap-1.5 transition-colors hover:bg-gray-50`}
           >
             {valueSpan}
-            <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+            <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity [@media(hover:none)]:opacity-60">✎</span>
           </button>
         </div>
       );

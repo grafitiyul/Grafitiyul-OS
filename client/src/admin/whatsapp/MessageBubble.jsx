@@ -50,14 +50,24 @@ function groupReactions(list) {
   return [...counts.entries()];
 }
 
-function HoverAction({ onClick, title, children, active = false }) {
+// Revealed by hover on hover-capable devices; on touch the bubble itself is
+// tappable and `shown` (owned by the thread) reveals the same actions — hover
+// alone would make reply/star unreachable on a phone.
+function HoverAction({ onClick, title, children, active = false, shown = false }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
       title={title}
-      className={`h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/90 text-[13px] shadow-sm hover:text-gray-800 ${
-        active ? 'flex text-amber-500' : 'hidden text-gray-500 group-hover:flex'
+      className={`h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/90 text-[14px] shadow-sm hover:text-gray-800 ${
+        active
+          ? 'flex text-amber-500'
+          : shown
+            ? 'flex text-gray-500'
+            : 'hidden text-gray-500 [@media(hover:hover)]:group-hover:flex'
       }`}
     >
       {children}
@@ -65,7 +75,15 @@ function HoverAction({ onClick, title, children, active = false }) {
   );
 }
 
-export default function MessageBubble({ message: m, showSender = false, quoted = null, onReply = null, onToggleStar = null }) {
+export default function MessageBubble({
+  message: m,
+  showSender = false,
+  quoted = null,
+  onReply = null,
+  onToggleStar = null,
+  actionsShown = false,
+  onBubbleTap = null,
+}) {
   if (m.messageType === 'system') {
     return (
       <div className="my-2 flex justify-center">
@@ -86,13 +104,14 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
   const actions = (
     <>
       {onReply && (
-        <HoverAction onClick={onReply} title="תגובה">↩</HoverAction>
+        <HoverAction onClick={onReply} title="תגובה" shown={actionsShown}>↩</HoverAction>
       )}
       {onToggleStar && (
         <HoverAction
           onClick={() => onToggleStar(m)}
           title={m.starred ? 'הסרת כוכב' : 'סימון בכוכב'}
           active={m.starred}
+          shown={actionsShown}
         >
           {m.starred ? '★' : '☆'}
         </HoverAction>
@@ -102,9 +121,16 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
 
   return (
     <div className={`group mb-1.5 flex items-center gap-1 ${outbound ? 'justify-end' : 'justify-start'}`}>
-      {/* Hover actions — on the empty side of the row */}
+      {/* Actions — on the empty side of the row (hover, or tap on touch) */}
       {outbound && actions}
       <div
+        onClick={(e) => {
+          // Tap-to-reveal for touch: taps on interactive content (links,
+          // media, audio controls) keep their own behavior.
+          if (!onBubbleTap) return;
+          if (e.target.closest('a,button,audio,video')) return;
+          onBubbleTap();
+        }}
         className={`relative max-w-[78%] rounded-2xl px-3 py-2 shadow-sm ${
           outbound ? 'rounded-tl-md bg-[#d9fdd3]' : 'rounded-tr-md bg-white'
         }`}

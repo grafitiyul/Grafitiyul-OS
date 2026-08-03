@@ -42,7 +42,7 @@ function PickerTrigger({ label, icon, value, display, placeholder = '—', ancho
         <span className={`truncate text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`} dir="ltr">
           {empty ? placeholder : display(value)}
         </span>
-        <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">▾</span>
+        <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity [@media(hover:none)]:opacity-60">▾</span>
       </button>
     </div>
   );

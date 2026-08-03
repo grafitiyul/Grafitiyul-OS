@@ -27,6 +27,17 @@ body {
   color: rgb(17 24 39);
 }
 
+/* Horizontal tab strips / pipelines that scroll on touch: the scrollbar is
+   visual noise on a 4px-tall strip — hide it (the content itself signals
+   scrollability; the strips auto-scroll their active item into view). */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Subtle entrance for inline-edit fields (platform pattern). */
 @keyframes inlineIn {
   from { opacity: 0; transform: translateY(-1px); }

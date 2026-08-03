@@ -18,8 +18,14 @@ export default function MobileTabBar() {
   const { rail } = useResolvedNav();
   return (
     <nav
-      className="lg:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 flex overflow-x-auto h-16 z-40"
-      style={{ boxShadow: '0 -2px 8px rgba(0,0,0,0.04)' }}
+      // Safe-area: on notched phones (PWA standalone especially) the bar must
+      // not sit under the home indicator — the inset pads it, and AppShell's
+      // main padding grows by the same amount.
+      className="lg:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 flex overflow-x-auto no-scrollbar z-40"
+      style={{
+        boxShadow: '0 -2px 8px rgba(0,0,0,0.04)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
       aria-label="ניווט ראשי"
     >
       {rail.map((m) => (
@@ -27,7 +33,7 @@ export default function MobileTabBar() {
           key={m.key}
           to={m.to}
           className={({ isActive }) =>
-            `shrink-0 basis-[4.5rem] flex flex-col items-center justify-center gap-1 px-1 text-[11px] leading-tight ${
+            `shrink-0 basis-[4.5rem] h-16 flex flex-col items-center justify-center gap-1 px-1 text-[11px] leading-tight ${
               isActive ? 'text-blue-600 font-semibold' : 'text-gray-500'
             }`
           }

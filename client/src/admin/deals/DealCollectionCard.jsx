@@ -216,7 +216,7 @@ function PaymentRow({ row, onReverse, dealId }) {
               type="button"
               onClick={() => onReverse(row)}
               title="ביטול הרישום הידני"
-              className="rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600"
+              className="rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-red-50 hover:text-red-600 [@media(hover:none)]:opacity-100"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
