@@ -16,6 +16,11 @@ import { REQUIRED_SUMMARY_ROLES } from '../tours/completion.js';
 import { tourStartMs, DONE_STATUSES, COORDINATION_MONITOR_DAYS } from './coordination.js';
 import { tourEndMs } from '../tours/tourTime.js';
 import { tourCustomerLabel } from './tourFacts.js';
+// Each overdue summary carries ITS direct form link (perActor — this guide's
+// form on this tour). Same scoped-link rule as every guide message: never a
+// portal path.
+import { staffFormLinkUrl } from '../questionnaires/staffLinks.js';
+import { staffLanguage } from '../../../shared/staffName.mjs';
 
 const LIVE = ['scheduled', 'completed'];
 
@@ -24,9 +29,9 @@ export const MISSING_SUMMARY_LOOKBACK_DAYS = 30;
 
 const DIGEST_TOUR_SELECT = {
   id: true, date: true, startTime: true, status: true, locationId: true,
-  product: { select: { nameHe: true } },
-  location: { select: { nameHe: true } },
-  productVariant: { select: { locationId: true, durationHours: true, location: { select: { nameHe: true } } } },
+  product: { select: { nameHe: true, nameEn: true } },
+  location: { select: { nameHe: true, nameEn: true } },
+  productVariant: { select: { locationId: true, durationHours: true, location: { select: { nameHe: true, nameEn: true } } } },
   openTourTemplateId: true,
   assignments: { select: GUIDE_ASSIGNMENT_SELECT, orderBy: { createdAt: 'asc' } },
   bookings: {
@@ -57,7 +62,7 @@ export function daysBetween(from, to) {
  * [{ recipient, guideDigest }] — empty when nobody has anything, and a guide
  * with neither coordination items nor overdue summaries is simply absent.
  */
-export async function collectGuideDigests({ nowMs = Date.now(), client = prisma, activatedAtMs = null } = {}) {
+export async function collectGuideDigests({ nowMs = Date.now(), client = prisma, activatedAtMs = null, log = console } = {}) {
   const today = israelToday(nowMs);
   const windowEnd = addDays(today, COORDINATION_MONITOR_DAYS - 1);
   const summaryFrom = addDays(today, -MISSING_SUMMARY_LOOKBACK_DAYS);
@@ -106,6 +111,9 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma,
           name: guideFullName(a),
           firstName: guideFirstName(a),
           portalToken: a.personRef?.portalToken || null,
+          // Same contract as the per-tour notifications (#12-#16): dispatch
+          // renders in the guide's language when the office enables it.
+          preferredLanguage: staffLanguage(a.personRef),
         },
         coordination: [],
         missingSummaries: [],
@@ -117,10 +125,14 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma,
   for (const tour of tours) {
     const inWindow = compareDates(tour.date, today) >= 0 && compareDates(tour.date, windowEnd) <= 0;
     const isPast = compareDates(tour.date, today) < 0;
-    const cityName = tour.location?.nameHe || tour.productVariant?.location?.nameHe || null;
+    const loc = tour.location || tour.productVariant?.location || null;
+    // He/En pair naming (…He/…En) — the bilingual guard's convention.
+    const cityNameHe = loc?.nameHe || null;
+    const cityNameEn = loc?.nameEn || null;
     const locationId = tour.locationId ?? tour.productVariant?.locationId ?? null;
     const customerName = tourCustomerLabel(tour);
-    const productName = tour.product?.nameHe || null;
+    const productNameHe = tour.product?.nameHe || null;
+    const productNameEn = tour.product?.nameEn || null;
 
     // ── upcoming: the coordination line, one per BOOKING (canonical unit) ──
     if (inWindow) {
@@ -138,8 +150,10 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma,
               || `${deal?.contacts?.[0]?.contact?.firstNameHe || ''} ${deal?.contacts?.[0]?.contact?.lastNameHe || ''}`.trim()
               || customerName,
             participants: deal?.participants ?? null,
-            productName,
-            cityName,
+            productNameHe,
+            productNameEn,
+            cityNameHe,
+            cityNameEn,
             locationId,
             homeLocationId,
           });
@@ -162,7 +176,17 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma,
         if (!a.externalPersonId) continue;
         if (summaryDone.has(`${tour.id}:${a.externalPersonId}`)) continue;
         ensure(a).missingSummaries.push({
-          tourDate: tour.date, tourStartMs: startMs, customerName, productName,
+          tourDate: tour.date, tourStartMs: startMs, customerName, productNameHe, productNameEn,
+          // The SAME perActor form link the reminder ladder (#14-#16) sent —
+          // idempotent mint, so the digest and the reminders always carry one
+          // identical URL. Null (no active template / failure) → the line
+          // renders without a link rather than with a dead one.
+          formUrl: await staffFormLinkUrl({
+            purpose: 'tour_summary',
+            subjectType: 'tour_event',
+            subjectId: tour.id,
+            actorScope: a.externalPersonId,
+          }, { db: client, log }),
         });
       }
     }

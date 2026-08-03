@@ -65,6 +65,19 @@ export function cityChip(item) {
 
 const guideFirst = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'מדריך';
 const guideFirstEn = (ctx) => ctx.recipient?.firstName || ctx.recipient?.name || 'guide';
+
+/** Chronological instant of a digest item — canonical start ms, else the date. */
+const itemInstant = (i) => {
+  if (i.tourStartMs != null) return i.tourStartMs;
+  const t = Date.parse(`${i.tourDate}T00:00:00Z`);
+  return Number.isFinite(t) ? t : 0;
+};
+/**
+ * TRUE chronological order (owner rule, 2026-08-03): the nearest activity
+ * first, and a completed call (✅) keeps its chronological place — done-ness
+ * never pushes a line to the bottom.
+ */
+const chronological = (items) => [...items].sort((a, b) => itemInstant(a) - itemInstant(b));
 // The DIRECT link to this one form. Never a portal link — see staffLinks.js.
 const formLink = (ctx) => ctx.guideNotice?.formUrl || '—';
 // The two labeled link sections of the summary ladder (#14-#16) — the same
@@ -106,6 +119,73 @@ export function dayLabelEn(daysAway, dateStr) {
   return englishWeekday(dateStr) || formatDateHe(dateStr) || '—';
 }
 
+// ── #11 body (both languages) ────────────────────────────────────────────────
+// The digest is one body with a language switch: identical structure, En data
+// (product/city/day names/labels) where it exists, stored customer names as-is.
+
+function digestBody(ctx, lang) {
+  const en = lang === 'en';
+  const g = ctx.guideDigest || {};
+  const items = chronological(g.coordination || []);
+  const missing = chronological(g.missingSummaries || []);
+  const out = [en ? '☎️ Coordination-call status for the days ahead' : '☎️ סטטוס שיחות התיאום לימים הקרובים', ''];
+  // An empty list must SAY it is empty — otherwise the message opens with
+  // a blank gap and reads like a broken send.
+  if (!items.length) out.push(en ? 'No coordination calls in the days ahead.' : 'אין שיחות תיאום לימים הקרובים.');
+  out.push(...items.map((i) => [
+    `${statusIcon(i.done, i.daysAway)} ${en ? dayLabelEn(i.daysAway, i.tourDate) : dayLabel(i.daysAway, i.tourDate)}`,
+    `${i.customerName || '—'} (${i.participants ?? '—'})`,
+    cityChip({ ...i, cityName: (en ? i.cityNameEn : null) || i.cityNameHe }),
+    (en ? i.productNameEn : null) || i.productNameHe || '—',
+  ].filter(Boolean).join(' | ')));
+  if (missing.length) {
+    out.push('', '────────────────', '', en ? '📝 Tour summaries still missing' : '📝 סיכומי סיור שטרם הושלמו', '');
+    missing.forEach((m, idx) => {
+      if (idx) out.push(''); // one blank line between entries, each with its link
+      out.push([
+        formatDateHe(m.tourDate) || '—',
+        m.customerName || '—',
+        (en ? m.productNameEn : null) || m.productNameHe || '—',
+      ].join(' | '));
+      // EVERY pending summary carries ITS OWN direct form link (perActor).
+      if (m.formUrl) out.push(m.formUrl);
+    });
+  }
+  return lines(out);
+}
+
+// ── #12/#13 body (both languages) ────────────────────────────────────────────
+// The two messages are ONE family: same spacing, same icon order, same
+// hierarchy — only the title differs. Per BOOKING always: the 👤 line and the
+// participant count describe this one customer, and the link opens this one
+// booking's coordination form (scoped — never a portal or tour-page link).
+
+function coordinationBody(ctx, lang, title) {
+  const en = lang === 'en';
+  const f = ctx.guideNotice || {};
+  const contact = f.contactName || f.customerName || null;
+  const org = f.orgName && f.orgName !== contact ? f.orgName : null;
+  const product = (en ? f.productNameEn : null) || f.productNameHe || '—';
+  // The city rides the product line ONLY away from home (canonical
+  // Location.isHomeLocation flag; unknown reads as "show it").
+  const city = f.cityNameHe && f.cityIsHome !== true
+    ? ((en ? f.cityNameEn : null) || f.cityNameHe)
+    : null;
+  const count = f.participants == null
+    ? null
+    : (en ? `${f.participants} participants` : `${f.participants} משתתפים`);
+  return lines([
+    title,
+    '',
+    `👤 ${[contact || '—', org].filter(Boolean).join(' | ')}`,
+    `📅 ${dateTimeLine(f)}`,
+    `🎨 ${[product, city, count].filter(Boolean).join(' | ')}`,
+    '',
+    en ? 'Coordination Call Form:' : 'טופס שיחת תיאום:',
+    formLink(ctx),
+  ]);
+}
+
 // ── the catalog entries ──────────────────────────────────────────────────────
 
 export const GUIDE_REPORTS = [
@@ -124,64 +204,25 @@ export const GUIDE_REPORTS = [
       '✅ בוצעה שיחת תיאום · 🔴 טרם בוצעה והסיור היום או מחר · 🔵 טרם בוצעה והסיור בעוד 2–3 ימים · 🟡 טרם בוצעה והסיור בעוד 4 ימים. '
       + 'עיר מוצגת רק כשהיא אינה מיקום הבית. הסיכומים החסרים כוללים רק סיורים מאתמול ואחורה.',
     emptyHe: 'אין למדריך שיחות תיאום או סיכומים פתוחים',
-    render: (ctx) => {
-      const g = ctx.guideDigest || {};
-      const items = g.coordination || [];
-      const missing = g.missingSummaries || [];
-      const out = ['☎️ סטטוס שיחות התיאום לימים הקרובים', ''];
-      // An empty list must SAY it is empty — otherwise the message opens with
-      // a blank gap and reads like a broken send.
-      if (!items.length) out.push('אין שיחות תיאום לימים הקרובים.');
-      out.push(...items.map((i) => [
-        `${statusIcon(i.done, i.daysAway)} ${dayLabel(i.daysAway, i.tourDate)}`,
-        `${i.customerName || '—'} (${i.participants ?? '—'})`,
-        cityChip(i),
-        i.productName || '—',
-      ].filter(Boolean).join(' | ')));
-      if (missing.length) {
-        out.push('', '────────────────', '', '📝 סיכומי סיור שטרם הושלמו', '');
-        out.push(...missing.map((m) => [
-          formatDateHe(m.tourDate) || '—',
-          m.customerName || '—',
-          m.productName || '—',
-        ].join(' | ')));
-      }
-      return lines(out);
-    },
-    renderEn: (ctx) => {
-      const g = ctx.guideDigest || {};
-      const items = g.coordination || [];
-      const missing = g.missingSummaries || [];
-      const out = ['☎️ Coordination-call status for the days ahead', ''];
-      if (!items.length) out.push('No coordination calls in the days ahead.');
-      out.push(...items.map((i) => [
-        `${statusIcon(i.done, i.daysAway)} ${dayLabelEn(i.daysAway, i.tourDate)}`,
-        `${i.customerName || '—'} (${i.participants ?? '—'})`,
-        cityChip(i),
-        i.productName || '—',
-      ].filter(Boolean).join(' | ')));
-      if (missing.length) {
-        out.push('', '────────────────', '', '📝 Tour summaries still missing', '');
-        out.push(...missing.map((m) => [
-          formatDateHe(m.tourDate) || '—',
-          m.customerName || '—',
-          m.productName || '—',
-        ].join(' | ')));
-      }
-      return lines(out);
-    },
+    // ONE body for both languages — the digest lists the same facts in the
+    // same order; `en` only swaps day names, labels and the English data
+    // (product/city) where it exists. Customer/organization names stay as
+    // stored in both languages.
+    render: (ctx) => digestBody(ctx, 'he'),
+    renderEn: (ctx) => digestBody(ctx, 'en'),
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideDigest: {
         coordination: [
-          { done: false, daysAway: 0, tourDate: '2026-08-02', customerName: 'משפחת כהן', participants: 4, productName: 'סיור גרפיטי' },
-          { done: false, daysAway: 1, tourDate: '2026-08-03', customerName: 'חברת ABC', participants: 18, productName: 'סיור קולינרי', cityName: 'ירושלים', locationId: 'loc_jlm', homeLocationId: 'loc_tlv' },
-          { done: false, daysAway: 3, tourDate: '2026-08-05', customerName: 'רות לוי', participants: 2, productName: 'סדנת גרפיטי' },
-          { done: false, daysAway: 4, tourDate: '2026-08-06', customerName: 'משפחת ישראלי', participants: 6, productName: 'סיור גרפיטי' },
-          { done: true, daysAway: 2, tourDate: '2026-08-04', customerName: 'בית ספר אלון', participants: 30, productName: 'סיור גרפיטי' },
+          // Deliberately out of order — the renderer's chronological sort is
+          // part of the layout contract (✅ today stays FIRST).
+          { done: false, daysAway: 1, tourDate: '2026-08-03', tourStartMs: 2, customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי', productNameEn: 'Culinary Tour', cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', locationId: 'loc_jlm', homeLocationId: 'loc_tlv' },
+          { done: true, daysAway: 0, tourDate: '2026-08-02', tourStartMs: 1, customerName: 'משפחת כהן', participants: 4, productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour' },
+          { done: false, daysAway: 4, tourDate: '2026-08-06', tourStartMs: 4, customerName: 'משפחת ישראלי', participants: 6, productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour' },
+          { done: false, daysAway: 3, tourDate: '2026-08-05', tourStartMs: 3, customerName: 'רות לוי', participants: 2, productNameHe: 'סדנת גרפיטי', productNameEn: 'Graffiti Workshop' },
         ],
         missingSummaries: [
-          { tourDate: '2026-07-30', customerName: 'עיריית תל אביב', productName: 'סיור וסדנת גרפיטי' },
+          { tourDate: '2026-07-30', tourStartMs: 0, customerName: 'עיריית תל אביב', productNameHe: 'סיור וסדנת גרפיטי', productNameEn: 'Graffiti Tour & Workshop', formUrl: 'https://app.grafitiyul.co.il/f/SUMMARYTOKEN' },
         ],
       },
     }),
@@ -198,94 +239,17 @@ export const GUIDE_REPORTS = [
       'יומיים לפני הסיור, ב-08:00 (שעון ישראל). אם התאריך נופל בשבת, בחג או בערב חג — ההודעה מוקדמת יום אחורה בכל פעם עד ליום פנוי. '
       + 'יום שישי נחשב יום שליחה תקין, אלא אם הוא עצמו ערב חג.',
     dataHe:
-      'נשלח למדריך הראשי; אם אין מדריך ראשי — לכל המדריכים המשובצים. בסיור פתוח ההודעה כוללת את כל הנרשמים בהודעה אחת, לעולם לא הודעה לכל משתתף.',
-    render: (ctx) => {
-      const f = ctx.guideNotice || {};
-      if (f.openTour) {
-        const p = f.participants || {};
-        return lines([
-          '☎️ זמן לשיחת תיאום!',
-          '',
-          '🎫 סיור פתוח',
-          '',
-          `📅 ${dateTimeLine(f)}`,
-          '',
-          `🎨 ${f.productName || '—'}`,
-          '',
-          '👥 משתתפים:',
-          // An open slot with no registrations yet must say so rather than
-          // leave a blank gap. The guide still gets the tour; #13 tells them
-          // when someone joins.
-          ...((p.customers || []).length
-            ? p.customers.map((c) => `• ${c.label} (${c.count})`)
-            : ['• עדיין אין נרשמים']),
-          '',
-          'לפתיחת הסיור:',
-          '',
-          formLink(ctx),
-        ]);
-      }
-      return lines([
-        '☎️ זמן לשיחת תיאום!',
-        '',
-        `👤 ${f.contactName || f.customerName || '—'}`,
-        '',
-        `🏢 ${f.orgName || '—'}`,
-        '',
-        `🎨 ${f.productName || '—'}`,
-        '',
-        `👥 ${f.participants ?? '—'}`,
-        '',
-        'לפתיחת הסיור:',
-        '',
-        formLink(ctx),
-      ]);
-    },
-    renderEn: (ctx) => {
-      const f = ctx.guideNotice || {};
-      if (f.openTour) {
-        const p = f.participants || {};
-        return lines([
-          '☎️ Time for the coordination call!',
-          '',
-          '🎫 Open tour',
-          '',
-          `📅 ${dateTimeLine(f)}`,
-          '',
-          `🎨 ${f.productName || '—'}`,
-          '',
-          '👥 Participants:',
-          ...((p.customers || []).length
-            ? p.customers.map((c) => `• ${c.label} (${c.count})`)
-            : ['• No registrations yet']),
-          '',
-          'Open the tour:',
-          '',
-          formLink(ctx),
-        ]);
-      }
-      return lines([
-        '☎️ Time for the coordination call!',
-        '',
-        `👤 ${f.contactName || f.customerName || '—'}`,
-        '',
-        `🏢 ${f.orgName || '—'}`,
-        '',
-        `🎨 ${f.productName || '—'}`,
-        '',
-        `👥 ${f.participants ?? '—'}`,
-        '',
-        'Open the tour:',
-        '',
-        formLink(ctx),
-      ]);
-    },
+      'נשלח למדריך הראשי; אם אין מדריך ראשי — לכל המדריכים המשובצים. הודעה נפרדת לכל לקוח (הזמנה), עם טופס התיאום שלו — '
+      + 'גם בסיור פתוח, כך שכמות המשתתפים היא של אותו לקוח בלבד. עיר מוצגת רק כשהיא אינה מיקום הבית.',
+    render: (ctx) => coordinationBody(ctx, 'he', '📟 זמן לשיחת תיאום!'),
+    renderEn: (ctx) => coordinationBody(ctx, 'en', '📟 Time for a Coordination Call!'),
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
-        openTour: false, contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
-        productName: 'סיור וסדנת גרפיטי', participants: 24,
-        tourDate: '2026-08-04', tourTime: '10:00',
+        contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
+        productNameHe: 'סיור וסדנת גרפיטי', productNameEn: 'Graffiti Tour & Workshop',
+        cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', cityIsHome: false,
+        participants: 24, tourDate: '2026-08-04', tourTime: '10:00',
         formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },
     }),
@@ -300,39 +264,18 @@ export const GUIDE_REPORTS = [
     audience: 'guides',
     triggerHe:
       'משתתף חדש נרשם לסיור פתוח — ורק אם הודעת שיחת התיאום לאותו סיור כבר נשלחה למדריך. לפני כן אין מה לעדכן: הרשימה המלאה תגיע בהודעה הרשמית.',
-    dataHe: 'נשלח למדריך הראשי (או לכל המדריכים המשובצים), פעם אחת לכל הרשמה.',
-    render: (ctx) => {
-      const f = ctx.guideNotice || {};
-      return lines([
-        '➕ הצטרף משתתף חדש לסיור פתוח',
-        '',
-        `👤 ${f.newCustomerName || '—'} (${f.newCustomerCount ?? '—'})`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
-        '',
-        'לפתיחת הסיור:',
-        '',
-        formLink(ctx),
-      ]);
-    },
-    renderEn: (ctx) => {
-      const f = ctx.guideNotice || {};
-      return lines([
-        '➕ A new participant joined the open tour',
-        '',
-        `👤 ${f.newCustomerName || '—'} (${f.newCustomerCount ?? '—'})`,
-        '',
-        `📅 ${dateTimeLine(f)}`,
-        '',
-        'Open the tour:',
-        '',
-        formLink(ctx),
-      ]);
-    },
+    dataHe:
+      'נשלח למדריך הראשי (או לכל המדריכים המשובצים), פעם אחת לכל הרשמה. הכמות והטופס הם של ההזמנה החדשה בלבד — '
+      + 'אותו מבנה בדיוק כמו הודעת שיחת התיאום.',
+    render: (ctx) => coordinationBody(ctx, 'he', '➕ הצטרף משתתף חדש לסיור פתוח'),
+    renderEn: (ctx) => coordinationBody(ctx, 'en', '➕ New Participant Joined an Open Tour'),
     sample: () => ({
       recipient: { name: 'יואב כהן', firstName: 'יואב' },
       guideNotice: {
         newCustomerName: 'משפחת כהן', newCustomerCount: 2,
+        contactName: 'משפחת כהן', orgName: null, participants: 2,
+        productNameHe: 'סיור גרפיטי', productNameEn: 'Graffiti Tour',
+        cityNameHe: 'תל אביב', cityNameEn: 'Tel Aviv', cityIsHome: true,
         tourDate: '2026-08-04', tourTime: '10:00',
         formUrl: 'https://app.grafitiyul.co.il/f/SCOPEDTOKEN',
       },

@@ -1,17 +1,14 @@
 // Tour facts the guide notifications render — pulled from canonical sources
 // only, and shaped once so #12/#14/#15/#16 all say the same things the same way.
 
-import { prisma } from '../db.js';
-import {
-  fetchTourParticipantRegistrations, tourParticipantBreakdown,
-} from '../tours/participants.js';
-
-const contactName = (deal) => {
+/** The deal's primary contact name (Hebrew, falling back to English). */
+export const dealContactName = (deal) => {
   const c = deal?.contacts?.[0]?.contact;
   if (!c) return null;
   return `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim()
     || `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim() || null;
 };
+const contactName = dealContactName;
 
 /** "Organization" if there is one, else the contact's name — the customer label. */
 export function tourCustomerLabel(tour) {
@@ -22,12 +19,22 @@ export function tourCustomerLabel(tour) {
 
 /** The shared fact block every per-tour guide notification renders from. */
 export function tourNotificationFacts(tour) {
+  const loc = tour.location || tour.productVariant?.location || null;
   return {
     tourEventId: tour.id,
     tourDate: tour.date,
     tourTime: tour.startTime,
-    productName: tour.product?.nameHe || null,
-    cityName: tour.location?.nameHe || tour.productVariant?.location?.nameHe || null,
+    // He/En PAIR naming on purpose (productNameHe/productNameEn) — the
+    // bilingual guard recognizes pairs by this convention and verifies each
+    // report shows its own language's side.
+    productNameHe: tour.product?.nameHe || null,
+    productNameEn: tour.product?.nameEn || null,
+    cityNameHe: loc?.nameHe || null,
+    cityNameEn: loc?.nameEn || null,
+    // Canonical home flag (Location.isHomeLocation) — the renderers show the
+    // city ONLY when the tour is away from home. Null when the select did not
+    // carry the flag, which reads as "not known to be home" (city shows).
+    cityIsHome: loc && loc.isHomeLocation !== undefined ? !!loc.isHomeLocation : null,
     locationId: tour.locationId ?? tour.productVariant?.locationId ?? null,
     customerName: tourCustomerLabel(tour),
     orgName: tour.bookings?.[0]?.deal?.organization?.name || null,
@@ -36,16 +43,6 @@ export function tourNotificationFacts(tour) {
   };
 }
 
-/**
- * Every booking/customer holding seats on an open tour, with their counts —
- * through the CANONICAL participant builder (never a hand-rolled query), so the
- * notification agrees with the admin tour modal and the guide portal.
- */
-export async function openTourParticipants(tourEventId, client = prisma) {
-  const rows = await fetchTourParticipantRegistrations(client, [tourEventId]);
-  const { aggregate, customers } = tourParticipantBreakdown(rows);
-  return {
-    total: aggregate?.total ?? 0,
-    customers: (customers || []).map((c) => ({ label: c.label, count: c.total, held: c.held })),
-  };
-}
+// (The old openTourParticipants breakdown left with the per-tour open-tour
+// message: #12 is per BOOKING on every tour kind, so the whole-tour customer
+// list is no longer part of any guide notification.)

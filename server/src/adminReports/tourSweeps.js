@@ -26,7 +26,7 @@ import { staffFormLinkUrl } from '../questionnaires/staffLinks.js';
 import { guideGalleryUploadUrl } from '../tours/gallery/links.js';
 import { COORDINATION_LEAD_DAYS, DONE_STATUSES } from './coordination.js';
 import { fireAdminReport } from './dispatch.js';
-import { openTourParticipants, tourNotificationFacts } from './tourFacts.js';
+import { dealContactName, tourNotificationFacts } from './tourFacts.js';
 import { staffLanguage } from '../../../shared/staffName.mjs';
 
 /** The hour guide notifications go out on their chosen calendar date. */
@@ -73,9 +73,9 @@ const LIVE = ['scheduled', 'completed'];
 const SWEEP_TOUR_SELECT = {
   id: true, date: true, startTime: true, status: true, kind: true,
   openTourTemplateId: true,
-  product: { select: { nameHe: true } },
-  location: { select: { nameHe: true } },
-  productVariant: { select: { durationHours: true, location: { select: { nameHe: true } } } },
+  product: { select: { nameHe: true, nameEn: true } },
+  location: { select: { nameHe: true, nameEn: true, isHomeLocation: true } },
+  productVariant: { select: { durationHours: true, location: { select: { nameHe: true, nameEn: true, isHomeLocation: true } } } },
   assignments: { select: GUIDE_ASSIGNMENT_SELECT, orderBy: { createdAt: 'asc' } },
   bookings: {
     where: { status: 'active' },
@@ -103,12 +103,10 @@ const summaryFormUrl = (tourEventId, externalPersonId, client, log) => staffForm
   actorScope: externalPersonId,
 }, { db: client, log });
 
-/** Customer label for a booking — the person the guide is calling. */
-const bookingCustomerName = (b) => {
-  const c = b?.deal?.contacts?.[0]?.contact;
-  const name = c ? [c.firstNameHe, c.lastNameHe].filter(Boolean).join(' ').trim() : '';
-  return name || b?.deal?.organization?.name || null;
-};
+/** The person the guide is calling — through the canonical contact resolver. */
+const bookingContactName = (b) => dealContactName(b?.deal);
+/** Customer label for a booking — contact first, organization as fallback. */
+const bookingCustomerName = (b) => bookingContactName(b) || b?.deal?.organization?.name || null;
 
 const recipientOf = (a) => ({
   personRefId: a.personRef?.id || null,
@@ -155,10 +153,11 @@ export async function sweepCoordinationCalls({ nowMs = Date.now(), client = pris
     const guides = notifiableGuides(tour.assignments);
     if (!guides.length) continue;
 
-    const isOpen = tour.kind === 'group_slot';
-    const facts = isOpen
-      ? { openTour: true, ...tourNotificationFacts(tour), participants: await openTourParticipants(tour.id, client) }
-      : { openTour: false, ...tourNotificationFacts(tour) };
+    // #12 is PER BOOKING on every tour kind — the message describes ONE
+    // customer's coordination, so the facts are the shared tour block and the
+    // booking's own customer/participants override below. The old open-tour
+    // "everyone in one message" breakdown is gone with the per-booking model.
+    const facts = { openTour: tour.kind === 'group_slot', ...tourNotificationFacts(tour) };
 
     // COORDINATION IS PER CUSTOMER, not per tour. An open tour with three
     // bookings needs three coordination calls, three forms and three messages —
@@ -191,7 +190,10 @@ export async function sweepCoordinationCalls({ nowMs = Date.now(), client = pris
               ...facts,
               // One customer per message, so the guide knows who to call.
               customerName: bookingCustomerName(booking),
-              participants: booking.deal?.participants ?? facts.participants,
+              contactName: bookingContactName(booking),
+              orgName: booking.deal?.organization?.name || null,
+              // THIS booking's own headcount — never the whole tour's.
+              participants: booking.deal?.participants ?? null,
               formUrl,
               sendDate: due.date,
               movedDays: due.movedDays,

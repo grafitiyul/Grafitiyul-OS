@@ -32,6 +32,8 @@ test('date labels: היום, מחר, then the Hebrew weekday name', () => {
 });
 
 test('the city shows in bold ONLY when it is not the home location', () => {
+  // cityChip's own contract stays `cityName` — callers map their He/En pair
+  // into it per language.
   assert.equal(cityChip({ cityName: 'ירושלים', locationId: 'l2', homeLocationId: 'l1' }), '*ירושלים*');
   assert.equal(cityChip({ cityName: 'תל אביב', locationId: 'l1', homeLocationId: 'l1' }), null);
   // No home location configured → show the city rather than wrongly hide it.
@@ -46,11 +48,11 @@ test('#11 is one continuous list, one line per call, with the overdue section af
     recipient: { name: 'יואב כהן', firstName: 'יואב' },
     guideDigest: {
       coordination: [
-        { done: false, daysAway: 0, tourDate: '2026-08-02', customerName: 'משפחת כהן', participants: 4, productName: 'סיור גרפיטי' },
-        { done: false, daysAway: 1, tourDate: '2026-08-03', customerName: 'חברת ABC', participants: 18, productName: 'סיור קולינרי', cityName: 'ירושלים', locationId: 'l2', homeLocationId: 'l1' },
-        { done: true, daysAway: 4, tourDate: '2026-08-06', customerName: 'רות לוי', participants: 2, productName: 'סדנת גרפיטי' },
+        { done: false, daysAway: 0, tourDate: '2026-08-02', customerName: 'משפחת כהן', participants: 4, productNameHe: 'סיור גרפיטי' },
+        { done: false, daysAway: 1, tourDate: '2026-08-03', customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי', cityNameHe: 'ירושלים', locationId: 'l2', homeLocationId: 'l1' },
+        { done: true, daysAway: 4, tourDate: '2026-08-06', customerName: 'רות לוי', participants: 2, productNameHe: 'סדנת גרפיטי' },
       ],
-      missingSummaries: [{ tourDate: '2026-07-30', customerName: 'עיריית תל אביב', productName: 'סיור וסדנת גרפיטי' }],
+      missingSummaries: [{ tourDate: '2026-07-30', customerName: 'עיריית תל אביב', productNameHe: 'סיור וסדנת גרפיטי' }],
     },
   });
   const rows = text.split('\n');
@@ -65,10 +67,61 @@ test('#11 is one continuous list, one line per call, with the overdue section af
   assert.ok(!/https?:\/\//.test(text));
 });
 
+test('#11 is TRUE chronological order — ✅ keeps its place, never pushed down', () => {
+  const text = renderReport(11, {
+    guideDigest: {
+      coordination: [
+        // Arrives deliberately unsorted, with the DONE call nearest in time.
+        { done: false, daysAway: 1, tourDate: '2026-08-03', tourStartMs: 200, customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי' },
+        { done: false, daysAway: 3, tourDate: '2026-08-05', tourStartMs: 300, customerName: 'רות לוי', participants: 2, productNameHe: 'סדנת גרפיטי' },
+        { done: true, daysAway: 0, tourDate: '2026-08-02', tourStartMs: 100, customerName: 'משפחת כהן', participants: 4, productNameHe: 'סיור גרפיטי' },
+      ],
+      missingSummaries: [],
+    },
+  });
+  const rows = text.split('\n');
+  assert.equal(rows[2], '✅ היום | משפחת כהן (4) | סיור גרפיטי');
+  assert.equal(rows[3], '🔴 מחר | חברת ABC (18) | סיור קולינרי');
+  assert.equal(rows[4], '🔵 רביעי | רות לוי (2) | סדנת גרפיטי');
+});
+
+test('#11 gives every pending summary its own direct form link', () => {
+  const text = renderReport(11, {
+    guideDigest: {
+      coordination: [],
+      missingSummaries: [
+        { tourDate: '2026-07-30', tourStartMs: 1, customerName: 'עיריית תל אביב', productNameHe: 'סיור וסדנת גרפיטי', formUrl: 'https://x/f/SUM1' },
+        { tourDate: '2026-07-31', tourStartMs: 2, customerName: 'רות לוי', productNameHe: 'סיור גרפיטי', formUrl: 'https://x/f/SUM2' },
+      ],
+    },
+  });
+  assert.match(text, /30\/07\/2026 \| עיריית תל אביב \| סיור וסדנת גרפיטי\nhttps:\/\/x\/f\/SUM1/);
+  assert.match(text, /31\/07\/2026 \| רות לוי \| סיור גרפיטי\nhttps:\/\/x\/f\/SUM2/);
+  // Two entries, two DIFFERENT links, one blank line between entries.
+  assert.match(text, /SUM1\n\n31\/07\/2026/);
+});
+
+test('#11 English uses the English data wherever it exists', () => {
+  const en = reportByNumber(11).renderEn({
+    guideDigest: {
+      coordination: [
+        { done: false, daysAway: 2, tourDate: '2026-08-04', tourStartMs: 1, customerName: 'חברת ABC', participants: 18, productNameHe: 'סיור קולינרי', productNameEn: 'Culinary Tour', cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', locationId: 'l2', homeLocationId: 'l1' },
+      ],
+      missingSummaries: [
+        { tourDate: '2026-07-30', tourStartMs: 0, customerName: 'עיריית תל אביב', productNameHe: 'סיור וסדנת גרפיטי', productNameEn: 'Graffiti Tour & Workshop', formUrl: 'https://x/f/SUM1' },
+      ],
+    },
+  });
+  assert.match(en, /☎️ Coordination-call status for the days ahead/);
+  assert.match(en, /🔵 Tuesday \| חברת ABC \(18\) \| \*Jerusalem\* \| Culinary Tour/);
+  assert.match(en, /📝 Tour summaries still missing/);
+  assert.match(en, /30\/07\/2026 \| עיריית תל אביב \| Graffiti Tour & Workshop\nhttps:\/\/x\/f\/SUM1/);
+});
+
 test('#11 omits the overdue section entirely when nothing is overdue', () => {
   const text = renderReport(11, {
     guideDigest: {
-      coordination: [{ done: true, daysAway: 0, tourDate: '2026-08-02', customerName: 'א', participants: 1, productName: 'ב' }],
+      coordination: [{ done: true, daysAway: 0, tourDate: '2026-08-02', customerName: 'א', participants: 1, productNameHe: 'ב' }],
       missingSummaries: [],
     },
   });
@@ -76,53 +129,67 @@ test('#11 omits the overdue section entirely when nothing is overdue', () => {
   assert.ok(!text.includes('סיכומי סיור שטרם הושלמו'));
 });
 
-// ── #12 private vs open tour ─────────────────────────────────────────────────
+// ── #12 / #13 — one family, per booking ──────────────────────────────────────
 
-test('#12 for a private tour names the customer, org, product and headcount', () => {
-  const text = renderReport(12, {
-    recipient: { name: 'יואב כהן', firstName: 'יואב' },
-    guideNotice: {
-      openTour: false, contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
-      productName: 'סיור גרפיטי', participants: 24,
-      formUrl: 'https://x/f/SCOPEDTOKEN',
-    },
-  });
-  assert.ok(text.startsWith('☎️ זמן לשיחת תיאום!'));
-  assert.match(text, /👤 דנה לוי/);
-  assert.match(text, /🏢 עיריית תל אביב/);
-  assert.match(text, /👥 24/);
-  assert.ok(text.endsWith('לפתיחת הסיור:\n\nhttps://x/f/SCOPEDTOKEN'));
-  assert.ok(!text.includes('סיור פתוח'));
+const COORD_NOTICE = {
+  contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
+  productNameHe: 'סיור וסדנת גרפיטי', productNameEn: 'Graffiti Tour & Workshop',
+  cityNameHe: 'ירושלים', cityNameEn: 'Jerusalem', cityIsHome: false,
+  participants: 24, tourDate: '2026-08-04', tourTime: '10:00',
+  formUrl: 'https://x/f/SCOPEDTOKEN',
+};
+
+test('#12 is the exact owner layout: 👤 | 📅 | 🎨 with city away from home', () => {
+  assert.equal(renderReport(12, { guideNotice: COORD_NOTICE }), [
+    '📟 זמן לשיחת תיאום!',
+    '',
+    '👤 דנה לוי | עיריית תל אביב',
+    '📅 04/08/2026 | 10:00',
+    '🎨 סיור וסדנת גרפיטי | ירושלים | 24 משתתפים',
+    '',
+    'טופס שיחת תיאום:',
+    'https://x/f/SCOPEDTOKEN',
+  ].join('\n'));
 });
 
-test('#12 for an open tour is ONE message listing every booking', () => {
+test('#12 at the home location drops the city; no organization drops the pipe', () => {
   const text = renderReport(12, {
-    guideNotice: {
-      openTour: true, productName: 'סיור גרפיטי',
-      tourDate: '2026-08-04', tourTime: '10:00',
-      participants: { total: 11, customers: [
-        { label: 'משפחת כהן', count: 2 },
-        { label: 'רות לוי', count: 1 },
-        { label: 'חברת ABC', count: 8 },
-      ] },
-      formUrl: 'https://x/f/SCOPEDTOKEN',
-    },
+    guideNotice: { ...COORD_NOTICE, orgName: null, cityIsHome: true },
   });
-  assert.match(text, /🎫 סיור פתוח/);
-  assert.match(text, /📅 04\/08\/2026 \| 10:00/);
-  assert.match(text, /• משפחת כהן \(2\)\n• רות לוי \(1\)\n• חברת ABC \(8\)/);
-  // One message — the three customers appear together, never split.
-  assert.equal((text.match(/זמן לשיחת תיאום/g) || []).length, 1);
+  assert.match(text, /👤 דנה לוי\n/);
+  assert.match(text, /🎨 סיור וסדנת גרפיטי \| 24 משתתפים/);
+  assert.ok(!text.includes('ירושלים'));
 });
 
-// ── #13 / #14 / #15 / #16 ────────────────────────────────────────────────────
+test('#12 and #13 are the same family: identical skeleton, only the title differs', () => {
+  const ctx = { guideNotice: COORD_NOTICE };
+  const strip = (t) => t.split('\n').slice(1).join('\n');
+  assert.equal(strip(renderReport(12, ctx)), strip(renderReport(13, ctx)));
+  assert.ok(renderReport(13, ctx).startsWith('➕ הצטרף משתתף חדש לסיור פתוח'));
+});
 
-test('#13 announces the joiner and their count', () => {
+test('#12/#13 English mirrors the Hebrew structure and uses English data', () => {
+  for (const n of [12, 13]) {
+    const he = renderReport(n, { guideNotice: COORD_NOTICE });
+    const en = reportByNumber(n).renderEn({ guideNotice: COORD_NOTICE });
+    assert.equal(en.split('\n').length, he.split('\n').length, `#${n} same line count`);
+    assert.match(en, /👤 דנה לוי \| עיריית תל אביב/, 'stored names stay as stored');
+    assert.match(en, /🎨 Graffiti Tour & Workshop \| Jerusalem \| 24 participants/);
+    assert.match(en, /Coordination Call Form:\nhttps:\/\/x\/f\/SCOPEDTOKEN/);
+  }
+});
+
+test('#13 carries THIS booking only: its customer, its count, its form', () => {
   const text = renderReport(13, {
-    guideNotice: { newCustomerName: 'משפחת כהן', newCustomerCount: 2, tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x' },
+    guideNotice: {
+      contactName: 'משפחת כהן', orgName: null, participants: 2,
+      productNameHe: 'סיור גרפיטי', cityNameHe: 'תל אביב', cityIsHome: true,
+      tourDate: '2026-08-04', tourTime: '10:00', formUrl: 'https://x/f/BOOKINGFORM',
+    },
   });
-  assert.ok(text.startsWith('➕ הצטרף משתתף חדש לסיור פתוח'));
-  assert.match(text, /👤 משפחת כהן \(2\)/);
+  assert.match(text, /👤 משפחת כהן\n/);
+  assert.match(text, /🎨 סיור גרפיטי \| 2 משתתפים/);
+  assert.ok(text.endsWith('טופס שיחת תיאום:\nhttps://x/f/BOOKINGFORM'));
 });
 
 test('#14 is greeting-first, one tight block, then photo + summary sections', () => {
@@ -286,21 +353,18 @@ test('a notification never reports an event from before it was switched on', asy
 
 test('#11 says so out loud when there are no upcoming coordination calls', () => {
   const text = renderReport(11, {
-    guideDigest: { coordination: [], missingSummaries: [{ tourDate: '2026-07-30', customerName: 'א', productName: 'ב' }] },
+    guideDigest: { coordination: [], missingSummaries: [{ tourDate: '2026-07-30', customerName: 'א', productNameHe: 'ב' }] },
   });
   assert.match(text, /אין שיחות תיאום לימים הקרובים\./);
   // …and never opens with a blank gap before the separator.
   assert.ok(!text.includes('\n\n\n'));
 });
 
-test('#12 for an open tour with no registrations says so, never a blank gap', () => {
+test('#12 with no headcount simply drops the count segment — never a dash or a gap', () => {
   const text = renderReport(12, {
-    guideNotice: {
-      openTour: true, productName: 'סיור גרפיטי', tourDate: '2026-07-30', tourTime: '18:00',
-      participants: { total: 0, customers: [] }, formUrl: 'https://x',
-    },
+    guideNotice: { ...COORD_NOTICE, participants: null },
   });
-  assert.match(text, /👥 משתתפים:\n• עדיין אין נרשמים/);
+  assert.match(text, /🎨 סיור וסדנת גרפיטי \| ירושלים\n/);
   assert.ok(!text.includes('\n\n\n'));
 });
 
