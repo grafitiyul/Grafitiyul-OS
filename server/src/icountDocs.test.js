@@ -10,6 +10,7 @@ import {
   grossFromDocInfo,
   vatIdWriteTarget,
 } from './icountDocs.js';
+import { GENERIC_PRODUCT_LINE_EN, GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 
 // Pure domain logic only — the iCount HTTP client and prisma writes are out of
 // scope here (same convention as dealPayment.test.js).
@@ -78,6 +79,29 @@ test('defaults: no quote lines → single row from deal value (gross major units
   assert.equal(d.rows.length, 1);
   assert.equal(d.rows[0].description, 'סיור גרפיטי בפלורנטין');
   assert.equal(d.rows[0].unitPriceIls, 5850);
+});
+
+test('defaults: privacy — no product → generic line description, NEVER Deal.title', () => {
+  const d = buildDocumentDefaults({ ...baseDeal, title: 'ליד חדש - לילי', product: null });
+  assert.equal(d.rows[0].description, GENERIC_PRODUCT_LINE_HE);
+  assert.ok(!JSON.stringify(d.rows).includes('ליד חדש'), 'internal CRM title must not reach a document');
+  // English communication language gets the English generic; a labeled Builder
+  // line always keeps its own label.
+  const en = buildDocumentDefaults({
+    ...baseDeal,
+    title: 'ליד חדש - לילי',
+    product: null,
+    communicationLanguage: 'en',
+  });
+  assert.equal(en.rows[0].description, GENERIC_PRODUCT_LINE_EN);
+  const labeled = buildDocumentDefaults({
+    ...baseDeal,
+    title: 'ליד חדש - לילי',
+    product: null,
+    quoteVersions: [{ vatMode: 'included', lines: [{ label: 'שורת בילדר', quantity: 1, unitPriceMinor: 10000n, kind: 'item' }] }],
+  });
+  assert.equal(labeled.rows[0].description, 'שורת בילדר');
+  assert.ok(!JSON.stringify(labeled.rows).includes('ליד חדש'));
 });
 
 test('defaults: quote lines become rows; excluded-VAT lines are normalized to inclusive', () => {

@@ -23,6 +23,7 @@
 
 import { formatDateHe } from '../communication/format.js';
 import { staffName } from '../../../shared/staffName.mjs';
+import { GENERIC_ACTIVITY_EN, GENERIC_ACTIVITY_HE } from '../displayFallbacks.js';
 
 const TOUR_LANG_LABELS = {
   he: { he: 'עברית', en: 'אנגלית', ru: 'רוסית', fr: 'צרפתית', es: 'ספרדית', ar: 'ערבית' },
@@ -74,7 +75,12 @@ export const CONTEXT_FIELDS = [
   {
     key: 'tour_name',
     labelHe: 'הפעילות', labelEn: 'Activity',
-    resolve: ({ tour, deal }, lang) => deal?.title || pickLang(tour?.product?.nameHe, tour?.product?.nameEn, lang),
+    // Product name in the rendering language; generic fallback when the tour
+    // has no product. NEVER Deal.title — internal CRM wording must not reach
+    // a coordination form (privacy rule, displayFallbacks.js).
+    resolve: ({ tour }, lang) =>
+      pickLang(tour?.product?.nameHe, tour?.product?.nameEn, lang)
+      || (lang === 'en' ? GENERIC_ACTIVITY_EN : GENERIC_ACTIVITY_HE),
   },
   {
     key: 'product',

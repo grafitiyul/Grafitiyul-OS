@@ -6,6 +6,7 @@ import {
   buildPaymentSnapshot,
   linkMatchesSnapshot,
 } from './dealPayment.js';
+import { GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 
 // ── newPaymentToken ──────────────────────────────────────────────────────────
 test('newPaymentToken: URL-safe and unique across many generations', () => {
@@ -81,9 +82,12 @@ test('buildPaymentSnapshot: no organization → contact full name (existing beha
   assert.equal(buildPaymentSnapshot(baseDeal()).customerName, 'רחל כהן');
 });
 
-test('buildPaymentSnapshot: product name falls back to deal title', () => {
-  const d = { ...baseDeal(), product: null };
-  assert.equal(buildPaymentSnapshot(d).productName, 'סיור גרפיטי לחברה');
+test('buildPaymentSnapshot: privacy — no product → generic line, NEVER Deal.title', () => {
+  const d = { ...baseDeal(), title: 'ליד חדש - לילי', product: null };
+  const s = buildPaymentSnapshot(d);
+  assert.equal(s.productName, GENERIC_PRODUCT_LINE_HE);
+  const text = JSON.stringify(s, (k, v) => (typeof v === 'bigint' ? String(v) : v));
+  assert.ok(!text.includes('ליד חדש'), 'internal CRM title must not reach the payment page');
 });
 
 test('buildPaymentSnapshot: no contacts → null customer fields (optional prefill)', () => {

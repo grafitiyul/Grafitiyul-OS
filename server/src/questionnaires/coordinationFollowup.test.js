@@ -9,7 +9,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coordinationFollowups } from './coordinationFollowup.js';
+import { coordinationCustomerLabel, coordinationFollowups } from './coordinationFollowup.js';
+import { GENERIC_CUSTOMER_EN, GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
 
 const QUESTIONS = [
   { key: 'q_match', config: { coordinationRole: 'participant_count_matches' } },
@@ -86,6 +87,41 @@ function harness({ booking = bookingRow(), meetingPoint = { html: '<p>כיכר �
 const run = (h, answers) =>
   coordinationFollowups({ submission: SUBMISSION, questions: QUESTIONS, answers }, { db: h.db, fire: h.fire, log: h.log });
 
+// ── privacy: the canonical customer label ────────────────────────────────────
+
+test('privacy: customer label is org → contact → generic, NEVER internal Deal.title', () => {
+  const withOrg = {
+    title: 'ליד חדש - לילי',
+    organization: { name: 'עיריית תל אביב' },
+    contacts: [{ isPrimary: true, roles: [], contact: { firstNameHe: 'לילי', lastNameHe: 'כהן' } }],
+  };
+  assert.equal(coordinationCustomerLabel(withOrg), 'עיריית תל אביב');
+  const noOrg = { ...withOrg, organization: null };
+  assert.equal(coordinationCustomerLabel(noOrg), 'לילי כהן');
+  const enOnly = {
+    title: 'ליד חדש - לילי',
+    contacts: [{ isPrimary: true, roles: [], contact: { firstNameEn: 'Lili', lastNameEn: 'Cohen' } }],
+  };
+  assert.equal(coordinationCustomerLabel(enOnly), 'Lili Cohen');
+  const nothing = { title: 'ליד חדש - לילי', contacts: [] };
+  assert.equal(coordinationCustomerLabel(nothing), GENERIC_CUSTOMER_HE);
+  assert.equal(coordinationCustomerLabel(nothing, 'en'), GENERIC_CUSTOMER_EN);
+});
+
+test('privacy: a contact-less deal fires #21/#22 with the generic label, never Deal.title', async () => {
+  const booking = bookingRow();
+  booking.deal.title = 'ליד חדש - לילי';
+  booking.deal.organization = null;
+  booking.deal.contacts = [];
+  const h = harness({ booking });
+  await run(h, { q_match: false, q_count: 18 });
+  assert.equal(h.cards.length, 1);
+  const everything = JSON.stringify({ cards: h.cards, fired: h.fired });
+  assert.ok(!everything.includes('ליד חדש'), 'internal CRM title must not appear anywhere');
+  assert.equal(h.fired[0].data.participantChange.customerName, GENERIC_CUSTOMER_HE);
+  assert.ok(h.cards[0].title.includes(GENERIC_CUSTOMER_HE));
+});
+
 // ── participant count ────────────────────────────────────────────────────────
 
 test('a MATCHING count creates no card and notifies nobody', async () => {
@@ -113,7 +149,8 @@ test('a real change creates ONE card and fires exactly #21 and #22', async () =>
     assert.equal(c.corrected, 18);
     assert.equal(c.delta, 5);
     assert.equal(c.note, 'הצטרפו שתי משפחות');
-    assert.equal(c.customerName, 'דנה לוי');
+    // Canonical customer label: organization first (privacy rule).
+    assert.equal(c.customerName, 'עיריית תל אביב');
     assert.equal(c.guideName, 'יואב כהן');
     assert.equal(c.variantName, 'פלורנטין');
     assert.equal(c.reviewItemId, 'ri_1', 'the card exists before the message that links to it');

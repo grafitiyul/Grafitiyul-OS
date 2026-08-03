@@ -33,6 +33,25 @@ import { bookingSeatCount, coordinationContact } from './contextCatalog.js';
 import { resolveMeetingPoint } from '../tours/meetingPoint.js';
 import { publicLinksContext } from '../publicLinks.js';
 import { staffName } from '../../../shared/staffName.mjs';
+import { GENERIC_CUSTOMER_EN, GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
+
+/**
+ * The canonical customer label for THIS booking's deal (privacy rule):
+ * organization name → coordination contact full name → generic "הלקוח".
+ * NEVER Deal.title — internal CRM wording must not appear in follow-up
+ * messages or review cards.
+ */
+export function coordinationCustomerLabel(deal, lang = 'he') {
+  if (deal?.organization?.name) return deal.organization.name;
+  const c = coordinationContact(deal);
+  if (c) {
+    const he = [c.firstNameHe, c.lastNameHe].filter(Boolean).join(' ').trim();
+    const en = [c.firstNameEn, c.lastNameEn].filter(Boolean).join(' ').trim();
+    const name = lang === 'en' ? en || he : he || en;
+    if (name) return name;
+  }
+  return lang === 'en' ? GENERIC_CUSTOMER_EN : GENERIC_CUSTOMER_HE;
+}
 
 /** The customer we message for this booking — the same one the guide called. */
 function customerRecipient(deal, lang) {
@@ -98,10 +117,7 @@ export async function coordinationFollowups(
 
     if (verdict.changed) {
       const guideName = await guideFor(submission.actorScope, db);
-      const contact = coordinationContact(deal);
-      const customerName = contact
-        ? [contact.firstNameHe, contact.lastNameHe].filter(Boolean).join(' ')
-        : (deal?.title || null);
+      const customerName = coordinationCustomerLabel(deal);
       const variantName = tour?.productVariant?.location?.nameHe || tour?.location?.nameHe || null;
 
       const frozen = {

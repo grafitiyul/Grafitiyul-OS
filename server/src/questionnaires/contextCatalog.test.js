@@ -8,6 +8,7 @@ import {
   CONTEXT_FIELDS, renderContextBlock, defaultContextConfig,
   bookingSeatCount, coordinationContact, contextCatalogForPicker,
 } from './contextCatalog.js';
+import { GENERIC_ACTIVITY_EN, GENERIC_ACTIVITY_HE } from '../displayFallbacks.js';
 
 const scopeFor = ({ seats = [], contactName = ['דנה', 'לוי'], phone = '050-1111111', org = 'עיריית תל אביב' } = {}) => ({
   booking: { id: 'bk1', seats: 0, notes: null, ticketRegistrations: seats.map((q) => ({ quantity: q })) },
@@ -49,6 +50,24 @@ test('two bookings on one tour produce two different blocks', () => {
   const aText = JSON.stringify(a);
   assert.ok(!aText.includes('רון'), 'no other customer name');
   assert.ok(!aText.includes('2222222'), 'no other customer phone');
+});
+
+// ── privacy: internal CRM wording never renders ─────────────────────────────
+
+test('privacy: tour_name is the PRODUCT name — internal Deal.title never renders', () => {
+  const scope = scopeFor();
+  scope.deal.title = 'ליד חדש - לילי';
+  const block = renderContextBlock(defaultContextConfig(), scope, 'he');
+  assert.equal(byKey(block).tour_name, 'סיור וסדנת גרפיטי');
+  assert.ok(!JSON.stringify(block).includes('ליד חדש'), 'internal CRM title must not reach the form');
+});
+
+test('privacy: tour_name without a product → localized generic, still never Deal.title', () => {
+  const scope = scopeFor();
+  scope.deal.title = 'ליד חדש - לילי';
+  scope.tour.product = null;
+  assert.equal(byKey(renderContextBlock(defaultContextConfig(), scope, 'he')).tour_name, GENERIC_ACTIVITY_HE);
+  assert.equal(byKey(renderContextBlock(defaultContextConfig(), scope, 'en')).tour_name, GENERIC_ACTIVITY_EN);
 });
 
 test('seat truth prefers registrations; Booking.seats is only the last resort', () => {

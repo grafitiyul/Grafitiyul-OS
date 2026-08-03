@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { generateSale, isIcountConfigured } from './icount.js';
+import { GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 
 // Deal payment-link domain logic, shared by the admin API (routes/deals.js)
 // and the public /pay/:token redirect (routes/pay.js).
@@ -13,8 +14,9 @@ import { generateSale, isIcountConfigured } from './icount.js';
 //
 // Required vs optional (verified against the proven Challenge System call):
 // generate_sale always needs items[] with description + unitprice_incl, so a
-// positive amount is REQUIRED (productName always exists — Deal.title
-// fallback). client_name / first/last / email / phone are sent as empty
+// positive amount is REQUIRED (productName always exists — generic
+// customer-safe fallback, never Deal.title). client_name / first/last /
+// email / phone are sent as empty
 // strings when missing and iCount accepts that — the customer fills them on
 // the payment page — so contact details are OPTIONAL.
 
@@ -59,7 +61,10 @@ export function buildPaymentSnapshot(deal) {
   return {
     amountMinor: deal.valueMinor ?? 0n,
     currency: deal.currency || 'ILS',
-    productName: deal.product?.nameHe || deal.title,
+    // Customer-visible item description on the iCount payment page/invoice.
+    // NEVER Deal.title (internal CRM wording — privacy rule,
+    // displayFallbacks.js); a product-less deal gets the generic line.
+    productName: deal.product?.nameHe || GENERIC_PRODUCT_LINE_HE,
     firstName,
     lastName,
     customerName:

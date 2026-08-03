@@ -2,6 +2,7 @@ import { createDoc, docInfo, searchDocs, findClient, upsertClient, isIcountConfi
 import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.js';
 import { resolveBuilderVatMode, effectiveLineVatMode } from '../../shared/vatMode.mjs';
 import { normalizeDocumentVatMode, documentRowCalc, documentTotals } from '../../shared/documentVat.mjs';
+import { GENERIC_PRODUCT_LINE_EN, GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 
 // iCount document production — the domain logic behind "הפק מסמך".
 //
@@ -92,6 +93,11 @@ function contactFullName(c) {
 // the Builder itself resolves with, so the document opens on EXACTLY the VAT
 // interpretation the Builder shows.
 export function buildDocumentDefaults(deal, { vatDefault = null } = {}) {
+  // Customer-visible line description for a deal with no Builder label and no
+  // product. NEVER Deal.title (internal CRM wording — privacy rule,
+  // displayFallbacks.js); follows the document's own language default.
+  const genericLine =
+    deal.communicationLanguage === 'en' ? GENERIC_PRODUCT_LINE_EN : GENERIC_PRODUCT_LINE_HE;
   const contact = deal.contacts?.[0]?.contact || null;
   const org = deal.organizationUnit || deal.organization || null;
   const orgName = deal.organization?.name || null;
@@ -131,7 +137,7 @@ export function buildDocumentDefaults(deal, { vatDefault = null } = {}) {
           }
         }
         return {
-          description: l.label || deal.product?.nameHe || deal.title,
+          description: l.label || deal.product?.nameHe || genericLine,
           quantity: l.quantity || 1,
           unitPriceIls,
           vatExempt: effMode === 'exempt',
@@ -139,7 +145,7 @@ export function buildDocumentDefaults(deal, { vatDefault = null } = {}) {
       })
     : [
         {
-          description: deal.product?.nameHe || deal.title,
+          description: deal.product?.nameHe || genericLine,
           quantity: 1,
           unitPriceIls: Number(deal.valueMinor || 0n) / 100,
           vatExempt: false,
