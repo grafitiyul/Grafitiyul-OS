@@ -51,6 +51,7 @@ export const whatsappScheduledSource = {
         scheduledAt: r.scheduledAt,
         effectiveAt: r.effectiveAt,
         waitReasonHe: r.waitReason || null,
+        timingHe: r.bypassSendingWindow ? 'עוקף חלון שליחה לפי הגדרת הדיווח' : null,
         failureReasonHe: r.failureReason || null,
         recipient: {
           name: chatName,

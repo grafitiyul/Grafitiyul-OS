@@ -13,6 +13,7 @@ function stubDb({ comm = [], wa = [], email = [], reports = [] } = {}) {
     communicationDelivery: { findMany: async () => comm },
     whatsAppScheduledMessage: { findMany: async () => wa },
     scheduledEmail: { findMany: async () => email },
+    adminReportConfig: { findMany: async () => [] },
     adminReportDelivery: { findMany: async () => reports },
   };
 }

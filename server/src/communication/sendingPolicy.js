@@ -80,12 +80,30 @@ export function audienceKindFromReport(report) {
  * plus `source` so the queue UI can explain WHICH policy decided.
  */
 export async function resolveSendPolicy(
-  { audienceKind, channel, messageOverride = null },
+  { audienceKind, channel, messageOverride = null, bypass = false },
   { db = prisma } = {},
 ) {
   // Exceptions are global to the system (a Yom Kippur block applies to
   // everything), so they are loaded once regardless of which policy wins.
   const exceptions = await db.communicationWindowException.findMany({ where: { active: true } });
+
+  // 0. Per-report opt-out ("כפוף לחלון השליחה" unchecked). Bypasses the TIME
+  // rules only: the resolution is identical to "no policy configured", which
+  // means global date blocks still apply — a report that skips office hours
+  // must not skip Yom Kippur. Everything else (queue, retries, provider
+  // deferral, logging) never passed through here in the first place.
+  //
+  // An explicit per-message window still wins over bypass: it is the narrower,
+  // deliberate choice, and the precedence must have exactly one order.
+  if (bypass && !(messageOverride?.windowEnabled && messageOverride.sendingWindowId)) {
+    return {
+      windowEnabled: false,
+      window: null,
+      exceptions,
+      source: 'bypass',
+      sourceHe: 'עוקף חלון שליחה לפי הגדרת הדיווח',
+    };
+  }
 
   // 1. Explicit per-message choice.
   if (messageOverride?.windowEnabled && messageOverride.sendingWindowId) {
@@ -137,10 +155,10 @@ export async function resolveSendPolicy(
  * instead of at 03:00 or not at all.
  */
 export async function checkSendAllowed(
-  { audienceKind, channel, messageOverride = null, atMs = Date.now() },
+  { audienceKind, channel, messageOverride = null, bypass = false, atMs = Date.now() },
   { db = prisma } = {},
 ) {
-  const policy = await resolveSendPolicy({ audienceKind, channel, messageOverride }, { db });
+  const policy = await resolveSendPolicy({ audienceKind, channel, messageOverride, bypass }, { db });
   const verdict = evaluateAt(policy, atMs);
   if (verdict.allowed) {
     return { allowed: true, reason: null, nextAt: null, policySource: policy.source };

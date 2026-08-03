@@ -2016,6 +2016,10 @@ model WhatsAppScheduledMessage {
   lastAttemptAt           DateTime?
   nextRetryAt             DateTime?
   connectionDeferredCount Int             @default(0)
+  // Frozen from the originating report's respectSendingWindow at enqueue: the
+  // worker cannot reach report config from a row, and a config flip must not
+  // retroactively re-time already-queued messages.
+  bypassSendingWindow     Boolean         @default(false)
   // Held for a sending window: WAITING, not failing. waitReason is shown
   // verbatim in the queue; effectiveAt is the next allowed moment.
   waitReason              String?
@@ -5910,6 +5914,11 @@ model AdminReportConfig {
   // guide's preferred language, falling back to Hebrew when the report has no
   // English version. Opt-in per report, so nothing changes until switched on.
   sendInGuideLanguage Boolean  @default(false)
+  // Does this report obey the audience×channel sending window? True by
+  // default: immediate send is the exception an operator opts INTO per report.
+  // False bypasses TIME rules only — the queue, retries, provider deferral,
+  // idempotency and global date blocks all still apply.
+  respectSendingWindow Boolean   @default(true)
   // When this report was last switched ON. Per-tour notifications never report
   // an event whose due moment precedes it, so enabling a notification can never
   // back-fire a backlog of messages about tours that already happened.

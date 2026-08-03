@@ -25,6 +25,7 @@ import { REVIEW_REPORTS } from './reviewReports.js';
 import { COORDINATION_FOLLOWUP_REPORTS } from './coordinationFollowups.js';
 import { OFFICE_REPORTS_EN, OFFICE_REPORT_NAMES_EN } from './officeReportsEn.js';
 import { NEW_LEAD_REPORT } from './newLeadReport.js';
+import { DEAL_WON_REPORT } from './dealWonReport.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -57,7 +58,10 @@ export const REPORTS = [
     key: 'customer_paid_link',
     nameHe: 'לקוח שילם דרך לינק תשלום',
     triggerHe:
-      'תשלום מקוון שהושלם בהצלחה דרך לינק תשלום (iCount או Cardcom). לא נורה על תשלומים שנרשמו ידנית במשרד, מזומן, העברה בנקאית או צ׳קים.',
+      'תשלום מקוון שהושלם בהצלחה דרך לינק תשלום (iCount או Cardcom), ורק כשהדיל כבר היה WON '
+      + 'לפני התשלום — תשלום נוסף על עסקה סגורה. לא נורה על התשלום שסגר את הדיל בעצמו '
+      + '(שם נשלח דיווח #26), ולא על תשלומים שנרשמו ידנית במשרד, מזומן, העברה בנקאית, '
+      + 'צ׳קים, מסמכים היסטוריים משויכים או ייבוא.',
     dataHe: 'סכום התשלום מגיע מהתשלום שהושלם בפועל (המסמך/האימות מול הספק) — לא מסכום העסקה.',
     render: (ctx) => lines([
       '💳 לקוח הוסיף תשלום 💳',
@@ -476,6 +480,10 @@ REPORTS.push(...COORDINATION_FOLLOWUP_REPORTS);
 // #25 — the new-lead manager alert, migrated out of AUT-004 + Communication
 // Center message #12 so one business event has one implementation.
 REPORTS.push(NEW_LEAD_REPORT);
+
+// #26 — a deal became WON. Fired only by the canonical WON transition core
+// (deals/wonTransition.js), once per genuine non-WON → WON transition.
+REPORTS.push(DEAL_WON_REPORT);
 
 // ── Bilingual integrity, enforced at load ────────────────────────────────────
 // A report that CLAIMS to be bilingual (it carries an English name) must

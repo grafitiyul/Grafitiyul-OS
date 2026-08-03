@@ -26,7 +26,24 @@ function makeStore(init = {}) {
     deal: {
       findUnique: async ({ where }) => s.deals[where.id] || null,
       update: async ({ where, data }) => Object.assign(s.deals[where.id], data),
+      // The canonical transition's atomic race guard: status must still differ.
+      updateMany: async ({ where, data }) => {
+        const d = s.deals[where.id];
+        if (!d) return { count: 0 };
+        if (where.status?.not !== undefined && d.status === where.status.not) return { count: 0 };
+        Object.assign(d, data);
+        return { count: 1 };
+      },
     },
+    // Final-stage resolution (wonTransition core): highest sortOrder active stage.
+    dealStage: {
+      findFirst: async () => ({ id: 'stage_final', key: 'closing', label: 'סגירה' }),
+      findMany: async () => [],
+    },
+    // buildWonQuoteRef: no primary offer in these fixtures → wonQuoteRef null.
+    quoteOffer: { findFirst: async () => null },
+    quoteDocument: { findFirst: async () => null },
+    $executeRaw: async () => 0,
     // Register-without-payment zeroes the working version's line prices + total.
     quoteVersion: { findFirst: async ({ where }) => s.quoteVersion?.[where.dealId] || null },
     quoteLine: {
@@ -179,12 +196,31 @@ test('settleDealWonFromPayment: WON exactly once + adopts held reg (idempotent)'
   const res = await settleDealWonFromPayment(c, { dealId: 'd1' });
   assert.equal(res.wonNow, true);
   assert.equal(c._s.deals.d1.status, 'won');
+  // The canonical transition owns the WHOLE lifecycle write: final pipeline
+  // stage + wonAt, identically to the manual WON (was: IPN-won → wonAt null).
+  assert.equal(c._s.deals.d1.dealStageId, 'stage_final');
+  assert.ok(c._s.deals.d1.wonAt instanceof Date);
   assert.equal(c._s.registrations.length, 1); // no duplicate
   assert.equal(c._s.registrations[0].status, 'confirmed');
   // Idempotent: a second call is a no-op.
   const again = await settleDealWonFromPayment(c, { dealId: 'd1' });
   assert.equal(again.alreadyWon, true);
   assert.equal(c._s.bookings.length, 1); // still one booking
+});
+
+test('a payment on a deal with INCOMPLETE tour planning still WONs — without creating a broken tour', async () => {
+  // A Cardcom-style payment: no activityType, no planning fields, no hold.
+  const c = makeStore({
+    deals: { d1: { id: 'd1', status: 'open', activityType: null, participants: null, orderNo: 27003 } },
+  });
+  const res = await settleDealWonFromPayment(c, { dealId: 'd1', paymentAmountMinor: 150000n });
+  assert.equal(res.wonNow, true);
+  assert.equal(res.tourCreated, false);
+  assert.equal(c._s.deals.d1.status, 'won');
+  assert.equal(c._s.deals.d1.dealStageId, 'stage_final');
+  assert.equal(c._s.bookings.length, 0, 'no undated/broken tour is created');
+  // The gap is flagged visibly for the office instead.
+  assert.ok(c._s.timeline.some((t) => t.data?.event === 'won_without_tour'));
 });
 
 test('settleDealWonFromPayment: LATE payment on an expired hold is accepted (overbook)', async () => {

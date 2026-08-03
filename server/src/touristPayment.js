@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { createLowProfile, getLpResult, isCardcomConfigured, SUPPORTED_CURRENCIES } from './cardcom.js';
 import { emitPaymentCompleted, PAYMENT_SOURCE_LINK } from './payments/paymentCompleted.js';
+import { settleDealWonFromPayment } from './deals/paymentWon.js';
 import { ICOUNT_DEAL_INCLUDE, issueDocument, systemOrigin } from './icountDocs.js';
 import { emitTimelineEvent, userOrigin } from './timeline/events.js';
 import { newPaymentToken, pickPaymentContact, resolvePublicOrigin } from './dealPayment.js';
@@ -428,6 +429,24 @@ export async function markPaidFromResult(prisma, req, result) {
   });
   if (!won) return { alreadyProcessed: true };
 
+  // A successful credit-card payment closes the deal: canonical WON transition
+  // (status + final stage + Report #26), idempotent — an already-WON deal is a
+  // no-op, and that no-op result IS the pre-payment status Report #1 needs.
+  // Only the race winner settles, so a stale webhook replay can never re-close
+  // a deliberately reopened deal. A settle failure must not fail the payment —
+  // the money is real and recorded; the gap is logged for the office.
+  let dealWasWonBeforePayment = false;
+  try {
+    const settle = await settleDealWonFromPayment(prisma, {
+      dealId: req.dealId,
+      origin: systemOrigin(),
+      paymentAmountMinor: verifiedAmountMinor,
+    });
+    dealWasWonBeforePayment = settle?.alreadyWon === true;
+  } catch (err) {
+    console.error(`[cardcom] WON settlement failed for deal ${req.dealId} (payment stays paid): ${err?.code || ''} ${err?.message || err}`);
+  }
+
   // THE canonical online-payment-completion event. Only the race winner gets
   // here, so this is exactly-once per payment. Previously Cardcom completions
   // announced nothing at all — no trigger, no report could react to them.
@@ -438,6 +457,7 @@ export async function markPaidFromResult(prisma, req, result) {
     provider: 'cardcom',
     reference: result.transactionId || req.token,
     source: PAYMENT_SOURCE_LINK,
+    dealWasWonBeforePayment,
   });
 
   // The document is generated from the PAID (frozen) values — never the Deal.

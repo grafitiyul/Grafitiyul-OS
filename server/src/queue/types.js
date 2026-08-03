@@ -55,6 +55,7 @@ export const SOURCE_LABELS_HE = {
 export function queueItem({
   source, sourceId, channel, status, sourceStatus,
   scheduledAt, effectiveAt = null, waitReasonHe = null, failureReasonHe = null,
+  timingHe = null,
   terminal = false,
   recipient = {}, sender = {}, audienceKind = null,
   preview = {}, origin = {},
@@ -73,6 +74,9 @@ export function queueItem({
     scheduledAt: scheduledAt || null,
     effectiveAt,
     waitReasonHe,
+    // Timing provenance (e.g. a report that bypasses the sending window) —
+    // shown as a chip so an odd send time is explainable at a glance.
+    timingHe,
     failureReasonHe,
     terminal,
     recipient: {

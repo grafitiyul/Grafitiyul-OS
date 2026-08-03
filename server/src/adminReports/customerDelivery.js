@@ -28,7 +28,7 @@ import { normalizePhoneIntl } from '../whatsapp/phone.js';
  * gate). Returns { ok, reason } — never throws into the caller, because a
  * follow-up message must not be able to fail a guide's form submission.
  */
-export async function enqueueCustomerMessage(delivery, { attachments = [] } = {}, log = console) {
+export async function enqueueCustomerMessage(delivery, { attachments = [], bypassWindow = false } = {}, log = console) {
   try {
     const phoneIntl = normalizePhoneIntl(delivery.recipientPhone);
     const jid = phoneIntl ? phoneToJid(phoneIntl) : null;
@@ -72,6 +72,7 @@ export async function enqueueCustomerMessage(delivery, { attachments = [] } = {}
         // whole reason this goes through the queue.
         personRefId: null,
         attachments: attachments.length ? attachments : null,
+        bypassSendingWindow: !!bypassWindow,
         content: delivery.renderedText || '',
         scheduledAt: new Date(),
         createdById: `admin-report:${delivery.reportNumber}`,

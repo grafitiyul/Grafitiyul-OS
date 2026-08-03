@@ -8,7 +8,7 @@ import {
 
 test('report numbers are stable, unique and documented', () => {
   const numbers = REPORTS.map((r) => r.number);
-  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
   assert.equal(new Set(numbers).size, numbers.length);
   for (const r of REPORTS) {
     assert.ok(r.nameHe?.length > 3, `#${r.number} has a Hebrew name`);
@@ -305,6 +305,66 @@ test('#10 never invents an agency or a total it does not have', () => {
   assert.match(text, /ארגון: —/);
   assert.match(text, /סכום ההזמנה: —/);
   assert.ok(text.endsWith('לאישור:\n—'));
+});
+
+// ── #26 deal became WON ─────────────────────────────────────────────────────
+
+test('#26 shows a ₪0 deal total honestly and omits the deposit line when nothing was paid', () => {
+  const text = renderReport(26, {
+    contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+    org: null,
+    deal: { orderNo: 27300, valueMinor: 0, currency: 'ILS', participants: 12, product: { nameHe: 'סיור גרפיטי' }, location: null },
+    payment: { paidMinor: 0, totalMinor: 0 },
+    wonReport: { cause: 'manual', closedBy: { displayName: 'יעל שחר' }, paymentAmountMinor: null },
+    links: { origin: 'https://x' },
+  });
+  assert.match(text, /💰 עסקה חדשה 💰/);
+  assert.match(text, /סכום עסקה: ₪0/);
+  assert.ok(!text.includes('מקדמה'), 'no deposit line without a real payment');
+  assert.match(text, /מי סגר\? יעל שחר/);
+  assert.match(text, /דיל:\nhttps:\/\/x\/admin\/crm\/deals\/27300/);
+  // No organization → no " - " suffix on the customer line.
+  assert.match(text, /שם המזמינה: דנה לוי\n/);
+});
+
+test('#26 payment-driven: system attribution + the verified payment amount as the deposit', () => {
+  const text = renderReport(26, {
+    contact: { firstNameHe: 'רון', lastNameHe: 'ברק' },
+    org: { name: 'חברת אבק' },
+    deal: { orderNo: 27301, valueMinor: 500000, currency: 'ILS', participants: null, product: { nameHe: 'סדנת גרפיטי' }, location: { nameHe: 'ירושלים', isHomeLocation: false } },
+    payment: { paidMinor: 150000, totalMinor: 500000 },
+    wonReport: { cause: 'card_payment', closedBy: null, paymentAmountMinor: 150000 },
+    links: { origin: 'https://x' },
+  });
+  assert.match(text, /שם המזמינה: רון ברק - חברת אבק/);
+  assert.match(text, /פעילות: סדנת גרפיטי - ירושלים/, 'non-home city IS shown');
+  assert.match(text, /משתתפים: לא צוין/, 'an honest fallback, never a blank label');
+  assert.match(text, /מקדמה ששולמה: ₪1,500/);
+  assert.match(text, /מי סגר\? מערכת — תשלום אשראי/, 'automatic wins are attributed to the system');
+});
+
+test('#26 hides the home-location city and a FULL payment is never called a deposit', () => {
+  const base = {
+    contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+    org: null,
+    deal: { orderNo: 27302, valueMinor: 300000, currency: 'ILS', participants: 20, product: { nameHe: 'סיור גרפיטי' }, location: { nameHe: 'תל אביב', isHomeLocation: true } },
+    links: { origin: 'https://x' },
+  };
+  // Manual WON with the FULL amount already collected → no deposit line.
+  const paidFull = renderReport(26, {
+    ...base,
+    payment: { paidMinor: 300000, totalMinor: 300000 },
+    wonReport: { cause: 'manual', closedBy: { displayName: 'יעל' }, paymentAmountMinor: null },
+  });
+  assert.match(paidFull, /פעילות: סיור גרפיטי\n/, 'home city is NOT appended');
+  assert.ok(!paidFull.includes('מקדמה'), 'a full payment is not a deposit');
+  // Manual WON with a genuine partial payment → the collected amount IS shown.
+  const paidPart = renderReport(26, {
+    ...base,
+    payment: { paidMinor: 100000, totalMinor: 300000 },
+    wonReport: { cause: 'manual', closedBy: { displayName: 'יעל' }, paymentAmountMinor: null },
+  });
+  assert.match(paidPart, /מקדמה ששולמה: ₪1,000/);
 });
 
 // ── schedules ────────────────────────────────────────────────────────────────

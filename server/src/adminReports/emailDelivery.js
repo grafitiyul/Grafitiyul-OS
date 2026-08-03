@@ -37,7 +37,13 @@ export function resolveEmailRecipients(config) {
  * gate → send → record; a provider problem defers without burning an attempt.
  */
 export async function deliverReportEmail(row, log = console) {
-  const gate = await checkSendAllowed({ audienceKind: 'manager', channel: 'email', atMs: Date.now() });
+  const cfg = await prisma.adminReportConfig.findUnique({ where: { reportNumber: row.reportNumber }, select: { respectSendingWindow: true } });
+  const gate = await checkSendAllowed({
+    audienceKind: 'manager',
+    channel: 'email',
+    bypass: cfg?.respectSendingWindow === false,
+    atMs: Date.now(),
+  });
   if (!gate.allowed) {
     await prisma.adminReportDelivery.update({
       where: { id: row.id },

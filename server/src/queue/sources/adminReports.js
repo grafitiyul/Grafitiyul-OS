@@ -32,6 +32,12 @@ export const adminReportSource = {
       take: limit,
     });
 
+    // One query for the bypass flags — 25 rows at most, never per-item.
+    const configs = await db.adminReportConfig.findMany({
+      select: { reportNumber: true, respectSendingWindow: true },
+    }).catch(() => []); // a missing chip must never blank the queue
+    const bypassBy = new Set(configs.filter((c) => c.respectSendingWindow === false).map((c) => c.reportNumber));
+
     return rows
       .map((r) => {
         const report = reportByNumber(r.reportNumber);
@@ -48,6 +54,7 @@ export const adminReportSource = {
           scheduledAt: r.createdAt,
           effectiveAt: r.effectiveAt,
           waitReasonHe: r.waitReason || null,
+          timingHe: bypassBy.has(r.reportNumber) ? 'עוקף חלון שליחה לפי הגדרת הדיווח' : null,
           failureReasonHe: r.skipReason || r.lastError || null,
           recipient: {
             name: r.recipientName || r.destinationLabel || null,

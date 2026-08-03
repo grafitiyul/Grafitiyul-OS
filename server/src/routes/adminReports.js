@@ -13,6 +13,7 @@ import { parseListQuery } from './listPagination.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { loadTriggerContext } from '../communication/context.js';
 import { REPORTS, reportByNumber, renderReport, renderReportSample, renderReportBoth, hasEnglish, reportChannel, reportGroup } from '../adminReports/registry.js';
+import { audienceKindFromReport } from '../communication/sendingPolicy.js';
 import { destinationLabel } from '../adminReports/dispatch.js';
 
 const router = Router();
@@ -49,6 +50,13 @@ router.get('/', handle(async (req, res) => {
     }),
   ]);
   const countBy = new Map(counts.map((c) => [c.reportNumber, c._count._all]));
+
+  // The effective audience×channel policy per cell — ONE query, so every card
+  // can say what actually governs its timing without opening the queue screen.
+  const policies = await prisma.sendingWindowPolicy.findMany({
+    include: { window: { select: { name: true } } },
+  });
+  const policyBy = new Map(policies.map((p) => [p.audienceKind + ':' + p.channel, p]));
   const sentBy = new Map(lastSent.map((d) => [d.reportNumber, d]));
   const failedBy = new Map(lastFailed.map((d) => [d.reportNumber, d]));
 
@@ -85,6 +93,18 @@ router.get('/', handle(async (req, res) => {
         hasEnglish: hasEnglish(r),
         channel: reportChannel(r),
         sendInGuideLanguage: !!config?.sendInGuideLanguage,
+        // 'כפוף לחלון השליחה' + what that currently MEANS for this report.
+        respectSendingWindow: config ? config.respectSendingWindow !== false : true,
+        windowPolicy: (() => {
+          const kind = audienceKindFromReport(r);
+          const pol = policyBy.get(kind + ':' + reportChannel(r));
+          return {
+            audienceKind: kind,
+            channel: reportChannel(r),
+            enabled: !!pol?.enabled,
+            windowName: pol?.enabled ? (pol.window?.name || null) : null,
+          };
+        })(),
         deliveryCount: countBy.get(r.number) || 0,
         lastSentAt: sentBy.get(r.number)?.sentAt || null,
         lastSentTo: sentBy.get(r.number)?.destinationLabel || null,
@@ -132,6 +152,9 @@ router.put('/:number/config', handle(async (req, res) => {
     // 'שלח בשפת המדריך' — reuses the report's existing renderEn; no second
     // language mechanism.
     ...(b.sendInGuideLanguage !== undefined ? { sendInGuideLanguage: !!b.sendInGuideLanguage } : {}),
+    // 'כפוף לחלון השליחה' — bypass affects TIME rules only, resolved by the
+    // one sending-policy resolver; nothing else about delivery changes.
+    ...(b.respectSendingWindow !== undefined ? { respectSendingWindow: !!b.respectSendingWindow } : {}),
     updatedById: req.adminAuth?.userId || null,
   };
   const config = await prisma.adminReportConfig.upsert({

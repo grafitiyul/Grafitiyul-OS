@@ -197,6 +197,25 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
                     </div>
                   </div>
 
+                  {/* Timing — the checkbox is the report's own choice; the line
+                      under it states what that choice MEANS right now, resolved
+                      from the audience×channel policy, so the operator reads
+                      real behaviour without opening the queue screen. */}
+                  <div className="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium text-gray-800">
+                      <input
+                        type="checkbox"
+                        checked={r.respectSendingWindow !== false}
+                        onChange={(e) => saveConfig(r.number, { respectSendingWindow: e.target.checked })}
+                        className="h-4 w-4 rounded border-gray-300 accent-gray-900"
+                      />
+                      כפוף לחלון השליחה
+                    </label>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-gray-600">
+                      <WindowPolicyLine r={r} />
+                    </p>
+                  </div>
+
                   <div className="flex flex-wrap gap-2 pt-1">
                     <button type="button" onClick={() => copyChangeRequest(r)}
                       className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12.5px] font-semibold text-violet-700 hover:bg-violet-100">
@@ -279,6 +298,22 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
       {alert && <AlertDialog open body={alert} onClose={() => setAlert(null)} />}
     </>
   );
+}
+
+// The real, current timing of one report — never a restatement of the checkbox.
+const AUDIENCE_HE = { customer: 'לקוחות', guide: 'מדריכים', manager: 'מנהלים' };
+
+function WindowPolicyLine({ r }) {
+  const pol = r.windowPolicy || {};
+  const who = AUDIENCE_HE[pol.audienceKind] || pol.audienceKind || '';
+  const ch = pol.channel === 'email' ? 'אימייל' : 'WhatsApp';
+  if (r.respectSendingWindow === false) {
+    return <>שליחה מיידית — ללא הגבלת שעות. תור, ניסיונות חוזרים והמתנה לחיבור נשמרים; חסימת תאריך גלובלית עדיין גוברת.</>;
+  }
+  if (pol.enabled && pol.windowName) {
+    return <>{who} · {ch} · {pol.windowName} — מחוץ לחלון ההודעה תמתין ותישלח בפתיחה הבאה.</>;
+  }
+  return <>אין חלון פעיל ל{who} ב־{ch} — ההודעה תישלח מיד. הקצאת חלון נעשית במסך התור (זמני שליחה).</>;
 }
 
 function Field({ label, children }) {

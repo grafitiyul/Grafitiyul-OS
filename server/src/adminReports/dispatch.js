@@ -128,7 +128,11 @@ export async function fireAdminReport(
     // connection deferral, retries, attachments). The row above is the
     // exactly-once gate; the queue is what actually sends.
     if (report.audience === 'customer') {
-      await enqueueCustomerMessage(row, { attachments: data?.attachments || [] }, log);
+      await enqueueCustomerMessage(row, {
+        attachments: data?.attachments || [],
+        // Frozen onto the queue row: the worker gates rows, not report configs.
+        bypassWindow: config?.respectSendingWindow === false,
+      }, log);
       return { ok: true, deliveryId: row.id };
     }
 
@@ -239,9 +243,14 @@ async function deliverText(row, jid, log = console) {
   // report addresses a guide. A held report WAITS with a visible reason — an
   // overnight backlog must not land at 03:00.
   const report = reportByNumber(row.reportNumber);
+  // Config is re-read at SEND time, so unchecking the box also frees a report
+  // that is already waiting for a window — the operator sees the effect now,
+  // not after the window opens anyway.
+  const cfg = await reportConfig(row.reportNumber);
   const gate = await checkSendAllowed({
     audienceKind: audienceKindFromReport(report),
     channel: 'whatsapp',
+    bypass: cfg?.respectSendingWindow === false,
     atMs: Date.now(),
   });
   if (!gate.allowed) {

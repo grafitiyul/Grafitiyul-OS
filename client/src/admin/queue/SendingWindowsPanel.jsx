@@ -11,6 +11,36 @@ import { api } from '../../lib/api.js';
 //
 // The important promise, stated on the screen: a held message is never dropped.
 
+// Hebrew day letters, Sunday-first — matches the rules model (0=Sunday).
+const DAY_HE = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
+
+/** [0,1,2,3,4] → "א׳–ה׳"; [5] → "ו׳"; [0,2] → "א׳, ג׳". */
+function dayRange(days) {
+  const d = [...new Set(days)].sort((a, b) => a - b);
+  if (!d.length) return '';
+  const runs = [];
+  let start = d[0]; let prev = d[0];
+  for (const x of d.slice(1)) {
+    if (x === prev + 1) { prev = x; continue; }
+    runs.push([start, prev]); start = x; prev = x;
+  }
+  runs.push([start, prev]);
+  return runs.map(([a, b]) => (a === b ? DAY_HE[a] : DAY_HE[a] + '–' + DAY_HE[b])).join(', ');
+}
+
+/** One line per rule — the operator reads the ACTUAL schedule, not a name. */
+function WindowSummary({ window }) {
+  const rules = window?.rules || [];
+  if (!rules.length) return null;
+  return (
+    <div className="mt-1 space-y-0.5 text-[11px] leading-snug text-gray-500">
+      {rules.map((r, i) => (
+        <div key={i}>{dayRange(r.days)} {r.start}–{r.end}</div>
+      ))}
+    </div>
+  );
+}
+
 export default function SendingWindowsPanel({ onSaved }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState('');
@@ -95,6 +125,11 @@ export default function SendingWindowsPanel({ onSaved }) {
                           <option key={w.id} value={w.id}>{w.name}</option>
                         ))}
                       </select>
+                      {c?.enabled && c.windowId ? (
+                        <WindowSummary window={data.windows.find((w) => w.id === c.windowId)} />
+                      ) : (
+                        <div className="mt-1 text-[11px] text-gray-400">אין חלון פעיל — הודעות יישלחו מיד</div>
+                      )}
                       {c?.updatedByName ? (
                         <div className="mt-0.5 text-[11px] text-gray-400">עודכן ע״י {c.updatedByName}</div>
                       ) : null}

@@ -151,13 +151,14 @@ async function deliverRow(row, jid) {
 export async function expireTrulyStale(now, staleCutoff, log = console, { db = prisma } = {}) {
   const overdue = await db.whatsAppScheduledMessage.findMany({
     where: { status: 'pending', scheduledAt: { lt: staleCutoff } },
-    select: { id: true, personRefId: true },
+    select: { id: true, personRefId: true, bypassSendingWindow: true },
   });
   let expired = 0;
   for (const row of overdue) {
     const check = await checkSendAllowed({
       audienceKind: audienceKindFromScheduledMessage(row),
       channel: 'whatsapp',
+      bypass: !!row.bypassSendingWindow,
       atMs: now.getTime(),
     }, { db });
 
@@ -223,7 +224,7 @@ async function tick(log) {
     },
     orderBy: { scheduledAt: 'asc' },
     take: TICK_BATCH,
-    select: { id: true, personRefId: true },
+    select: { id: true, personRefId: true, bypassSendingWindow: true },
   });
 
   let sent = 0;
@@ -236,6 +237,8 @@ async function tick(log) {
     const gate = await checkSendAllowed({
       audienceKind: audienceKindFromScheduledMessage(candidates[i]),
       channel: 'whatsapp',
+      // Frozen at enqueue from the report's respectSendingWindow — see schema.
+      bypass: !!candidates[i].bypassSendingWindow,
       atMs: now.getTime(),
     });
     if (!gate.allowed) {

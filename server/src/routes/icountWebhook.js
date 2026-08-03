@@ -4,7 +4,6 @@ import { handle } from '../asyncHandler.js';
 import { DOC_TYPE_LABELS, emitAccountingEvent, systemOrigin } from '../icountDocs.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { emitPaymentCompleted, PAYMENT_SOURCE_LINK } from '../payments/paymentCompleted.js';
-import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
 import { logRejectedWebhook } from '../payments/webhookAudit.js';
 
 // iCount doctypes that RECORD money received (a קבלה / חשבונית מס קבלה). Only
@@ -43,21 +42,30 @@ function pick(payload, keys) {
 }
 
 // Best-effort document capture from a logged IPN payload. Never throws.
-async function captureDocumentFromIpn(dealId, payload, customLinkId) {
+// Returns a small status object the route sequences on:
+//   status — 'captured' | 'duplicate' | 'unrecognized' | 'error'
+//   isPaid — the doctype records money received (receipt / invrec)
+//   amountMinor / currency / doctype / docnum — parsed identity, when known
+export async function captureDocumentFromIpn(dealId, payload, customLinkId) {
+  const doctype = pick(payload, ['doctype', 'doc_type', 'docType']);
+  const docnum = pick(payload, ['docnum', 'doc_number', 'docNum', 'invoice_number']);
+  const isPaid = !!doctype && PAID_DOCTYPES.has(doctype);
+  const base = { status: 'unrecognized', isPaid, doctype, docnum, amountMinor: null, currency: 'ILS' };
   try {
-    if (!dealId || !payload || typeof payload !== 'object') return;
-    const doctype = pick(payload, ['doctype', 'doc_type', 'docType']);
-    const docnum = pick(payload, ['docnum', 'doc_number', 'docNum', 'invoice_number']);
-    if (!doctype || !docnum || !DOC_TYPE_LABELS[doctype]) return; // unrecognized → log-only
+    if (!dealId || !payload || typeof payload !== 'object') return base;
+    if (!doctype || !docnum || !DOC_TYPE_LABELS[doctype]) return base; // unrecognized → log-only
 
     const deal = await prisma.deal.findUnique({ where: { id: dealId }, select: { id: true, currency: true } });
-    if (!deal) return;
+    if (!deal) return base;
+
+    const amountIls = Number(pick(payload, ['totalsum', 'total', 'sum', 'amount', 'totalwithvat'])) || 0;
+    base.amountMinor = Math.round(amountIls * 100);
+    base.currency = deal.currency || 'ILS';
 
     const idempotencyKey = `webhook:${dealId}:${doctype}:${docnum}`;
     const existing = await prisma.icountDocument.findUnique({ where: { idempotencyKey } });
-    if (existing) return; // retry / duplicate IPN — nothing to do
+    if (existing) return { ...base, status: 'duplicate' }; // retry / duplicate IPN
 
-    const amountIls = Number(pick(payload, ['totalsum', 'total', 'sum', 'amount', 'totalwithvat'])) || 0;
     const clientName = pick(payload, ['client_name', 'clientname', 'customer_name']) || 'לקוח';
     const docUrl = pick(payload, ['doc_url', 'pdf_link', 'docurl']);
 
@@ -68,8 +76,8 @@ async function captureDocumentFromIpn(dealId, payload, customLinkId) {
           source: 'webhook',
           doctype,
           docnum,
-          amountMinor: BigInt(Math.round(amountIls * 100)),
-          currency: deal.currency || 'ILS',
+          amountMinor: BigInt(base.amountMinor),
+          currency: base.currency,
           clientName,
           docUrl,
           idempotencyKey,
@@ -84,54 +92,50 @@ async function captureDocumentFromIpn(dealId, payload, customLinkId) {
       });
     });
     console.log(`[icount webhook] captured document ${doctype}/${docnum} for deal ${dealId}`);
-    // THE canonical online-payment-completion event (payments/paymentCompleted).
-    // A money-received document arriving on the link's own IPN URL IS the
-    // customer completing an online payment; the amount reported is the
-    // document's amount, never the deal total. Manually issued documents never
-    // reach this code path.
-    if (PAID_DOCTYPES.has(doctype)) {
-      emitPaymentCompleted({
-        dealId,
-        amountMinor: Math.round(amountIls * 100),
-        currency: deal.currency || 'ILS',
-        provider: 'icount',
-        reference: `${doctype}:${docnum}`,
-        source: PAYMENT_SOURCE_LINK,
-      });
-    }
+    return { ...base, status: 'captured' };
   } catch (err) {
     // Capture is best-effort — the raw log row is already persisted.
     console.error('[icount webhook] document capture failed', err);
+    return { ...base, status: 'error' };
   }
 }
 
-// Verified-payment → WON for a GROUP REGISTRATION. THE only automatic path that
-// settles a pay-now / send-link deal: a real PAID document (receipt / invrec)
-// arrived on the IPN for a deal that is holding a seat (a held or lately-expired
-// group reservation). settleDealWonFromPayment is idempotent (already-WON is a
-// no-op) so a retried/duplicated IPN never double-settles, and a non-paid
-// doctype (or a deal with no pending hold) changes nothing. Best-effort: never
-// throws into the webhook (the raw log is already safe).
-export async function settleGroupRegistrationFromIpn(
+// Verified payment → WON, for ANY deal. A real PAID document (receipt/invrec)
+// arriving on the link's own IPN URL IS a completed credit-card payment, and a
+// successful credit-card payment always closes the deal: the canonical
+// transition (settleDealWonFromPayment → deals/wonTransition.js) sets status +
+// final stage; a group deal's held/expired reservation is adopted, a deal with
+// incomplete tour planning is WON without a tour and flagged on the timeline.
+//
+// Sequencing rule (Report #1 vs #26): the settle result IS the deal's
+// pre-payment status. Settlement runs only when this IPN freshly recorded the
+// payment (capture 'captured' / 'error', never 'duplicate') — a replayed IPN
+// for a long-ago payment must not re-close a deliberately reopened deal.
+// Best-effort: never throws into the webhook (the raw log is already safe).
+export async function settlePaymentFromIpn(
   dealId,
-  payload,
+  capture,
   { client = prisma, settle = settleDealWonFromPayment, log = console } = {},
 ) {
   try {
     if (!dealId) return { settled: false, reason: 'no_deal' };
-    const doctype = pick(payload, ['doctype', 'doc_type', 'docType']);
-    if (!doctype || !PAID_DOCTYPES.has(doctype)) return { settled: false, reason: 'not_paid_doctype' };
-    // Only deals that went through pay-now / send-link carry a pending hold.
-    const pending = await client.ticketRegistration.findFirst({
-      where: { dealId, source: 'deal', status: { in: [REG_HELD, REG_EXPIRED] } },
-      select: { id: true },
+    if (!capture?.isPaid) return { settled: false, reason: 'not_paid_doctype' };
+    if (capture.status === 'duplicate') return { settled: false, reason: 'duplicate_ipn' };
+    // A payload without a full recognized document identity never drives WON —
+    // 'error' (a transient capture failure on a VALID identity) still settles
+    // so a DB hiccup can't lose the close; iCount never retries an IPN.
+    if (capture.status !== 'captured' && capture.status !== 'error') {
+      return { settled: false, reason: 'unrecognized_payload' };
+    }
+    const result = await settle(client, {
+      dealId,
+      origin: systemOrigin(),
+      paymentAmountMinor: capture.amountMinor,
     });
-    if (!pending) return { settled: false, reason: 'no_pending_hold' };
-    const result = await settle(client, { dealId, origin: systemOrigin() });
-    if (result?.wonNow) log?.log?.(`[icount webhook] settled deal ${dealId} WON from verified payment (${doctype})`);
-    return { settled: !!result?.wonNow, alreadyWon: !!result?.alreadyWon, doctype };
+    if (result?.wonNow) log?.log?.(`[icount webhook] settled deal ${dealId} WON from verified payment (${capture.doctype})`);
+    return { settled: !!result?.wonNow, alreadyWon: !!result?.alreadyWon, doctype: capture.doctype };
   } catch (err) {
-    log?.error?.('[icount webhook] group-registration settlement failed', err);
+    log?.error?.('[icount webhook] payment settlement failed', err);
     return { settled: false, reason: 'error' };
   }
 }
@@ -161,11 +165,28 @@ router.post(
         data: { dealId, payload: req.body ?? {} },
       });
       console.log(`[icount webhook] logged ${log.id} (dealId=${dealId || '—'})`);
-      // After the log is safe: best-effort document capture (never throws), then
-      // verified-payment settlement for a pending group registration (idempotent,
-      // never throws). Order is independent — both read the same logged payload.
-      await captureDocumentFromIpn(dealId, req.body, customLinkId);
-      await settleGroupRegistrationFromIpn(dealId, req.body);
+      // After the log is safe, the payment lifecycle runs IN ORDER:
+      //   1. capture the document (persist the payment evidence, idempotent);
+      //   2. settle WON through the canonical transition (idempotent) — its
+      //      result is the deal's PRE-payment status;
+      //   3. announce the completion with that flag, so Report #1 fires only
+      //      for a payment on an already-WON deal and never for the payment
+      //      that itself closed the deal (that one is Report #26's).
+      // Announcement only on a FRESH capture — a duplicate/failed capture
+      // announced nothing before this refactor either.
+      const capture = await captureDocumentFromIpn(dealId, req.body, customLinkId);
+      const settled = await settlePaymentFromIpn(dealId, capture);
+      if (capture.status === 'captured' && capture.isPaid) {
+        emitPaymentCompleted({
+          dealId,
+          amountMinor: capture.amountMinor,
+          currency: capture.currency,
+          provider: 'icount',
+          reference: `${capture.doctype}:${capture.docnum}`,
+          source: PAYMENT_SOURCE_LINK,
+          dealWasWonBeforePayment: settled?.alreadyWon === true,
+        });
+      }
       return res.status(200).json({ ok: true, logId: log.id });
     } catch (err) {
       // Still 200 — iCount must not retry forever; the failure is in our logs.

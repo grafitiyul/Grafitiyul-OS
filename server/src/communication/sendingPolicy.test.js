@@ -179,3 +179,51 @@ test('the matrix always exposes every audience × channel cell', async () => {
     assert.equal(cell.enabled, false);
   }
 });
+
+// ── per-report bypass ("כפוף לחלון השליחה" unchecked) ────────────────────────
+
+test('bypass skips the TIME window but keeps everything else in the pipeline', async () => {
+  const db = stubDb({
+    policies: [{ audienceKind: 'manager', channel: 'whatsapp', enabled: true, window: OFFICE_HOURS }],
+    windows: { w1: OFFICE_HOURS },
+  });
+  // 03:00, well outside office hours: the policy alone would hold this.
+  const held = await checkSendAllowed({ audienceKind: 'manager', channel: 'whatsapp', atMs: at('03:00') }, { db });
+  assert.equal(held.allowed, false, 'sanity: without bypass the window holds');
+
+  const r = await checkSendAllowed({
+    audienceKind: 'manager', channel: 'whatsapp', bypass: true, atMs: at('03:00'),
+  }, { db });
+  assert.equal(r.allowed, true);
+  assert.equal(r.policySource, 'bypass', 'the queue can say WHY it was allowed');
+});
+
+test('bypass does NOT skip a global date block — safety always wins', async () => {
+  // The one exception to "bypass sends immediately": Yom Kippur blocks
+  // everything, including a report that opted out of office hours.
+  const db = stubDb({
+    policies: [{ audienceKind: 'manager', channel: 'whatsapp', enabled: true, window: OFFICE_HOURS }],
+    windows: { w1: OFFICE_HOURS },
+    exceptions: [{ kind: 'block', dateFrom: '2026-09-16', label: 'יום כיפור', active: true }],
+  });
+  const r = await checkSendAllowed({
+    audienceKind: 'manager', channel: 'whatsapp', bypass: true, atMs: at('12:00'),
+  }, { db });
+  assert.equal(r.allowed, false, 'a bypassing report still respects the global block');
+  assert.match(r.reason || '', /יום כיפור/);
+});
+
+test('an explicit per-message window still beats bypass — one precedence order', async () => {
+  const db = stubDb({
+    policies: [],
+    windows: { w1: OFFICE_HOURS },
+  });
+  const r = await checkSendAllowed({
+    audienceKind: 'customer', channel: 'whatsapp',
+    bypass: true,
+    messageOverride: { windowEnabled: true, sendingWindowId: 'w1' },
+    atMs: at('03:00'),
+  }, { db });
+  assert.equal(r.allowed, false, 'the deliberately chosen message window holds even a bypassing send');
+  assert.equal(r.policySource, 'message');
+});

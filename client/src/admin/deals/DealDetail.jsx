@@ -33,6 +33,7 @@ import {
   FINANCE_WORKSPACE,
   resolveFinanceWorkspace,
   dealPath,
+  DEAL_STATUS_LABELS,
 } from './config.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
@@ -1095,10 +1096,21 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 </button>
               </>
             ) : (
-              <button onClick={() => setStatus('open')}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-                REOPEN
-              </button>
+              <>
+                {/* Read-only outcome badge — derived from the canonical
+                    Deal.status, beside REOPEN (leading edge in RTL). */}
+                <span
+                  role="status"
+                  aria-label={deal.status === 'won' ? 'סטטוס הדיל: WON' : 'סטטוס הדיל: LOST'}
+                  className={`inline-flex items-center rounded-lg px-4 py-2 text-sm font-bold ring-1 ring-inset ${STATUS_THEME[deal.status]?.soft || 'bg-gray-50 text-gray-600 ring-gray-200'}`}
+                >
+                  {DEAL_STATUS_LABELS[deal.status] || deal.status}
+                </span>
+                <button onClick={() => setStatus('open')}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                  REOPEN
+                </button>
+              </>
             )}
             <button
               ref={menuBtnRef}

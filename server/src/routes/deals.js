@@ -10,7 +10,7 @@ import {
   listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
-import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef, splitBuilderPatch, updateOfferContext } from '../quote/quoteOffers.js';
+import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, splitBuilderPatch, updateOfferContext } from '../quote/quoteOffers.js';
 import { loadVatDefault, seedWorkingFromFrozen } from '../quote/importedBuilderSeed.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin, buildPaymentSnapshot, PAYMENT_DEAL_INCLUDE } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
@@ -44,6 +44,7 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import { marketingDto } from '../deals/marketing.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { fireAdminReport } from '../adminReports/dispatch.js';
@@ -742,23 +743,13 @@ router.put(
       if (!VALID_STATUS.includes(b.status)) {
         return res.status(400).json({ error: 'invalid_status' });
       }
-      data.status = b.status;
       if (b.status === 'won') {
-        data.wonAt = new Date();
-        data.lostAt = null;
-        data.lostReasonId = null;
-        data.lostNotes = null;
-        data.lostReason = null;
-        // Stamp the PRIMARY quote this win is based on — only on the actual
-        // transition into WON (a re-save of an already-won deal never
-        // silently re-points the audit record).
-        if (existing.status !== 'won') {
-          const ref = await buildWonQuoteRef(prisma, req.params.id);
-          data.wonQuoteRef = ref
-            ? { ...ref, publicUrl: `${resolvePublicOrigin(req)}/quote/${ref.publicToken}`, stampedAt: new Date().toISOString() }
-            : null;
-        }
+        // WON lifecycle fields (status, FINAL pipeline stage, wonAt,
+        // wonQuoteRef, lost-field clearing) are owned by the canonical
+        // transition core — transitionDealToWon, called inside the
+        // transaction below. Nothing WON-related goes through `data`.
       } else if (b.status === 'lost') {
+        data.status = 'lost';
         const reasonId = b.lostReasonId ? String(b.lostReasonId) : null;
         if (!reasonId) return res.status(400).json({ error: 'lost_reason_required' });
         const reason = await prisma.lostReason.findUnique({
@@ -775,6 +766,7 @@ router.put(
         // REOPEN (→ 'open') is ONLY a status change. We intentionally preserve
         // the WON/LOST history (wonAt, lostAt, lostReasonId, lostNotes,
         // lostReason) so reopening never destroys historical data.
+        data.status = 'open';
       }
     } else if (
       existing.status === 'lost' &&
@@ -841,6 +833,10 @@ router.put(
 
     const origin = await userOrigin(req.adminAuth?.userId);
     let deal;
+    // The canonical transition's outcome — wonNow decides tour creation inside
+    // the tx AND the post-commit notifications; alreadyWon (a concurrent
+    // winner: second tab, webhook race) silently converges with no duplicates.
+    let wonOutcome = null;
     try {
       deal = await prisma.$transaction(async (tx) => {
         let updated = await tx.deal.update({
@@ -849,20 +845,41 @@ router.put(
           include: DEAL_INCLUDE,
         });
         if (wonTransition) {
-          // First WON creates (private/business) or joins (group) the tour.
-          const { dealSync } = await createTourForWonDeal(tx, updated, {
-            targetTourEventId: b.tourEventId,
-            origin,
-            allowOverbook: b.allowOverbook === true,
+          // THE canonical WON transition: atomic status guard + FINAL pipeline
+          // stage + wonAt + wonQuoteRef — same core the payment paths use.
+          wonOutcome = await transitionDealToWon(tx, {
+            dealId: req.params.id,
+            publicOrigin: resolvePublicOrigin(req),
           });
-          if (dealSync) {
-            // Group slot is authoritative — sync its fields onto the deal in
-            // the same transaction (changelog picks them up below).
-            updated = await tx.deal.update({
-              where: { id: updated.id },
-              data: dealSync,
-              include: DEAL_INCLUDE,
+          if (wonOutcome.wonNow) {
+            // Overlay the transition's lifecycle fields onto the loaded row
+            // (relations from DEAL_INCLUDE stay) — the response re-reads below.
+            updated = {
+              ...updated,
+              status: 'won',
+              dealStageId: wonOutcome.deal.dealStageId,
+              wonAt: wonOutcome.wonAt,
+              wonQuoteRef: wonOutcome.deal.wonQuoteRef,
+              lostAt: null,
+              lostReasonId: null,
+              lostNotes: null,
+              lostReason: null,
+            };
+            // First WON creates (private/business) or joins (group) the tour.
+            const { dealSync } = await createTourForWonDeal(tx, updated, {
+              targetTourEventId: b.tourEventId,
+              origin,
+              allowOverbook: b.allowOverbook === true,
             });
+            if (dealSync) {
+              // Group slot is authoritative — sync its fields onto the deal in
+              // the same transaction (changelog picks them up below).
+              updated = await tx.deal.update({
+                where: { id: updated.id },
+                data: dealSync,
+                include: DEAL_INCLUDE,
+              });
+            }
           }
         } else if (activeBooking && reopenTransition) {
           if (b.tourChoice === 'remove') {
@@ -911,6 +928,11 @@ router.put(
       if (e.code === 'tour_full') {
         return res.status(409).json({ error: 'tour_full', ...e.details });
       }
+      // No active pipeline stage exists — the transition STOPS (never a
+      // half-WON deal on a stale stage). Operational config error.
+      if (e.code === 'no_final_stage') {
+        return res.status(422).json({ error: 'no_final_stage' });
+      }
       throw e;
     }
     // Booking state changed inside the transaction — re-read so the response
@@ -926,17 +948,21 @@ router.put(
       after: deal,
       origin,
     });
-    // Communication Center triggers — post-commit, fire-and-forget (a trigger
-    // failure can never fail or slow the save).
-    if (wonTransition) {
-      fireCommunicationTrigger({ type: 'deal_won', dealId: req.params.id });
-      // "מועד הסיור" anchor events: WON attaches the tour, so tour-anchored
-      // reminder deliveries materialize now (worker re-anchors on later moves).
-      fireCommunicationTrigger({ type: 'tour_datetime', dealId: req.params.id });
+    // Post-commit WON effects — Communication Center triggers + Manager Report
+    // #26, fire-and-forget, exactly once: only the transaction that actually
+    // flipped the status (wonNow) notifies; a concurrent duplicate does not.
+    if (wonOutcome?.wonNow) {
+      emitWonTransitionEffects({
+        dealId: req.params.id,
+        wonAt: wonOutcome.wonAt,
+        cause: 'manual',
+        closedByUserId: req.adminAuth?.userId || null,
+        paymentAmountMinor: null,
+      });
     }
     if (lostTransition) fireCommunicationTrigger({ type: 'deal_lost', dealId: req.params.id });
     // WON audit trail: which proposal the win was based on (or none).
-    if (b.status === 'won' && existing.status !== 'won' && deal.wonQuoteRef) {
+    if (wonOutcome?.wonNow && deal.wonQuoteRef) {
       await emitTimelineEvent(prisma, {
         subjectType: 'deal',
         subjectId: req.params.id,

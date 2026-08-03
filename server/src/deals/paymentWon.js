@@ -1,9 +1,11 @@
-import { createTourForWonDeal } from '../tours/tourFromDeal.js';
+import { createTourForWonDeal, wonGate } from '../tours/tourFromDeal.js';
 import { findHeldRegistrationForDeal } from '../tours/registrationLifecycle.js';
 import { REG_EXPIRED } from '../tours/registrationStatus.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
-import { fireCommunicationTrigger } from '../communication/engine.js';
+import { recordDealChanges } from '../timeline/dealChangelog.js';
+import { publicOrigin } from '../communication/context.js';
 import { reportOpenTourParticipant } from '../adminReports/openTourParticipantEvent.js';
+import { transitionDealToWon, emitWonTransitionEffects } from './wonTransition.js';
 
 /** Resolve the deal's registration on this tour and report the join (#13). */
 async function notifyOpenTourJoin(client, dealId, tourEventId) {
@@ -27,29 +29,52 @@ async function notifyOpenTourJoin(client, dealId, tourEventId) {
   );
 }
 
-// THE one canonical WON transition every completion mode funnels through —
-// verified payment (pay-now / late payment) AND register-without-payment. No WON
-// logic is duplicated in payment handlers or the completion routes.
+// The canonical payment/registration-completion WON wrapper — every completion
+// mode funnels through here: verified payment (pay-now / late payment / a
+// credit-card payment on ANY deal) AND register-without-payment. The status
+// transition itself (status + final stage + wonAt + wonQuoteRef + the atomic
+// race guard) lives in deals/wonTransition.js — shared with the operator's
+// manual WON — so no WON logic is duplicated in payment handlers.
 //
-// Idempotent: a deal already WON is a no-op. Runs the EXISTING WON pipeline
-// (createTourForWonDeal) once, which — via syncDealRegistration's adoption —
-// CONFIRMS the deal's existing HELD/EXPIRED reservation in place (same row,
-// never a duplicate). Late payment (hold already expired) is accepted with
-// overbook rather than rejected. `confirmation` stamps the money state on the
-// confirmed registration: { paymentStatus, noPaymentReason }.
+// Idempotent: a deal already WON is a no-op ({ alreadyWon: true }), which is
+// also how callers learn the deal's PRE-payment status (Report #1 vs #26).
+//
+// Tour side: runs the EXISTING WON pipeline (createTourForWonDeal) once, which
+// — via syncDealRegistration's adoption — CONFIRMS the deal's existing HELD/
+// EXPIRED reservation in place (same row, never a duplicate). Late payment
+// (hold already expired) is accepted with overbook rather than rejected.
+// A payment can also close a deal whose tour planning is incomplete (e.g. a
+// Cardcom link on a deal with no scheduled date): WON is never blocked by
+// that, but a broken/undated tour is never created either — the wonGate
+// decides, and the skipped tour is flagged on the timeline for the office.
+//
+// `confirmation` stamps the money state on the confirmed registration:
+// { paymentStatus, noPaymentReason }. `paymentAmountMinor` — the verified
+// amount of the payment that caused this settlement (feeds Report #26's
+// deposit line). `recordChangelog: false` lets a route that already snapshots
+// its own before/after diff (register-without-payment) avoid a duplicate
+// history entry.
 export async function settleDealWon(
   client,
-  { dealId, targetTourEventId = null, allowOverbook = false, origin, paymentStatus = 'paid', noPaymentReason = null } = {},
+  {
+    dealId,
+    targetTourEventId = null,
+    allowOverbook = false,
+    origin,
+    paymentStatus = 'paid',
+    noPaymentReason = null,
+    paymentAmountMinor = null,
+    recordChangelog = true,
+  } = {},
 ) {
   const runOrigin = origin || systemOrigin();
   const result = await client.$transaction(async (tx) => {
-    const deal = await tx.deal.findUnique({ where: { id: dealId } });
-    if (!deal) {
-      const e = new Error('deal_not_found');
-      e.code = 'deal_not_found';
-      throw e;
-    }
-    if (deal.status === 'won') return { dealId, alreadyWon: true };
+    // THE canonical transition: atomic status guard + final pipeline stage +
+    // wonAt + wonQuoteRef. An already-WON deal (or a concurrent winner) exits
+    // here — retried IPNs and double callbacks are no-ops.
+    const t = await transitionDealToWon(tx, { dealId, publicOrigin: publicOrigin() });
+    if (!t.wonNow) return { dealId, alreadyWon: true };
+    const deal = t.deal;
 
     // Target tour: explicit (no-payment picks it directly) else the deal's held/
     // lately-expired reservation's tour (pay-now / send-link created it).
@@ -60,31 +85,54 @@ export async function settleDealWon(
     const lateExpired = !targetTourEventId && held?.status === REG_EXPIRED;
     const effectiveOverbook = allowOverbook || lateExpired;
 
-    await tx.deal.update({ where: { id: dealId }, data: { status: 'won' } });
-    const { dealSync } = await createTourForWonDeal(
-      tx,
-      { ...deal, status: 'won' },
-      { targetTourEventId: tourEventId, origin: runOrigin, allowOverbook: effectiveOverbook },
-    );
-    if (dealSync) await tx.deal.update({ where: { id: dealId }, data: dealSync });
+    const gate = wonGate(deal, tourEventId);
+    const tourReady = gate.missing.length === 0 && !gate.needsSlot;
 
-    // Normalize the deal's now-counting registration to CONFIRMED and stamp the
-    // money state (a fresh WON booking writes legacy 'active'; an adopted hold is
-    // already 'confirmed' — both converge here).
-    if (tourEventId) {
-      await tx.ticketRegistration.updateMany({
-        where: { dealId, tourEventId, status: { in: ['active', 'confirmed'] } },
-        data: { status: 'confirmed', confirmedAt: new Date(), paymentStatus, ...(noPaymentReason ? { noPaymentReason } : {}) },
-      });
-    }
+    let after = deal;
+    if (tourReady) {
+      const { dealSync } = await createTourForWonDeal(
+        tx,
+        deal,
+        { targetTourEventId: tourEventId, origin: runOrigin, allowOverbook: effectiveOverbook },
+      );
+      if (dealSync) {
+        await tx.deal.update({ where: { id: dealId }, data: dealSync });
+        after = { ...deal, ...dealSync };
+      }
 
-    if (lateExpired) {
+      // Normalize the deal's now-counting registration to CONFIRMED and stamp the
+      // money state (a fresh WON booking writes legacy 'active'; an adopted hold is
+      // already 'confirmed' — both converge here).
+      if (tourEventId) {
+        await tx.ticketRegistration.updateMany({
+          where: { dealId, tourEventId, status: { in: ['active', 'confirmed'] } },
+          data: { status: 'confirmed', confirmedAt: new Date(), paymentStatus, ...(noPaymentReason ? { noPaymentReason } : {}) },
+        });
+      }
+
+      if (lateExpired) {
+        await emitTimelineEvent(tx, {
+          subjectType: 'deal',
+          subjectId: dealId,
+          kind: 'tour',
+          body: '💳 תשלום התקבל לאחר פקיעת השריון — הדיל נסגר והמקום שוחזר',
+          data: { event: 'late_payment_won', tourEventId, overbook: effectiveOverbook },
+          origin: runOrigin,
+        });
+      }
+    } else {
+      // The deal is WON (the money is real) but its tour cannot be created yet —
+      // an explicit, visible flag instead of a silent broken tour.
       await emitTimelineEvent(tx, {
         subjectType: 'deal',
         subjectId: dealId,
         kind: 'tour',
-        body: '💳 תשלום התקבל לאחר פקיעת השריון — הדיל נסגר והמקום שוחזר',
-        data: { event: 'late_payment_won', tourEventId, overbook: effectiveOverbook },
+        body: '💳 הדיל נסגר מתשלום, אך פרטי הסיור אינם מלאים — נדרשת השלמת תכנון ידנית',
+        data: {
+          event: 'won_without_tour',
+          missing: gate.missing.map((m) => m.field),
+          needsSlot: gate.needsSlot,
+        },
         origin: runOrigin,
       });
     }
@@ -98,19 +146,43 @@ export async function settleDealWon(
         origin: runOrigin,
       });
     }
-    return { dealId, wonNow: true, tourEventId, lateExpired, overbook: effectiveOverbook };
+    return {
+      dealId,
+      wonNow: true,
+      tourEventId: tourReady ? tourEventId : null,
+      tourCreated: tourReady,
+      lateExpired,
+      overbook: effectiveOverbook,
+      wonAt: t.wonAt,
+      before: t.before,
+      after,
+    };
   });
-  // Communication Center — post-commit (callers pass the root prisma client),
-  // fire-and-forget; the engine's idempotency drops replays.
   if (result?.wonNow) {
-    fireCommunicationTrigger({ type: 'deal_won', dealId });
-    // Tour-anchored ("מועד הסיור") reminder deliveries materialize with the
-    // now-attached tour; the worker re-anchors on later date moves.
-    fireCommunicationTrigger({ type: 'tour_datetime', dealId });
-    // Admin Report #13 — a new participant on an OPEN tour. Post-commit and
-    // fire-and-forget; the report itself checks that the tour really is an open
-    // tour and that the guide already received the coordination notice, so
-    // every WON path can call it unconditionally.
+    // Status/stage history — before this convergence, an IPN-won deal left no
+    // changelog row at all. Post-commit and non-fatal by recordDealChanges'
+    // own contract.
+    if (recordChangelog) {
+      await recordDealChanges(client, {
+        dealId,
+        before: result.before,
+        after: result.after,
+        origin: runOrigin,
+      });
+    }
+    // Communication Center triggers + Manager Report #26 — post-commit (callers
+    // pass the root prisma client), fire-and-forget, exactly once: only the
+    // transaction that flipped the status reaches this branch.
+    emitWonTransitionEffects({
+      dealId,
+      wonAt: result.wonAt,
+      cause: paymentStatus === 'waived' ? 'no_payment' : 'card_payment',
+      closedByUserId: runOrigin?.createdBy || null,
+      paymentAmountMinor,
+    });
+    // Admin Report #13 — a new participant on an OPEN tour. The report itself
+    // checks that the tour really is an open tour, so every WON path can call
+    // it unconditionally.
     if (result.tourEventId) notifyOpenTourJoin(client, dealId, result.tourEventId).catch(() => {});
   }
   return result;
@@ -123,6 +195,8 @@ export async function settleDealWonFromPayment(client, opts = {}) {
 
 // Register without payment → WON. The reason is stored canonically on the
 // registration (noPaymentReason). The commercial total is NOT erased.
+// recordChangelog:false — the no-payment route snapshots its own before/after
+// (it also zeroes the payable total) and records ONE grouped history entry.
 export async function settleDealWonNoPayment(client, { dealId, targetTourEventId, reason, allowOverbook = false, origin } = {}) {
   return settleDealWon(client, {
     dealId,
@@ -131,5 +205,6 @@ export async function settleDealWonNoPayment(client, { dealId, targetTourEventId
     origin,
     paymentStatus: 'waived',
     noPaymentReason: reason,
+    recordChangelog: false,
   });
 }

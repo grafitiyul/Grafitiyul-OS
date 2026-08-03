@@ -110,6 +110,13 @@ export default function QueueList({ channel, scope, onChanged }) {
                         ⏳ {item.waitReasonHe}
                       </div>
                     ) : null}
+                    {/* Timing provenance — explains an off-hours send instead of
+                        leaving the operator to wonder why the window was ignored. */}
+                    {item.timingHe ? (
+                      <div className="mt-1 rounded bg-sky-50 px-2 py-1 text-[11.5px] text-sky-800">
+                        ⚡ {item.timingHe}
+                      </div>
+                    ) : null}
                     {item.failureReasonHe ? (
                       <div className="mt-1 rounded bg-red-50 px-2 py-1 text-[11.5px] text-red-700">
                         {item.terminal ? '✕' : '↻'} {item.failureReasonHe}
