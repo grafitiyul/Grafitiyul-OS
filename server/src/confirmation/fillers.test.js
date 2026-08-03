@@ -10,7 +10,6 @@ import {
   validateFillers,
   hasActiveFillers,
   fillersAffecting,
-  NEW_GUIDE_DEFAULT_NOTE,
 } from './fillers.js';
 
 // ── registry shape ───────────────────────────────────────────────────────────
@@ -24,11 +23,6 @@ test('the four V1 kinds are registered', () => {
   ]);
   assert.equal(getFillerKind('new_guide').labelHe, 'מדריך חדש');
   assert.equal(getFillerKind('nope'), null);
-});
-
-test('new-guide default wording exists in both languages', () => {
-  assert.ok(NEW_GUIDE_DEFAULT_NOTE.he.length > 0);
-  assert.ok(NEW_GUIDE_DEFAULT_NOTE.en.length > 0);
 });
 
 // ── normalization ────────────────────────────────────────────────────────────
@@ -66,13 +60,13 @@ test('cancellation: mode is required and constrained', () => {
   );
 });
 
-test('cancellation: policy mode needs policyId, override needs a note', () => {
+test('cancellation: policy mode needs specialTextId, override needs a note', () => {
   assert.deepEqual(
     validateFillers([{ kind: 'cancellation_policy', mode: 'policy' }]),
     [{ kind: 'cancellation_policy', errors: ['policy_required'] }],
   );
   assert.deepEqual(
-    validateFillers([{ kind: 'cancellation_policy', mode: 'policy', policyId: 'sc_1' }]),
+    validateFillers([{ kind: 'cancellation_policy', mode: 'policy', specialTextId: 'st_1' }]),
     [],
   );
   assert.deepEqual(
@@ -96,12 +90,37 @@ test('duration: must be a finite positive number of hours (≤ 24)', () => {
   assert.deepEqual(validateFillers([{ kind: 'activity_duration', durationHours: 1.5 }]), []);
 });
 
-test('note kinds require at least one language', () => {
-  for (const kind of ['new_guide', 'other_note']) {
-    assert.deepEqual(validateFillers([{ kind }]), [{ kind, errors: ['note_required'] }]);
-    assert.deepEqual(validateFillers([{ kind, noteHe: 'תוכן' }]), []);
-    assert.deepEqual(validateFillers([{ kind, noteEn: 'Content' }]), []);
-  }
+test('plain-note kinds require at least one language', () => {
+  const kind = 'other_note';
+  assert.deepEqual(validateFillers([{ kind }]), [{ kind, errors: ['note_required'] }]);
+  assert.deepEqual(validateFillers([{ kind, noteHe: 'תוכן' }]), []);
+  assert.deepEqual(validateFillers([{ kind, noteEn: 'Content' }]), []);
+});
+
+// ── special-text fillers (cancellation + new guide share ONE contract) ──────
+
+test('new_guide validates exactly like cancellation (mode-driven)', () => {
+  assert.deepEqual(validateFillers([{ kind: 'new_guide', mode: 'default' }]), []);
+  assert.deepEqual(
+    validateFillers([{ kind: 'new_guide', mode: 'policy' }]),
+    [{ kind: 'new_guide', errors: ['policy_required'] }],
+  );
+  assert.deepEqual(validateFillers([{ kind: 'new_guide', mode: 'policy', specialTextId: 'st_2' }]), []);
+  assert.deepEqual(
+    validateFillers([{ kind: 'new_guide', mode: 'override' }]),
+    [{ kind: 'new_guide', errors: ['note_required'] }],
+  );
+  assert.deepEqual(validateFillers([{ kind: 'new_guide', mode: 'override', noteHe: 'נוסח' }]), []);
+});
+
+test('normalize infers the mode for legacy/simple special-text rows', () => {
+  // A bare note written before modes existed IS a deal override…
+  assert.equal(normalizeFillers([{ kind: 'new_guide', noteHe: 'ישן' }])[0].mode, 'override');
+  // …and an empty selection falls back to the category default.
+  assert.equal(normalizeFillers([{ kind: 'new_guide' }])[0].mode, 'default');
+  // Legacy cancellation rows stored policyId before the generic rename.
+  const legacy = normalizeFillers([{ kind: 'cancellation_policy', mode: 'policy', policyId: 'st_old' }]);
+  assert.equal(legacy[0].specialTextId, 'st_old');
 });
 
 test('unknown kind surfaces as a validation problem (not a crash)', () => {

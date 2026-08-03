@@ -279,6 +279,26 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
                       </span>
                     )}
                   </div>
+                  {/* INTERNAL provenance — office-only, never part of the
+                      email. Answers "which wording is actually going out?"
+                      before sending. */}
+                  {s.sourceLabel && (
+                    <div className="mb-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium">✓ {s.sourceLabel}</span>
+                      <span className="text-gray-300">מידע פנימי — לא נשלח ללקוח</span>
+                    </div>
+                  )}
+                  {/* special_terms carries one line per filler. */}
+                  {s.key === 'special_terms' && (s.data?.items || []).some((i) => i.sourceLabel) && (
+                    <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
+                      {s.data.items.map((i, ix) => (
+                        <span key={ix} className="rounded-full bg-gray-100 px-2 py-0.5 font-medium">
+                          {i.labelHe}: ✓ {i.sourceLabel}
+                        </span>
+                      ))}
+                      <span className="text-gray-300">מידע פנימי — לא נשלח ללקוח</span>
+                    </div>
+                  )}
                   {s.customerTitle && s.title && (
                     <h3 className="text-[15px] font-bold text-gray-900 mb-1.5">{s.title}</h3>
                   )}

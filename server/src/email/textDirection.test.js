@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveDirection, stampBlockDirections, htmlToPlainish } from '../../../shared/textDirection.mjs';
+import { resolveDirection, stampBlockDirections, htmlToPlainish, forceBlockDirection } from '../../../shared/textDirection.mjs';
 import { buildRawMessage } from './mime.js';
 import { htmlPartOf } from './mimeParts.js';
 
@@ -99,4 +99,38 @@ test('buildRawMessage applies the rule to real outgoing mail', () => {
 test('empty/nullish body is passed through untouched', () => {
   assert.equal(stampBlockDirections(''), '');
   assert.equal(stampBlockDirections(null), null);
+});
+
+// ── forceBlockDirection — the AI-translation rule ────────────────────────────
+
+test('forceBlockDirection stamps ltr + left-align on every block', () => {
+  const out = forceBlockDirection('<p>Hello</p><ul><li>One</li></ul>', 'ltr');
+  assert.match(out, /<p dir="ltr" style="text-align: left">Hello<\/p>/);
+  assert.match(out, /<ul dir="ltr" style="text-align: left">/);
+});
+
+test('forceBlockDirection OVERRIDES a stale direction (the language changed)', () => {
+  const out = forceBlockDirection('<p dir="rtl" style="text-align: right">שלום</p>', 'ltr');
+  assert.doesNotMatch(out, /dir="rtl"/);
+  assert.doesNotMatch(out, /text-align: right/);
+  assert.match(out, /dir="ltr"/);
+  assert.match(out, /text-align: left/);
+});
+
+test('forceBlockDirection keeps other inline styles intact', () => {
+  const out = forceBlockDirection('<p style="color: red; text-align: right">x</p>', 'ltr');
+  assert.match(out, /color: red/);
+  assert.match(out, /text-align: left/);
+  assert.doesNotMatch(out, /text-align: right/);
+});
+
+test('forceBlockDirection can also force rtl (translating back to Hebrew)', () => {
+  const out = forceBlockDirection('<p dir="ltr" style="text-align: left">Hi</p>', 'rtl');
+  assert.match(out, /dir="rtl"/);
+  assert.match(out, /text-align: right/);
+});
+
+test('forceBlockDirection leaves empty input alone', () => {
+  assert.equal(forceBlockDirection('', 'ltr'), '');
+  assert.equal(forceBlockDirection(null, 'ltr'), null);
 });

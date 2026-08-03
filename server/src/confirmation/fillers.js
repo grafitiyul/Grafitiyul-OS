@@ -11,35 +11,36 @@
 // is headed "הערה ללקוח" (Customer Note) — never plain "הערה" — so operators
 // can never confuse these with internal notes.
 
+import { categoryForFillerKind } from './specialTexts.js';
+
 const trimmed = (v) => (typeof v === 'string' ? v.trim() : '');
 const hasNote = (p) => Boolean(trimmed(p?.noteHe) || trimmed(p?.noteEn));
 
-export const CANCELLATION_MODES = ['default', 'policy', 'override'];
+// The three ways ANY special-text filler resolves its wording. One vocabulary
+// for cancellation, new guide and every future category.
+export const SPECIAL_TEXT_MODES = ['default', 'policy', 'override'];
+// Back-compat alias — the cancellation-only name this vocabulary started as.
+export const CANCELLATION_MODES = SPECIAL_TEXT_MODES;
 
-// V1 default wording for the new-guide special term. Deliberately minimal —
-// pre-filled into the editor and ALWAYS operator-editable before send; final
-// customer copy is an owner decision before the deal-card slice ships.
-export const NEW_GUIDE_DEFAULT_NOTE = {
-  he: 'סוכם עם הלקוח כי את הפעילות יעביר מדריך חדש מצוות גרפיטיול.',
-  en: 'As agreed, the activity will be led by a new guide from the Grafitiyul team.',
-};
+// Shared validation for every filler that selects from a special-text
+// category (registry-linked): default = the category's ★ option, policy = a
+// specific option (specialTextId), override = a per-deal Customer Note.
+function validateSpecialTextFiller(p) {
+  const errs = [];
+  if (!SPECIAL_TEXT_MODES.includes(p?.mode)) errs.push('invalid_mode');
+  if (p?.mode === 'policy' && !trimmed(p?.specialTextId)) errs.push('policy_required');
+  if (p?.mode === 'override' && !hasNote(p)) errs.push('note_required');
+  return errs;
+}
 
 export const FILLER_KINDS = [
   {
     kind: 'cancellation_policy',
     labelHe: 'מדיניות ביטול',
     affects: ['cancellation'],
-    // { mode:'default'|'policy'|'override', policyId?, noteHe?, noteEn? }
-    //   default  — the template's default policy block (an explicit re-choice)
-    //   policy   — a predefined SharedContent policy (policyId), replaces it
-    //   override — a per-deal Customer Note (bilingual), replaces it
-    validate(p) {
-      const errs = [];
-      if (!CANCELLATION_MODES.includes(p?.mode)) errs.push('invalid_mode');
-      if (p?.mode === 'policy' && !trimmed(p?.policyId)) errs.push('policy_required');
-      if (p?.mode === 'override' && !hasNote(p)) errs.push('note_required');
-      return errs;
-    },
+    // { mode:'default'|'policy'|'override', specialTextId?, noteHe?, noteEn? }
+    // Options live in ConfirmationSpecialText (CRM Settings), NOT in code.
+    validate: validateSpecialTextFiller,
   },
   {
     kind: 'activity_duration',
@@ -58,10 +59,10 @@ export const FILLER_KINDS = [
     kind: 'new_guide',
     labelHe: 'מדריך חדש',
     affects: ['special_terms'],
-    // { noteHe?, noteEn? } — pre-filled from NEW_GUIDE_DEFAULT_NOTE, editable.
-    validate(p) {
-      return hasNote(p) ? [] : ['note_required'];
-    },
+    // Same shape as cancellation: the wording comes from the "מדריך חדש"
+    // special-text category (default / another predefined / deal override) —
+    // no hardcoded default wording lives in code any more.
+    validate: validateSpecialTextFiller,
   },
   {
     kind: 'other_note',
@@ -82,6 +83,15 @@ export function getFillerKind(kind) {
   return BY_KIND[kind] || null;
 }
 
+/** The special-text category this filler picks from, or null (plain note). */
+export function fillerSpecialTextCategory(kind) {
+  return categoryForFillerKind(kind)?.key || null;
+}
+
+export function isSpecialTextFiller(kind) {
+  return !!categoryForFillerKind(kind);
+}
+
 /**
  * Sanitize a stored/incoming list: known kinds only, FIRST entry per kind wins
  * (deterministic; the UI never produces duplicates), string fields trimmed,
@@ -96,12 +106,21 @@ export function normalizeFillers(raw) {
     seen.add(f.kind);
     const clean = { kind: f.kind };
     if (trimmed(f.mode)) clean.mode = trimmed(f.mode);
-    if (trimmed(f.policyId)) clean.policyId = trimmed(f.policyId);
+    // specialTextId is canonical; policyId is the cancellation-era name kept
+    // readable so rows written before the generic model still resolve.
+    const specialTextId = trimmed(f.specialTextId) || trimmed(f.policyId);
+    if (specialTextId) clean.specialTextId = specialTextId;
     if (trimmed(f.noteHe)) clean.noteHe = trimmed(f.noteHe);
     if (trimmed(f.noteEn)) clean.noteEn = trimmed(f.noteEn);
     if (f.durationHours !== null && f.durationHours !== undefined && f.durationHours !== '') {
       const h = Number(f.durationHours);
       if (Number.isFinite(h)) clean.durationHours = h;
+    }
+    // A special-text filler stored before modes existed (a bare note — the
+    // old new_guide shape) IS a deal override; one with nothing chosen falls
+    // to the category default. Normalizing here keeps validation mode-only.
+    if (isSpecialTextFiller(clean.kind) && !clean.mode) {
+      clean.mode = hasNote(clean) ? 'override' : 'default';
     }
     out.push(clean);
   }

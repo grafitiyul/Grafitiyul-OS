@@ -24,7 +24,12 @@ import {
 } from './resolveTemplate.js';
 import { normalizeSections, getAutoSection } from './sections.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
-import { normalizeFillers, fillersAffecting, getFillerKind } from './fillers.js';
+import {
+  normalizeFillers,
+  fillersAffecting,
+  getFillerKind,
+  fillerSpecialTextCategory,
+} from './fillers.js';
 import { mergeOverrides, overrideFor } from './overrides.js';
 import { getQuoteTemplate } from '../quote/quoteTemplate.js';
 import {
@@ -188,18 +193,29 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
   const meetingPoint = tour ? await resolveMeetingPoint(tour.id, language, { db }) : null;
 
   const fillers = normalizeFillers(deal.confirmation?.fillers);
-  // Cancellation policies live in ConfirmationSpecialText (CRM Settings —
-  // NOT the Shared Content Library): the filler's chosen row + the category
-  // default (rendered when the deal made no choice).
-  const policyId = fillers.find((f) => f.kind === 'cancellation_policy' && f.mode === 'policy')?.policyId;
-  const POLICY_SELECT = { id: true, internalName: true, bodyHe: true, bodyEn: true, active: true, isDefault: true };
-  const policyRow = policyId
-    ? await db.confirmationSpecialText.findUnique({ where: { id: policyId }, select: POLICY_SELECT })
-    : null;
-  const defaultPolicy = await db.confirmationSpecialText.findFirst({
-    where: { category: 'cancellation_policy', isDefault: true, active: true },
-    select: POLICY_SELECT,
+  // Special texts (CRM Settings — NOT the Shared Content Library): every
+  // category's ★ default plus any specific option this deal chose. ONE query
+  // serves cancellation, new guide and every future category.
+  const SPECIAL_SELECT = {
+    id: true, category: true, internalName: true, internalNote: true,
+    bodyHe: true, bodyEn: true, active: true, isDefault: true,
+  };
+  const chosenIds = fillers.map((f) => f.specialTextId).filter(Boolean);
+  const specialRows = await db.confirmationSpecialText.findMany({
+    where: {
+      OR: [
+        { isDefault: true, active: true },
+        ...(chosenIds.length ? [{ id: { in: chosenIds } }] : []),
+      ],
+    },
+    select: SPECIAL_SELECT,
   });
+  const specialTexts = {
+    byId: Object.fromEntries(specialRows.map((r) => [r.id, r])),
+    defaults: Object.fromEntries(
+      specialRows.filter((r) => r.isDefault && r.active).map((r) => [r.category, r]),
+    ),
+  };
 
   // Variable-catalog context: primary phone, active-bookings count on the
   // booked tour, and the public brand contact (quote-template singleton).
@@ -212,15 +228,60 @@ export async function loadConfirmationContext(client, dealId, { language: langOv
 
   return {
     deal, template, contact, email, language, tour: pseudoTour, meetingPoint,
-    fillers, policyRow, defaultPolicy, contactPhone, tourBookingsCount, brandContact,
+    fillers, specialTexts, contactPhone, tourBookingsCount, brandContact,
     persistentOverrides: deal.confirmation?.overrideState || null,
   };
 }
 
 // ── pure composition ─────────────────────────────────────────────────────────
 
+/**
+ * Resolve ONE special-text filler (cancellation, new guide, any future
+ * category) to its customer wording + the INTERNAL provenance the preview
+ * shows the operator. `sourceLabel` is office-only — it is never rendered
+ * into the email (buildEmailHtml reads html/title only).
+ * Precedence: deal override → chosen predefined option → category ★ default.
+ */
+export function resolveSpecialTextFiller({ filler, category, specialTexts, lang }) {
+  const chosen = filler?.specialTextId ? specialTexts?.byId?.[filler.specialTextId] : null;
+  const fallback = specialTexts?.defaults?.[category] || null;
+
+  if (filler?.mode === 'override') {
+    return {
+      html: pickStrict(filler.noteHe, filler.noteEn, lang),
+      otherLang: pickStrict(filler.noteEn, filler.noteHe, lang),
+      source: 'filler_override',
+      sourceLabel: 'נוסח מותאם לעסקה זו',
+      missing: false,
+    };
+  }
+  if (filler?.mode === 'policy') {
+    if (!chosen || chosen.active === false) {
+      return { html: null, otherLang: null, source: 'filler_policy', sourceLabel: 'נוסח שנבחר — אינו זמין עוד', missing: true };
+    }
+    return {
+      html: pickStrict(chosen.bodyHe, chosen.bodyEn, lang),
+      otherLang: pickStrict(chosen.bodyEn, chosen.bodyHe, lang),
+      source: 'filler_policy',
+      sourceLabel: `נוסח מוגדר מראש — ${chosen.internalName}`,
+      missing: false,
+    };
+  }
+  if (!fallback) {
+    return { html: null, otherLang: null, source: 'default', sourceLabel: 'לא הוגדרה ברירת מחדל', missing: true };
+  }
+  return {
+    html: pickStrict(fallback.bodyHe, fallback.bodyEn, lang),
+    otherLang: pickStrict(fallback.bodyEn, fallback.bodyHe, lang),
+    source: 'default',
+    sourceLabel: `ברירת מחדל — ${fallback.internalName}`,
+    missing: false,
+  };
+}
+
 export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
-  const { deal, template, contact, email, language: lang, tour, meetingPoint, fillers, policyRow, defaultPolicy } = ctx;
+  const { deal, template, contact, email, language: lang, tour, meetingPoint, fillers } = ctx;
+  const specialTexts = ctx.specialTexts || { byId: {}, defaults: {} };
   const t = L[lang] || L.he;
   const warnings = [];
   const overrides = mergeOverrides(ctx.persistentOverrides, overrideOverlay);
@@ -297,6 +358,11 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
         sections.push({
           id: 'tour_details', kind: 'auto', key: 'tour_details',
           html, data: { rows, durationHours: hours, durationOverridden: !!durationFiller },
+          // INTERNAL provenance — shown in the preview only when the deal
+          // actually overrode the canonical duration.
+          ...(durationFiller
+            ? { source: 'filler_override', sourceLabel: `משך מותאם לעסקה זו — ${lang === 'en' ? durationEn(hours) : durationHe(hours)}` }
+            : {}),
           editable: false,
         });
         if (durationFiller && !hasText(noteHtmlRaw) && hasText(pickStrict(durationFiller.noteEn, durationFiller.noteHe, lang))) {
@@ -345,44 +411,43 @@ export function composeFromContext(ctx, { overrideOverlay = null } = {}) {
         break;
       }
       case 'cancellation_policy': {
-        // Deal choice (override note → chosen predefined) → category default.
-        let html = null;
-        let source = 'default_policy';
-        let label = 'מדיניות ביטול';
-        if (cancelFiller?.mode === 'override') {
-          html = pickStrict(cancelFiller.noteHe, cancelFiller.noteEn, lang);
-          source = 'filler_override';
-          if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(cancelFiller.noteEn, cancelFiller.noteHe, lang)), label);
-        } else if (cancelFiller?.mode === 'policy') {
-          source = 'filler_policy';
-          if (policyRow?.active) {
-            label = policyRow.internalName;
-            html = pickStrict(policyRow.bodyHe, policyRow.bodyEn, lang);
-            if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(policyRow.bodyEn, policyRow.bodyHe, lang)), label);
-          } else {
-            warnings.push({ code: 'missing_policy', sectionId: 'cancellation_policy', label });
-          }
-        } else if (defaultPolicy) {
-          label = defaultPolicy.internalName;
-          html = pickStrict(defaultPolicy.bodyHe, defaultPolicy.bodyEn, lang);
-          if (!hasText(html)) warnMissing('cancellation_policy', hasText(pickStrict(defaultPolicy.bodyEn, defaultPolicy.bodyHe, lang)), label);
-        } else {
-          // No default configured at all — visible, never silent.
-          warnings.push({ code: 'missing_policy', sectionId: 'cancellation_policy', label });
+        const r = resolveSpecialTextFiller({
+          filler: cancelFiller, category: 'cancellation_policy', specialTexts, lang,
+        });
+        if (r.missing) {
+          warnings.push({ code: 'missing_policy', sectionId: 'cancellation_policy', label: 'מדיניות ביטול' });
+        } else if (!hasText(r.html)) {
+          warnMissing('cancellation_policy', hasText(r.otherLang), 'מדיניות ביטול');
         }
         sections.push({
           id: 'cancellation_policy', kind: 'auto', key: 'cancellation_policy',
           title: lang === 'en' ? 'Cancellation policy' : 'מדיניות ביטול',
-          customerTitle: true, html, source, editable: true,
+          customerTitle: true, html: r.html, source: r.source,
+          // INTERNAL provenance for the preview — never rendered to customers.
+          sourceLabel: r.sourceLabel,
+          editable: true,
         });
         break;
       }
       case 'special_terms': {
         if (!specialFillers.length) break; // renders NOTHING without fillers
         const items = specialFillers.map((f) => {
+          const labelHe = getFillerKind(f.kind)?.labelHe || f.kind;
+          const category = fillerSpecialTextCategory(f.kind);
+          if (category) {
+            // Same three-way resolution as cancellation (default / chosen /
+            // deal override) — new guide and every future wording category.
+            const r = resolveSpecialTextFiller({ filler: f, category, specialTexts, lang });
+            if (r.missing) {
+              warnings.push({ code: 'missing_policy', sectionId: 'special_terms', label: labelHe });
+            } else if (!hasText(r.html)) {
+              warnMissing('special_terms', hasText(r.otherLang), labelHe);
+            }
+            return { kind: f.kind, labelHe, html: r.html, source: r.source, sourceLabel: r.sourceLabel };
+          }
           const html = pickStrict(f.noteHe, f.noteEn, lang);
-          if (!hasText(html)) warnMissing('special_terms', hasText(pickStrict(f.noteEn, f.noteHe, lang)));
-          return { kind: f.kind, labelHe: getFillerKind(f.kind)?.labelHe || f.kind, html };
+          if (!hasText(html)) warnMissing('special_terms', hasText(pickStrict(f.noteEn, f.noteHe, lang)), labelHe);
+          return { kind: f.kind, labelHe, html, source: 'filler_override', sourceLabel: 'נוסח מותאם לעסקה זו' };
         });
         sections.push({
           id: 'special_terms', kind: 'auto', key: 'special_terms',

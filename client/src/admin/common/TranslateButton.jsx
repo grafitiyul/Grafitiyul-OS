@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../../lib/api.js';
+import { forceBlockDirection } from '../../../../shared/textDirection.mjs';
 
 // THE shared bilingual-field translation action — one component + one server
 // service behind every settings "תרגם לאנגלית" button. Contract:
@@ -48,7 +49,14 @@ export default function TranslateButton({
     setFlash(null);
     try {
       const out = await api.translate.field({ content: getSource?.(), direction, format, tone });
-      onResult(out.content); // fills the field only — nothing is saved
+      // Direction follows the TARGET language, stamped ONCE here for every
+      // screen: English opens LTR + left-aligned, Hebrew RTL + right — the
+      // operator never presses the direction/align buttons after a
+      // translation. Plain-text fields carry no markup, so they're passed
+      // through untouched.
+      const targetDir = direction === 'en_to_he' ? 'rtl' : 'ltr';
+      const content = format === 'html' ? forceBlockDirection(out.content, targetDir) : out.content;
+      onResult(content); // fills the field only — nothing is saved
       show(true, '✓ תורגם — בדקו וערכו לפני שמירה', 3500);
     } catch (e) {
       show(false, ERROR_TEXT[e.payload?.error] || 'שגיאת תרגום', 4000);

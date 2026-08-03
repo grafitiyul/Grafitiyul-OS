@@ -85,6 +85,8 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
   if (!hasSaved && !revealed) return null;
 
   const kinds = state.meta.fillerKinds;
+  const specialCategoryOf = (kind) =>
+    kinds.find((k) => k.kind === kind)?.specialTextCategory || null;
   const active = (kind) => draft.some((f) => f.kind === kind);
   const fillerOf = (kind) => draft.find((f) => f.kind === kind);
   const patchFiller = (kind, patch) =>
@@ -96,18 +98,14 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
       setDraft((cur) => cur.filter((f) => f.kind !== kind));
       return;
     }
-    const seed =
-      kind === 'cancellation_policy'
-        ? { kind, mode: 'default' }
-        : kind === 'activity_duration'
-          ? { kind, durationHours: state.durationInfo.canonicalHours }
-          : kind === 'new_guide'
-            ? {
-              kind,
-              noteHe: `<p>${state.meta.newGuideDefaultNote.he}</p>`,
-              noteEn: `<p>${state.meta.newGuideDefaultNote.en}</p>`,
-            }
-            : { kind };
+    // Special-text kinds (cancellation, new guide, future categories) start on
+    // the category default — the office wording lives in CRM Settings, never
+    // as hardcoded text here.
+    const seed = specialCategoryOf(kind)
+      ? { kind, mode: 'default' }
+      : kind === 'activity_duration'
+        ? { kind, durationHours: state.durationInfo.canonicalHours }
+        : { kind };
     setDraft((cur) => [...cur, seed]);
   }
 
@@ -169,32 +167,40 @@ export default function DealFillersCard({ dealId, revealed, onHide, onVisibility
           </div>
         </div>
 
-        {active('cancellation_policy') && (
-          <CancellationEditor
-            filler={fillerOf('cancellation_policy')}
-            policies={state.policies}
-            lang={lang}
-            onChange={(p) => patchFiller('cancellation_policy', p)}
-          />
-        )}
-        {active('activity_duration') && (
-          <DurationEditor
-            filler={fillerOf('activity_duration')}
-            durationInfo={state.durationInfo}
-            lang={lang}
-            onChange={(p) => patchFiller('activity_duration', p)}
-          />
-        )}
-        {active('new_guide') && (
-          <FillerSection title="מדריך חדש">
-            <CustomerNote filler={fillerOf('new_guide')} lang={lang} onChange={(p) => patchFiller('new_guide', p)} />
-          </FillerSection>
-        )}
-        {active('other_note') && (
-          <FillerSection title="הערה נוספת ללקוח">
-            <CustomerNote filler={fillerOf('other_note')} lang={lang} onChange={(p) => patchFiller('other_note', p)} />
-          </FillerSection>
-        )}
+        {/* One editor per active filler, in registry order. Special-text kinds
+            share ONE picker (default / another predefined / deal override);
+            duration and plain notes keep their own compact editors. */}
+        {kinds.filter((k) => active(k.kind)).map((k) => {
+          const category = k.specialTextCategory;
+          if (category) {
+            return (
+              <SpecialTextFillerEditor
+                key={k.kind}
+                title={k.labelHe}
+                filler={fillerOf(k.kind)}
+                options={state.specialTexts?.[category] || []}
+                lang={lang}
+                onChange={(p) => patchFiller(k.kind, p)}
+              />
+            );
+          }
+          if (k.kind === 'activity_duration') {
+            return (
+              <DurationEditor
+                key={k.kind}
+                filler={fillerOf(k.kind)}
+                durationInfo={state.durationInfo}
+                lang={lang}
+                onChange={(p) => patchFiller(k.kind, p)}
+              />
+            );
+          }
+          return (
+            <FillerSection key={k.kind} title={k.labelHe}>
+              <CustomerNote filler={fillerOf(k.kind)} lang={lang} onChange={(p) => patchFiller(k.kind, p)} />
+            </FillerSection>
+          );
+        })}
 
         {problems?.length > 0 && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700 space-y-0.5">
@@ -273,23 +279,27 @@ function CustomerNote({ filler, onChange, lang, optional = false }) {
   );
 }
 
-function CancellationEditor({ filler, policies, lang, onChange }) {
+// ONE picker for every special-text filler (cancellation, new guide, and any
+// future wording category): the office chooses the category default, another
+// predefined option, or writes a deal-specific override. The office sees the
+// internal name + explanation; the customer receives only the customer text.
+function SpecialTextFillerEditor({ title, filler, options, lang, onChange }) {
   const mode = filler?.mode || 'default';
-  const defaultPolicy = policies.find((p) => p.isDefault) || null;
-  const chosen = policies.find((p) => p.id === filler?.policyId) || null;
-  const OPTIONS = [
-    { value: 'default', label: defaultPolicy ? `ברירת המחדל — ${defaultPolicy.internalName}` : 'מדיניות ברירת המחדל' },
-    { value: 'policy', label: 'מדיניות מוגדרת מראש אחרת' },
+  const fallback = options.find((p) => p.isDefault) || null;
+  const chosen = options.find((p) => p.id === filler?.specialTextId) || null;
+  const MODES = [
+    { value: 'default', label: fallback ? `ברירת המחדל — ${fallback.internalName}` : 'נוסח ברירת המחדל' },
+    { value: 'policy', label: 'נוסח מוגדר מראש אחר' },
     { value: 'override', label: 'נוסח מותאם לעסקה זו' },
   ];
   return (
-    <FillerSection title="מדיניות ביטול">
+    <FillerSection title={title}>
       <div className="space-y-1.5">
-        {OPTIONS.map((o) => (
+        {MODES.map((o) => (
           <label key={o.value} className="flex items-center gap-2 text-[13px] text-gray-800">
             <input
               type="radio"
-              name="cancel-mode"
+              name={`mode-${filler?.kind || title}`}
               checked={mode === o.value}
               onChange={() => onChange({ mode: o.value })}
             />
@@ -297,24 +307,24 @@ function CancellationEditor({ filler, policies, lang, onChange }) {
           </label>
         ))}
       </div>
-      {mode === 'default' && defaultPolicy?.internalNote && (
-        <p className="text-[12px] text-gray-500">{defaultPolicy.internalNote}</p>
+      {mode === 'default' && fallback?.internalNote && (
+        <p className="text-[12px] text-gray-500">{fallback.internalNote}</p>
       )}
-      {mode === 'default' && !defaultPolicy && (
+      {mode === 'default' && !fallback && (
         <p className="text-[11px] text-amber-600">
-          לא הוגדרה מדיניות ברירת מחדל — הגדירו אחת בהגדרות CRM → נוסחים ספציפיים.
+          לא הוגדרה ברירת מחדל — הגדירו נוסחים בהגדרות CRM → נוסחים ספציפיים.
         </p>
       )}
       {mode === 'policy' && (
         <div>
-          <span className={LABEL}>בחרו מדיניות</span>
+          <span className={LABEL}>בחרו נוסח</span>
           <select
-            value={filler?.policyId || ''}
-            onChange={(e) => onChange({ policyId: e.target.value })}
+            value={filler?.specialTextId || ''}
+            onChange={(e) => onChange({ specialTextId: e.target.value })}
             className={`${INPUT} w-full`}
           >
             <option value="">— בחרו —</option>
-            {policies.map((p) => (
+            {options.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.internalName}{p.isDefault ? ' ★' : ''}
               </option>
@@ -325,15 +335,15 @@ function CancellationEditor({ filler, policies, lang, onChange }) {
           {chosen?.internalNote && (
             <p className="text-[12px] text-gray-500 mt-1">{chosen.internalNote}</p>
           )}
-          {policies.length === 0 && (
+          {options.length === 0 && (
             <p className="text-[11px] text-amber-600 mt-1">
-              אין מדיניות מוגדרת — צרו אחת בהגדרות CRM → נוסחים ספציפיים להצעות מחיר ומייל אישור.
+              אין נוסחים מוגדרים — צרו אחד בהגדרות CRM → נוסחים ספציפיים להצעות מחיר ומייל אישור.
             </p>
           )}
         </div>
       )}
       {mode === 'override' && <CustomerNote filler={filler} onChange={onChange} lang={lang} />}
-      <p className="text-[11px] text-gray-400">הבחירה מחליפה את מדיניות הביטול במייל האישור של עסקה זו.</p>
+      <p className="text-[11px] text-gray-400">הבחירה משפיעה על מייל האישור של עסקה זו בלבד.</p>
     </FillerSection>
   );
 }

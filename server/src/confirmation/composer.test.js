@@ -67,12 +67,15 @@ function ctx(over = {}) {
       image: { url: 'https://r2.example/mp.jpg', key: 'k', mimeType: 'image/jpeg' },
     },
     fillers: [],
-    policyRow: null,
-    defaultPolicy: DEFAULT_POLICY,
+    // ONE special-text context for every category (cancellation, new guide…).
+    specialTexts: { byId: {}, defaults: { cancellation_policy: DEFAULT_POLICY } },
     persistentOverrides: null,
     ...over,
   };
 }
+// Convenience: a context whose special-text world is exactly these rows.
+const withSpecial = ({ byId = {}, defaults = {} } = {}, over = {}) =>
+  ctx({ specialTexts: { byId, defaults: { cancellation_policy: DEFAULT_POLICY, ...defaults } }, ...over });
 const byId = (r, id) => r.sections.find((s) => s.id === id);
 
 // ── basics ───────────────────────────────────────────────────────────────────
@@ -91,7 +94,7 @@ test('composes every visible section in template order, Hebrew defaults', () => 
   assert.equal(byId(r, 'special_terms'), undefined); // no fillers → nothing
   // Cancellation = auto section fed by the category DEFAULT special text.
   assert.equal(byId(r, 'cancellation_policy').html, '<p>מדיניות רגילה</p>');
-  assert.equal(byId(r, 'cancellation_policy').source, 'default_policy');
+  assert.equal(byId(r, 'cancellation_policy').source, 'default');
   assert.equal(r.warnings.length, 0);
 });
 
@@ -150,17 +153,22 @@ test('duration filler: Deal.durationHours wins and the Customer Note rides along
 
 test('cancellation filler mode=policy renders the CHOSEN predefined policy', () => {
   const r = composeFromContext(
-    ctx({
-      fillers: [{ kind: 'cancellation_policy', mode: 'policy', policyId: 'st_flex' }],
-      policyRow: {
-        id: 'st_flex', internalName: 'גמישה',
-        bodyHe: '<p>ביטול חופשי</p>', bodyEn: '<p>Free cancellation</p>', active: true, isDefault: false,
+    withSpecial(
+      {
+        byId: {
+          st_flex: {
+            id: 'st_flex', category: 'cancellation_policy', internalName: 'גמישה',
+            bodyHe: '<p>ביטול חופשי</p>', bodyEn: '<p>Free cancellation</p>', active: true, isDefault: false,
+          },
+        },
       },
-    }),
+      { fillers: [{ kind: 'cancellation_policy', mode: 'policy', specialTextId: 'st_flex' }] },
+    ),
   );
   const s = byId(r, 'cancellation_policy');
   assert.equal(s.html, '<p>ביטול חופשי</p>');
   assert.equal(s.source, 'filler_policy');
+  assert.equal(s.sourceLabel, 'נוסח מוגדר מראש — גמישה');
 });
 
 test('cancellation filler mode=override renders the deal Customer Note', () => {
@@ -179,15 +187,17 @@ test('mode=default falls back to the category default policy', () => {
 
 test('deleted/inactive chosen policy → missing_policy warning, no silent fallback', () => {
   const r = composeFromContext(
-    ctx({ fillers: [{ kind: 'cancellation_policy', mode: 'policy', policyId: 'st_gone' }], policyRow: null }),
+    ctx({ fillers: [{ kind: 'cancellation_policy', mode: 'policy', specialTextId: 'st_gone' }] }),
   );
   assert.equal(byId(r, 'cancellation_policy').html, null);
   assert.ok(r.warnings.some((w) => w.code === 'missing_policy'));
 });
 
 test('no default policy configured at all → warning, never a silent empty', () => {
-  const r = composeFromContext(ctx({ defaultPolicy: null }));
-  assert.equal(byId(r, 'cancellation_policy').html, null);
+  const r = composeFromContext(ctx({ specialTexts: { byId: {}, defaults: {} } }));
+  const s = byId(r, 'cancellation_policy');
+  assert.equal(s.html, null);
+  assert.equal(s.sourceLabel, 'לא הוגדרה ברירת מחדל');
   assert.ok(r.warnings.some((w) => w.code === 'missing_policy'));
 });
 
@@ -204,7 +214,7 @@ test('special terms: new_guide + other_note items render in order', () => {
   const r = composeFromContext(
     ctx({
       fillers: [
-        { kind: 'new_guide', noteHe: '<p>מדריך חדש</p>' },
+        { kind: 'new_guide', mode: 'override', noteHe: '<p>מדריך חדש</p>' },
         { kind: 'other_note', noteHe: '<p>עוד תנאי</p>' },
       ],
     }),
@@ -213,6 +223,63 @@ test('special terms: new_guide + other_note items render in order', () => {
   assert.equal(s.title, 'תנאים מיוחדים שסוכמו');
   assert.equal(s.html, '<p>מדריך חדש</p><p>עוד תנאי</p>');
   assert.equal(s.data.items.length, 2);
+});
+
+// ── new_guide resolves through the SAME special-text path as cancellation ───
+
+test('new_guide default wording comes from the category ★ default', () => {
+  const r = composeFromContext(
+    withSpecial(
+      {
+        defaults: {
+          new_guide: {
+            id: 'st_ng', category: 'new_guide', internalName: 'נוסח מדריך חדש רגיל',
+            bodyHe: '<p>מדריך חדש יעביר את הפעילות</p>', bodyEn: '<p>A new guide will lead</p>',
+            active: true, isDefault: true,
+          },
+        },
+      },
+      { fillers: [{ kind: 'new_guide', mode: 'default' }] },
+    ),
+  );
+  const item = byId(r, 'special_terms').data.items[0];
+  assert.equal(item.html, '<p>מדריך חדש יעביר את הפעילות</p>');
+  assert.equal(item.sourceLabel, 'ברירת מחדל — נוסח מדריך חדש רגיל');
+  assert.equal(r.warnings.length, 0);
+});
+
+test('new_guide with NO configured default warns instead of sending empty', () => {
+  const r = composeFromContext(ctx({ fillers: [{ kind: 'new_guide', mode: 'default' }] }));
+  const item = byId(r, 'special_terms').data.items[0];
+  assert.equal(item.html, null);
+  assert.equal(item.sourceLabel, 'לא הוגדרה ברירת מחדל');
+  assert.ok(r.warnings.some((w) => w.code === 'missing_policy' && w.label === 'מדריך חדש'));
+});
+
+test('a legacy new_guide row (bare note, no mode) still resolves as an override', () => {
+  const r = composeFromContext(ctx({ fillers: [{ kind: 'new_guide', noteHe: '<p>נוסח ישן</p>' }] }));
+  const item = byId(r, 'special_terms').data.items[0];
+  assert.equal(item.html, '<p>נוסח ישן</p>');
+  assert.equal(item.source, 'filler_override');
+});
+
+// ── internal source labels (office-only, never in the email) ────────────────
+
+test('sourceLabel is internal: it never reaches the rendered email HTML', () => {
+  const r = composeFromContext(
+    ctx({ fillers: [{ kind: 'cancellation_policy', mode: 'default' }] }),
+  );
+  assert.equal(byId(r, 'cancellation_policy').sourceLabel, 'ברירת מחדל — מדיניות ביטול רגילה');
+  assert.doesNotMatch(r.emailHtml, /ברירת מחדל/);
+  assert.doesNotMatch(r.emailHtml, /מדיניות ביטול רגילה/); // the internal NAME
+  assert.match(r.emailHtml, /<p>מדיניות רגילה<\/p>/); // the customer TEXT
+});
+
+test('a deal duration override is flagged internally on tour details', () => {
+  const c = ctx({ fillers: [{ kind: 'activity_duration', durationHours: 3 }] });
+  c.deal = { ...c.deal, durationHours: 3 };
+  const r = composeFromContext(c);
+  assert.match(byId(r, 'tour_details').sourceLabel, /משך מותאם לעסקה זו/);
 });
 
 // ── overrides ────────────────────────────────────────────────────────────────

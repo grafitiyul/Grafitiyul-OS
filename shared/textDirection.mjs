@@ -75,6 +75,40 @@ function findMatchingClose(html, tag, from) {
   return -1;
 }
 
+// FORCE a direction (and matching text-align) on every block, overriding any
+// existing dir/text-align. This is the AI-translation rule: content translated
+// INTO English must open left-aligned and LTR, so the operator never has to
+// press the direction/alignment buttons manually. Deliberately different from
+// stampBlockDirections, which preserves author choices — here the language of
+// the content genuinely changed, so the previous direction is stale.
+// The emitted markup is exactly what the editor parses back: `dir` (the
+// TextDirection extension) + `style="text-align: …"` (the TextAlign mark).
+export function forceBlockDirection(html, dir = 'ltr') {
+  if (!html) return html;
+  const align = dir === 'rtl' ? 'right' : 'left';
+  const openRe = new RegExp(`<(${BLOCK_TAGS})(\\s[^>]*)?>`, 'gi');
+  return String(html).replace(openRe, (_full, tag, rawAttrs) => {
+    let attrs = rawAttrs || '';
+    // Drop any existing dir / text-align so the new direction fully wins.
+    attrs = attrs.replace(/\sdir\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    attrs = attrs.replace(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (m, _q, dq, sq) => {
+      const kept = String(dq ?? sq ?? '')
+        .split(';')
+        .map((d) => d.trim())
+        .filter((d) => d && !/^text-align\s*:/i.test(d))
+        .join('; ');
+      return kept ? ` style="${kept}"` : '';
+    });
+    const styleRe = /\sstyle\s*=\s*"([^"]*)"/i;
+    if (styleRe.test(attrs)) {
+      attrs = attrs.replace(styleRe, (_m, s) => ` style="${s.replace(/;\s*$/, '')}; text-align: ${align}"`);
+    } else {
+      attrs += ` style="text-align: ${align}"`;
+    }
+    return `<${tag} dir="${dir}"${attrs}>`;
+  });
+}
+
 // Stamp an explicit `dir` on every block that lacks one, then wrap the document
 // in a computed base direction. `fallback` is the surface default for blocks
 // with no strong character (GOS admin authoring surface = 'rtl').

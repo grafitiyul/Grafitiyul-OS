@@ -22,9 +22,9 @@ import { normalizeOverrideState } from '../confirmation/overrides.js';
 import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
 import {
   FILLER_KINDS,
-  NEW_GUIDE_DEFAULT_NOTE,
   normalizeFillers,
   validateFillers,
+  fillerSpecialTextCategory,
 } from '../confirmation/fillers.js';
 import {
   listConfirmationVariables,
@@ -260,12 +260,17 @@ router.get(
     const tour = await dealDurationTour(deal);
     const fillers = normalizeFillers(deal.confirmation?.fillers);
     // The office picks by internal name + explanation; customer text never
-    // renders in the deal card. Policies live in ConfirmationSpecialText.
-    const policies = await prisma.confirmationSpecialText.findMany({
-      where: { category: 'cancellation_policy', active: true },
-      select: { id: true, internalName: true, internalNote: true, isDefault: true },
+    // renders in the deal card. Grouped by category so EVERY special-text
+    // filler (cancellation, new guide, future ones) gets its options.
+    const specialRows = await prisma.confirmationSpecialText.findMany({
+      where: { active: true },
+      select: { id: true, category: true, internalName: true, internalNote: true, isDefault: true },
       orderBy: [{ isDefault: 'desc' }, { sortOrder: 'asc' }, { internalName: 'asc' }],
     });
+    const specialTexts = {};
+    for (const c of SPECIAL_TEXT_CATEGORIES) {
+      specialTexts[c.key] = specialRows.filter((r) => r.category === c.key);
+    }
     // Same recipient pick as the composer: first contact WITH an email, else
     // the first contact — so the card edits the language the send will use.
     const recipientContact =
@@ -281,10 +286,15 @@ router.get(
         effectiveHours: effectiveDurationHours(deal, tour),
         overridden: deal.durationHours != null,
       },
-      policies,
+      specialTexts,
       meta: {
-        fillerKinds: FILLER_KINDS.map((f) => ({ kind: f.kind, labelHe: f.labelHe })),
-        newGuideDefaultNote: NEW_GUIDE_DEFAULT_NOTE,
+        // specialTextCategory tells the card which kinds use the
+        // default/predefined/override picker instead of a plain note.
+        fillerKinds: FILLER_KINDS.map((f) => ({
+          kind: f.kind,
+          labelHe: f.labelHe,
+          specialTextCategory: fillerSpecialTextCategory(f.kind),
+        })),
       },
     });
   }),
