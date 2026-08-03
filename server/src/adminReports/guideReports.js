@@ -38,16 +38,17 @@ export function dayLabel(daysAway, dateStr) {
 }
 
 /**
- * The coordination status icon (owner rule, 2026-07-28):
+ * The coordination status icon (owner rule, 2026-07-28; urgent icon 🚨
+ * replaced 🔴 on 2026-08-03):
  *   ✅ done, whatever the distance
- *   🔴 not done, tour today or tomorrow
+ *   🚨 not done, tour today or tomorrow
  *   🔵 not done, tour in 2–3 days
  *   🟡 not done, tour in 4 days
- * There is deliberately no green bucket.
+ * There is deliberately no green bucket. ONE rule for both languages.
  */
 export function statusIcon(done, daysAway) {
   if (done) return '✅';
-  if (daysAway <= 1) return '🔴';
+  if (daysAway <= 1) return '🚨';
   if (daysAway <= 3) return '🔵';
   return '🟡';
 }
@@ -202,7 +203,7 @@ export const GUIDE_REPORTS = [
       + 'ואחריהן סיכומי סיור שלו שכבר עברו את המועד.',
     dataHe:
       'מוצגות רק שיחות תיאום שטרם בוצעו — שיחה שהוגשה יורדת מהרשימה מיד, ותזכורות ישנות לא חוזרות. '
-      + '🔴 הסיור היום או מחר · 🔵 בעוד 2–3 ימים · 🟡 בעוד 4 ימים, בסדר כרונולוגי. '
+      + '🚨 הסיור היום או מחר · 🔵 בעוד 2–3 ימים · 🟡 בעוד 4 ימים, בסדר כרונולוגי. '
       + 'עיר מוצגת רק כשהיא אינה מיקום הבית. הסיכומים החסרים כוללים רק סיורים מאתמול ואחורה, עם לינק ישיר לכל טופס.',
     emptyHe: 'אין למדריך שיחות תיאום או סיכומים פתוחים',
     // ONE body for both languages — the digest lists the same facts in the

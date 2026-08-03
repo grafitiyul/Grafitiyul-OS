@@ -7,10 +7,10 @@ import { israelLocalToMs } from '../communication/windows.js';
 
 // ── the status/label rules the owner specified ───────────────────────────────
 
-test('status icons: ✅ done at any distance, then 🔴 / 🔵 / 🟡 by days away', () => {
+test('status icons: ✅ done at any distance, then 🚨 / 🔵 / 🟡 by days away', () => {
   for (const d of [0, 1, 2, 3, 4]) assert.equal(statusIcon(true, d), '✅');
-  assert.equal(statusIcon(false, 0), '🔴');
-  assert.equal(statusIcon(false, 1), '🔴');
+  assert.equal(statusIcon(false, 0), '🚨');
+  assert.equal(statusIcon(false, 1), '🚨');
   assert.equal(statusIcon(false, 2), '🔵');
   assert.equal(statusIcon(false, 3), '🔵');
   assert.equal(statusIcon(false, 4), '🟡');
@@ -19,7 +19,7 @@ test('status icons: ✅ done at any distance, then 🔴 / 🔵 / 🟡 by days aw
 test('there is deliberately no green bucket', () => {
   const icons = new Set([0, 1, 2, 3, 4].flatMap((d) => [statusIcon(true, d), statusIcon(false, d)]));
   assert.ok(!icons.has('🟢'));
-  assert.deepEqual([...icons].sort(), ['✅', '🔴', '🔵', '🟡'].sort());
+  assert.deepEqual([...icons].sort(), ['✅', '🚨', '🔵', '🟡'].sort());
 });
 
 test('date labels: היום, מחר, then the Hebrew weekday name', () => {
@@ -57,8 +57,8 @@ test('#11 is one continuous list, one line per call, with the overdue section af
   });
   const rows = text.split('\n');
   assert.equal(rows[0], '☎️ סטטוס שיחות התיאום לימים הקרובים');
-  assert.equal(rows[2], '🔴 היום | משפחת כהן (4) | סיור גרפיטי');
-  assert.equal(rows[3], '🔴 מחר | חברת ABC (18) | *ירושלים* | סיור קולינרי');
+  assert.equal(rows[2], '🚨 היום | משפחת כהן (4) | סיור גרפיטי');
+  assert.equal(rows[3], '🚨 מחר | חברת ABC (18) | *ירושלים* | סיור קולינרי');
   assert.equal(rows[4], '✅ חמישי | רות לוי (2) | סדנת גרפיטי');
   assert.ok(text.includes('────────────────'));
   assert.ok(text.includes('📝 סיכומי סיור שטרם הושלמו'));
@@ -81,7 +81,7 @@ test('#11 is TRUE chronological order — ✅ keeps its place, never pushed down
   });
   const rows = text.split('\n');
   assert.equal(rows[2], '✅ היום | משפחת כהן (4) | סיור גרפיטי');
-  assert.equal(rows[3], '🔴 מחר | חברת ABC (18) | סיור קולינרי');
+  assert.equal(rows[3], '🚨 מחר | חברת ABC (18) | סיור קולינרי');
   assert.equal(rows[4], '🔵 רביעי | רות לוי (2) | סדנת גרפיטי');
 });
 
