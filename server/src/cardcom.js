@@ -184,6 +184,7 @@ export async function getLpResult(lowProfileId) {
     amount: Number(tx.Amount ?? data.Amount ?? 0) || null,
     cardLast4: tx.Last4CardDigits != null ? String(tx.Last4CardDigits) : tx.CardNumber != null ? String(tx.CardNumber).slice(-4) : null,
     approved: Number(tx.ResponseCode ?? 0) === 0,
+    failReason: Number(tx.ResponseCode ?? 0) !== 0 ? `Cardcom tx ResponseCode ${tx.ResponseCode}${tx.Description ? `: ${tx.Description}` : ''}` : null,
     raw: data,
   };
 }

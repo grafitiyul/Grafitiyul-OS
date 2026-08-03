@@ -960,6 +960,10 @@ router.put(
         cause: 'manual',
         closedByUserId: req.adminAuth?.userId || null,
         paymentAmountMinor: null,
+        // Set by the Confirmation-Email preview's "הפוך ל־WON ושלח מייל אישור":
+        // the operator is sending that email explicitly in the next request, so
+        // the automatic hook must not also queue one.
+        skipConfirmationEmail: !!req.body?.suppressConfirmationEmail,
       });
     }
     if (lostTransition) fireCommunicationTrigger({ type: 'deal_lost', dealId: req.params.id });

@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import Dialog from '../../common/Dialog.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import RichText from '../../../editor/RichText.jsx';
+import { primaryAction, runPrimaryAction } from './previewFlow.js';
 
 // שליחת מייל אישור — the large preview dialog (Quote-Preview philosophy).
 //
@@ -57,7 +58,6 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
   const [langChoice, setLangChoice] = useState(null);
   const [mismatch, setMismatch] = useState(null); // pending 3-option decision
   const [contactLangUpdated, setContactLangUpdated] = useState(false);
-  const [notWon, setNotWon] = useState(false); // explicit pre-WON override
 
   const recompose = useCallback(
     async (overlay, language) => {
@@ -138,10 +138,27 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
   // The customer's OWN preference, as stored on the contact.
   const contactLang = data?.recipient?.language === 'en' ? 'en' : 'he';
   const languageOverridden = !!langChoice && langChoice !== contactLang;
+  // Primary action follows the deal status: not-WON ⇒ transition-then-send.
+  const action = primaryAction(data?.dealStatus);
 
-  async function doSend({ allowNotWon = false, contactLanguageUpdated = false } = {}) {
-    setBusy(true);
-    setError(null);
+  // The canonical WON transition, through the SAME deal endpoint the Deal UI
+  // uses (validation checklist, tour creation, changelog, effects). The flag
+  // suppresses the automatic won-hook send: the operator is sending from this
+  // preview, so the hook must not queue a second email.
+  async function transitionToWon() {
+    try {
+      await api.deals.update(deal.id, { status: 'won', suppressConfirmationEmail: true });
+      return { ok: true };
+    } catch (e) {
+      const missing = e.payload?.missing;
+      if (Array.isArray(missing) && missing.length) {
+        return { ok: false, error: `חסרים פרטים לסגירת העסקה: ${missing.map((m) => m.labelHe || m.field).join(', ')}` };
+      }
+      return { ok: false, error: e.payload?.error || e.message };
+    }
+  }
+
+  async function doSendRequest({ contactLanguageUpdated = false } = {}) {
     try {
       await api.confirmationEmail.send(deal.id, {
         overrideOverlay: temps || null,
@@ -149,35 +166,58 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
         to: toEmail.trim(),
         ...(langChoice ? { language: langChoice } : {}),
         acknowledgeWarnings: true,
-        allowNotWon,
         languageOverridden,
         contactLanguageUpdated: contactLanguageUpdated || contactLangUpdated,
       });
-      onSent?.();
-      onClose();
+      return { ok: true };
     } catch (e) {
       const code = e.payload?.error;
-      if (code === 'deal_not_won') {
-        // The confirmation email is a WON workflow. Never silently sent for an
-        // open/lost deal — the operator must state the exception.
-        setError('העסקה אינה WON. מייל אישור נשלח בדרך כלל לאחר סגירה — אפשר לשלוח בכל זאת מהכפתור למטה.');
-        setNotWon(true);
+      return {
+        ok: false,
+        error:
+          code === 'duplicate_send'
+            ? 'מייל אישור נשלח ממש עכשיו — המתינו רגע לפני שליחה חוזרת.'
+            : code === 'no_connected_account'
+              ? 'אין חשבון Gmail מחובר — חברו חשבון בהגדרות המייל.'
+              : WARNING_TEXT[code] || 'שגיאה בשליחה: ' + (code || e.message),
+      };
+    }
+  }
+
+  // Primary action. For a deal that is not yet WON this transitions FIRST and
+  // sends only on success (previewFlow.runPrimaryAction pins that order); a
+  // failed transition leaves the operator in the preview with every edit
+  // intact and nothing sent.
+  async function doSend({ contactLanguageUpdated = false } = {}) {
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await runPrimaryAction({
+        dealStatus: data?.dealStatus,
+        transition: transitionToWon,
+        send: () => doSendRequest({ contactLanguageUpdated }),
+      });
+      if (out.sent) {
+        onSent?.();
+        onClose();
         return;
       }
       setError(
-        code === 'duplicate_send'
-          ? 'מייל אישור נשלח ממש עכשיו — המתינו רגע לפני שליחה חוזרת.'
-          : code === 'no_connected_account'
-            ? 'אין חשבון Gmail מחובר — חברו חשבון בהגדרות המייל.'
-            : WARNING_TEXT[code] || 'שגיאה בשליחה: ' + (code || e.message),
+        out.transitioned
+          ? out.error
+          : `לא ניתן היה להפוך את העסקה ל-WON — ${out.error}. לא נשלח מייל.`,
       );
+      // A successful transition changes the deal: recompose so the preview
+      // reflects the new status (and the button becomes a plain send).
+      if (out.transitioned) await recompose(temps, langChoice).catch(() => {});
     } finally {
       setBusy(false);
     }
   }
 
   // Send gate: a language that differs from the contact's stored preference
-  // must be an explicit decision, never a silent one-off.
+  // must be an explicit decision, never a silent one-off. It is asked BEFORE
+  // any WON transition, so closing the dialog changes nothing at all.
   function send() {
     if (languageOverridden) {
       setMismatch({ from: contactLang, to: langChoice });
@@ -221,23 +261,19 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
           <input value={subject} onChange={(e) => setSubject(e.target.value)} dir={lang === 'en' ? 'ltr' : 'rtl'} className={INPUT} />
         </label>
       </div>
-      {notWon && (
-        <button
-          type="button"
-          onClick={() => doSend({ allowNotWon: true })}
-          disabled={busy}
-          className="h-10 shrink-0 self-end rounded-lg border border-amber-400 bg-amber-50 px-4 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-        >
-          שלח בכל זאת (לפני WON)
-        </button>
-      )}
+      {/* Primary action. A deal that is not yet WON gets the green
+          transition-then-send button — there is no "send anyway" path. */}
       <button
         type="button"
         onClick={send}
         disabled={busy || !subject.trim() || !toEmail.trim()}
-        className="h-10 shrink-0 self-end rounded-lg bg-blue-600 px-6 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+        className={`h-10 shrink-0 self-end rounded-lg px-6 text-sm font-medium text-white shadow-sm disabled:opacity-50 ${
+          action.kind === 'won_and_send'
+            ? 'bg-emerald-600 hover:bg-emerald-700'
+            : 'bg-blue-600 hover:bg-blue-700'
+        }`}
       >
-        {busy ? 'שולח…' : 'שלח מייל אישור'}
+        {busy ? 'שולח…' : action.labelHe}
       </button>
     </div>
   );

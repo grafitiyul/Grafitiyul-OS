@@ -103,13 +103,17 @@ test('quoted reply history with its own directions — byte-identical', () => {
   assert.equal(scheduled, immediate);
 });
 
-test('NEITHER path injects a text colour when the author chose none', () => {
+// Superseded with the theme-adaptive rule (see emailDocument.test.js): both
+// paths now carry the canonical LIGHT surface, and they must carry the SAME
+// one — a divergence here would mean send-now and send-later render
+// differently in a customer's dark-mode inbox.
+test('BOTH paths carry the identical canonical surface colours', () => {
   const { immediate, scheduled } = bothPaths('<p>שלום שלום לך</p>');
   for (const [label, raw] of [['immediate', immediate], ['scheduled', scheduled]]) {
-    // Decode the base64 body parts and assert no colour was invented.
     const decoded = htmlFromMimeText(raw);
-    assert.doesNotMatch(decoded, /(^|[^-])color\s*:/i, `${label} must not force a text colour`);
-    assert.doesNotMatch(decoded, /#000|black|rgb\(0,\s*0,\s*0\)/i, `${label} must not emit black`);
+    assert.match(decoded, /background-color:#ffffff/i, `${label} must carry the light surface`);
+    assert.match(decoded, /color:#111827/i, `${label} must carry the explicit text colour`);
+    assert.match(decoded, /color-scheme:light/i, `${label} must declare light`);
   }
 });
 

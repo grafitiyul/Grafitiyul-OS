@@ -124,7 +124,8 @@ export async function transitionDealToWon(tx, { dealId, publicOrigin = null }) {
  * amount of the payment that caused the win, when there is one.
  */
 export function emitWonTransitionEffects(
-  { dealId, wonAt, cause = null, closedByUserId = null, paymentAmountMinor = null },
+  { dealId, wonAt, cause = null, closedByUserId = null, paymentAmountMinor = null,
+    skipConfirmationEmail = false },
   log = console,
 ) {
   fireCommunicationTrigger({ type: 'deal_won', dealId }, log);
@@ -145,8 +146,13 @@ export function emitWonTransitionEffects(
   // card payment, IPN, Cardcom — behaves identically and no provider needs to
   // know about email. Deals with special terms produce a review card instead
   // of a blind send; see confirmation/wonHook.js. Fire-and-forget.
-  runConfirmationOnWon(
+  // Suppressed when the operator is sending from the preview RIGHT NOW:
+  // the explicit send owns the email, so the hook must not queue a second
+  // one (nor raise a review card that the send would immediately resolve).
+  if (!skipConfirmationEmail) {
+    runConfirmationOnWon(
     { dealId, transitionKey: wonTransitionKey(dealId, wonAt), closedByUserId },
     { log },
-  ).catch(() => {});
+    ).catch(() => {});
+  }
 }

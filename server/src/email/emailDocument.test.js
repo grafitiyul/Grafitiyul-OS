@@ -3,24 +3,40 @@ import assert from 'node:assert/strict';
 import { wrapEmailDocument, buildRawMessage } from './mime.js';
 import { htmlPartOf } from './mimeParts.js';
 
-// The theme-adaptive rule for outgoing mail. The defect this pins: a body with
-// NO colour information and no scheme declaration leaves the client guessing,
-// and Gmail's dark mode then half-inverts — black text on a dark background.
+// SUPERSEDED RULE — read this before "restoring" the old assertions.
+//
+// This file used to pin a THEME-ADAPTIVE contract: declare `light dark` and
+// inject no colours, letting each client theme the message. Field evidence
+// (P0, 2026-08-03: "on a phone in Dark Mode some text renders dark on a dark
+// background") showed that rule cannot hold, because it contradicts its own
+// req 4 below — author colours pass through untouched. Declaring `light dark`
+// tells Gmail "do not invert me", so it paints its dark surface behind text
+// that carries an explicit dark colour (the editor's colour picker, and pasted
+// Word/Docs content whose colours pasteSanitizer deliberately preserves).
+// Adaptive + preserved author colours = unreadable, and we must not rewrite an
+// operator's chosen colours to rescue it.
+//
+// The rule is now SELF-CONSISTENT LIGHT: the message carries its own explicit
+// light surface (background AND text colour), declared `light` so supporting
+// clients leave it alone. In dark mode it renders as a light card on dark
+// chrome — legible everywhere, identical to the preview. Deliberate trade:
+// guaranteed legibility over a dark-themed email. Full contract + layered
+// client defences: src/email/darkMode.test.js.
 
-
-test('declares support for BOTH schemes (meta + CSS color-scheme)', () => {
+test('declares LIGHT — the adaptive "light dark" claim is gone', () => {
   const out = wrapEmailDocument('<p>שלום</p>');
-  assert.match(out, /<meta name="color-scheme" content="light dark">/);
-  assert.match(out, /<meta name="supported-color-schemes" content="light dark">/);
-  assert.match(out, /color-scheme:light dark/);
+  assert.match(out, /<meta name="color-scheme" content="light">/);
+  assert.match(out, /<meta name="supported-color-schemes" content="light">/);
+  assert.match(out, /color-scheme:light/);
+  assert.doesNotMatch(out, /content="light dark"/);
 });
 
-test('req 2 + 3: adds NO text colour — not black, not white', () => {
+test('the surface sets BOTH background and text colour (never client defaults)', () => {
   const out = wrapEmailDocument('<p>שלום</p>');
-  // The only `color` token allowed is the scheme declaration itself.
-  const colourDecls = [...out.matchAll(/(^|[^-\w])color\s*:\s*([^;}"']+)/gi)].map((m) => m[2].trim());
-  assert.deepEqual(colourDecls, [], 'no bare color: declaration may be introduced');
-  assert.doesNotMatch(out, /#000|#fff|\bblack\b|\bwhite\b/i);
+  assert.match(out, /background-color:#ffffff/);
+  assert.match(out, /color:#111827/);
+  // Both together, or author-coloured text can still land on a dark surface.
+  assert.match(out, /<body bgcolor="#ffffff"/);
 });
 
 test('req 4: an explicit author colour passes through untouched', () => {
@@ -39,9 +55,12 @@ test('req 5: highlight, link, bold, underline, alignment and dir all survive', (
   }
 });
 
-test('the body content is preserved verbatim inside <body>', () => {
+test('the body content is preserved verbatim inside the surface', () => {
   const body = '<div dir="rtl"><p dir="rtl">שלום</p></div>';
-  assert.ok(wrapEmailDocument(body).includes(`<body>${body}</body>`));
+  const out = wrapEmailDocument(body);
+  // The surface wrapper is the only addition; the authored markup is untouched.
+  assert.ok(out.includes(`>${body}</div></body>`), 'author markup must survive byte-for-byte');
+  assert.match(out, /<div class="gos-email-surface"/);
 });
 
 test('empty / nullish body is passed through untouched', () => {
@@ -62,7 +81,7 @@ test('req 6: applied by buildRawMessage, so EVERY send path inherits it', () => 
   // Direction stamping still happens, and still inside the document.
   assert.match(html, /dir="rtl"/);
   assert.match(html, /dir="ltr"/);
-  assert.match(html, /<body>/);
+  assert.match(html, /<body bgcolor=/);
 });
 
 test('scheme declaration does not disturb send-now == send-later parity', () => {

@@ -7,7 +7,7 @@ import {
   createOrReopenRequest,
   editRequest,
   cancelRequest,
-  findPendingRequest,
+  findActiveRequest,
   syncPendingRequestWithDeal,
   toClientRequest,
   publicPaymentUrl,
@@ -44,8 +44,9 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    // A pending request is resynced from the Deal (SSOT) before it is shown.
-    const active = await findPendingRequest(prisma, deal.id).then((r) =>
+    // A payable request is resynced from the Deal (SSOT) before it is shown
+    // (returned/verifying/failed requests are frozen — sync is a no-op there).
+    const active = await findActiveRequest(prisma, deal.id).then((r) =>
       r ? syncPendingRequestWithDeal(prisma, deal, r) : null,
     );
     res.json({

@@ -37,7 +37,6 @@ const DUPLICATE_WINDOW_MS = 10_000;
  *  test?            — QA probe: no deal/thread linkage, no timeline, never
  *                     counts as a real send, never gets the repeat marker
  *  acknowledgeWarnings?
- *  allowNotWon?     — explicit override of the WON-workflow rule
  *  trigger?         — 'manual' | 'won_auto' | 'tour_update' | 'test' (audit)
  *  actorUserId?     — operator, when there is one
  *  languageOverridden?, contactLanguageUpdated? — audit flags from the preview
@@ -45,7 +44,7 @@ const DUPLICATE_WINDOW_MS = 10_000;
 export async function sendConfirmationEmail(opts = {}, { db = defaultPrisma } = {}) {
   const {
     dealId, language, overrideOverlay = null, to: toOverride, subject: subjectOverride,
-    test: isTest = false, acknowledgeWarnings = false, allowNotWon = false,
+    test: isTest = false, acknowledgeWarnings = false,
     trigger = 'manual', actorUserId = null,
     languageOverridden = false, contactLanguageUpdated = false,
   } = opts;
@@ -54,8 +53,9 @@ export async function sendConfirmationEmail(opts = {}, { db = defaultPrisma } = 
   if (composed.error) return { error: composed.error, meta: composed.meta || null };
 
   // Confirmation email is a WON workflow. A test goes to the operator, so it
-  // is exempt; a real customer send needs WON or an explicit override.
-  if (!isTest && !allowNotWon && composed.dealStatus !== 'won') {
+  // is exempt; a real customer send REQUIRES WON — there is no 'send anyway'.
+  // The preview's primary action transitions the deal first instead.
+  if (!isTest && composed.dealStatus !== 'won') {
     return { error: 'deal_not_won', status: composed.dealStatus };
   }
 

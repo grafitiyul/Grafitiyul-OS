@@ -1723,15 +1723,28 @@ model DealCustomPaymentLink {
 // business identity (product/version) is preserved for long-term reporting even
 // though only the English description is shown on the page/document.
 //
-// INVARIANT — at most ONE pending cardcom request per deal: enforced by a
-// PARTIAL UNIQUE INDEX in the migration (dealId WHERE status='pending' AND
+// INVARIANT — at most ONE active cardcom request per deal: enforced by a
+// PARTIAL UNIQUE INDEX in the migration (dealId WHERE status IN
+// ('pending','awaiting_payment','payment_returned','failed') AND
 // provider='cardcom'), so even concurrent creates can't produce a second.
+//
+// STATE MACHINE (canonical, all transitions are conditional updateMany CAS):
+//   pending           — request exists, no Cardcom LowProfile minted yet
+//   awaiting_payment  — a LowProfile exists and is payable (reused on refresh)
+//   payment_returned  — customer returned from Cardcom; ONLY server-side
+//                       GetLpResult verification (webhook/reconcile) may move
+//                       it forward — the return URL is never proof of payment
+//   paid              — provider-verified; frozen forever
+//   failed            — provider-verified failure; replaceable ONLY via the
+//                       explicit retry path (archives the attempt, attemptNo++)
+//   canceled          — operator canceled; 'expired' reserved (rendered
+//                       unavailable, no auto-expiry yet)
 model PaymentRequest {
   id       String @id @default(cuid())
   deal     Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
   dealId   String
   provider String @default("cardcom")
-  status   String @default("pending") // 'pending' | 'paid' | 'canceled'
+  status   String @default("pending") // see state machine above
   token    String @unique // public /payment/cardcom/<token>
 
   // Frozen customer-facing values
@@ -1753,6 +1766,15 @@ model PaymentRequest {
   cardcomLowProfileId String?
   cardcomPayUrl       String?
   snapshotHash        String? // frozen-field fingerprint → regenerate when it drifts
+
+  // Duplicate-payment protection + verification lifecycle
+  returnedAt     DateTime? // customer came back from Cardcom (payment_returned)
+  webhookAt      DateTime? // first Cardcom webhook received for this request
+  lastVerifyAt   DateTime? // last GetLpResult attempt — rate-limits reconciliation
+  attemptNo      Int       @default(1) // payment attempt counter (retry-after-failure)
+  attemptHistory Json? // archived prior attempts [{lowProfileId, payUrl, failReason, ...}]
+  failReason     String? // provider-verified failure description (status='failed')
+  verifyHold     String? // verification mismatch (amount/currency) — never auto-paid while set
 
   // Payment result
   paidAt               DateTime?

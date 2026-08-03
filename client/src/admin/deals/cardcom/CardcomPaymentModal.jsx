@@ -36,9 +36,30 @@ function friendly(e) {
   return CARDCOM_ERROR[code] || e?.payload?.reason || code || 'אירעה שגיאה. נסו שוב.';
 }
 
+// Payment-attempt lifecycle, in business language (no provider jargon).
+const STATE_LABEL = {
+  pending: { text: 'הקישור פעיל — הלקוח טרם פתח את עמוד התשלום', cls: 'bg-gray-100 text-gray-700 border-gray-200' },
+  awaiting_payment: { text: 'עמוד תשלום פתוח — ממתין לתשלום הלקוח', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+  payment_returned: { text: 'הלקוח סיים בדף התשלום — ממתין לאימות התשלום', cls: 'bg-amber-50 text-amber-800 border-amber-300' },
+  failed: { text: 'ניסיון התשלום נכשל — הלקוח יכול לנסות שוב מאותו קישור', cls: 'bg-red-50 text-red-700 border-red-200' },
+};
+
+const fmtTs = (v) => (v ? new Date(v).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : null);
+
+function LifecycleRow({ label, value }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center justify-between text-[11.5px] text-gray-600">
+      <span>{label}</span>
+      <span className="font-medium text-gray-800" dir="ltr">{value}</span>
+    </div>
+  );
+}
+
 export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }) {
   const [loading, setLoading] = useState(true);
-  const [reqId, setReqId] = useState(null); // set → edit mode (existing pending)
+  const [reqId, setReqId] = useState(null); // set → edit mode (existing active)
+  const [reqInfo, setReqInfo] = useState(null); // full active request — lifecycle visibility
   // Deal-owned (read-only, kept in sync with the Deal by the server).
   const [dealAmount, setDealAmount] = useState({ amount: 0, currency: 'ILS' });
   const [form, setForm] = useState({
@@ -70,6 +91,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
           amount: activeRequest ? activeRequest.amountIls : defaults.amountIls,
           currency: activeRequest ? activeRequest.currency : defaults.currency || 'ILS',
         });
+        setReqInfo(activeRequest || null);
         if (activeRequest) {
           setReqId(activeRequest.id);
           setLink(publicUrl);
@@ -103,7 +125,10 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
 
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
   const dealHasAmount = Number(dealAmount.amount) > 0;
-  const canSubmit = !busy && form.productDescriptionEn.trim() && dealHasAmount;
+  // While the customer is back from Cardcom and the payment is being verified,
+  // the request is FROZEN: no edits, no cancel — the money may already be real.
+  const verifying = reqInfo?.status === 'payment_returned';
+  const canSubmit = !busy && !verifying && form.productDescriptionEn.trim() && dealHasAmount;
 
   async function submit() {
     if (!canSubmit) return;
@@ -167,7 +192,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
       size="md-wide"
       footer={
         <div className="flex w-full items-center gap-2">
-          {reqId && (
+          {reqId && !verifying && (
             <button type="button" onClick={cancelRequest} disabled={busy}
               className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50">
               ביטול הקישור
@@ -195,6 +220,35 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             הלקוח מקבל קישור GOS קבוע; לאחר התשלום תופק אוטומטית חשבונית מס קבלה באנגלית.
           </p>
 
+          {reqInfo && (
+            <div className={`space-y-1.5 rounded-lg border px-3 py-2.5 ${(STATE_LABEL[reqInfo.status] || STATE_LABEL.pending).cls}`}>
+              <p className="text-[12.5px] font-semibold">
+                {(STATE_LABEL[reqInfo.status] || STATE_LABEL.pending).text}
+                {reqInfo.attemptNo > 1 ? ` · ניסיון ${reqInfo.attemptNo}` : ''}
+              </p>
+              {verifying && (
+                <p className="text-[12px]">
+                  אין לשלוח קישור תשלום נוסף ואין לגבות ידנית לפני שהאימות מסתיים — ייתכן שהתשלום כבר בוצע.
+                </p>
+              )}
+              {reqInfo.verifyHold && (
+                <p className="rounded-md border border-red-300 bg-red-50 px-2 py-1.5 text-[12px] font-semibold text-red-700">
+                  האימות מצא אי-התאמה ונדרשת בדיקה ידנית: <span dir="ltr">{reqInfo.verifyHold}</span>
+                </p>
+              )}
+              {reqInfo.status === 'failed' && reqInfo.failReason && (
+                <p className="text-[11.5px]" dir="ltr">{reqInfo.failReason}</p>
+              )}
+              <div className="space-y-0.5 border-t border-black/5 pt-1.5">
+                <LifecycleRow label="הקישור נוצר" value={fmtTs(reqInfo.createdAt)} />
+                <LifecycleRow label="הלקוח חזר מדף התשלום" value={fmtTs(reqInfo.returnedAt)} />
+                <LifecycleRow label="התקבל אישור מקארדקום" value={fmtTs(reqInfo.webhookAt)} />
+                <LifecycleRow label="בדיקת אימות אחרונה" value={fmtTs(reqInfo.lastVerifyAt)} />
+                <LifecycleRow label="מזהה עמוד תשלום" value={reqInfo.cardcomLowProfileId ? `…${String(reqInfo.cardcomLowProfileId).slice(-8)}` : null} />
+              </div>
+            </div>
+          )}
+
           {link && (
             <div className="space-y-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
               <p className="text-[12.5px] font-semibold text-emerald-700">
@@ -210,6 +264,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             </div>
           )}
 
+          <fieldset disabled={verifying} className={verifying ? 'opacity-60' : ''}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="block text-[12px] text-gray-600">
               שם הלקוח
@@ -229,11 +284,12 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             </label>
           </div>
 
-          <label className="block text-[12px] text-gray-600">
+          <label className="mt-3 block text-[12px] text-gray-600">
             תיאור המוצר / השירות (אנגלית) *
             <input value={form.productDescriptionEn} onChange={set('productDescriptionEn')} dir="ltr" className={`mt-1 ${FIELD}`}
               placeholder="e.g. Graffiti workshop" />
           </label>
+          </fieldset>
 
           {/* Deal-owned: read-only here, synchronized with the Deal automatically
               (also while the link is already out with the customer). */}
