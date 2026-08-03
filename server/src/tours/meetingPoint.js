@@ -33,12 +33,12 @@ const TOUR_SELECT = {
     select: {
       id: true, locationId: true,
       meetingPointHe: true, meetingPointEn: true,
-      meetingPointImage: { select: { r2Key: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
+      meetingPointImage: { select: { r2Key: true, url: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
       location: {
         select: {
           nameHe: true, nameEn: true,
           meetingPointHe: true, meetingPointEn: true,
-          meetingPointImage: { select: { r2Key: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
+          meetingPointImage: { select: { r2Key: true, url: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
         },
       },
     },
@@ -47,7 +47,7 @@ const TOUR_SELECT = {
     select: {
       nameHe: true, nameEn: true,
       meetingPointHe: true, meetingPointEn: true,
-      meetingPointImage: { select: { r2Key: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
+      meetingPointImage: { select: { r2Key: true, url: true, mimeType: true, filename: true, kind: true, sizeBytes: true } },
     },
   },
 };
@@ -106,6 +106,9 @@ export async function resolveMeetingPoint(tourEventId, lang = 'he', { db = prism
   const image = img?.r2Key
     ? {
       key: img.r2Key,
+      // Public R2 URL — the confirmation email embeds the image by reference
+      // (no MIME inline support); WhatsApp consumers keep using the key.
+      url: img.url || null,
       mimeType: img.mimeType || 'image/jpeg',
       fileName: img.filename || 'meeting-point',
       kind: 'image',

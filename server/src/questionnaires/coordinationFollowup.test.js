@@ -141,7 +141,9 @@ test('"כן" on the meeting point sends to THAT booking\'s customer, with the im
   assert.equal(mp.recipient.phone, '050-1111111', 'this booking\'s customer');
   assert.equal(mp.data.meetingPoint.text, 'כיכר רבין', 'flattened for WhatsApp');
   assert.deepEqual(mp.data.attachments, [
-    { key: 'locations/meeting/x.jpg', mimeType: 'image/jpeg', fileName: 'x.jpg', kind: 'image' },
+    // `url` joined the resolver's image shape for the confirmation email
+    // (embed-by-reference); the WhatsApp media path keeps using the key.
+    { key: 'locations/meeting/x.jpg', url: null, mimeType: 'image/jpeg', fileName: 'x.jpg', kind: 'image' },
   ], 'the canonical image rides the queue media path');
 });
 

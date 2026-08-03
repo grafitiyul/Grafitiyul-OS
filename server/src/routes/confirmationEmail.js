@@ -13,6 +13,7 @@ import {
   blockIdsInSections,
 } from '../confirmation/sections.js';
 import { CONFIRMATION_CONTENT_TYPES } from '../shared-content/sharedContentTypes.js';
+import { composeConfirmationEmail } from '../confirmation/composer.js';
 
 // CRM settings → מייל אישור — confirmation-email template management.
 // Selection semantics (specificity → priority → REFUSE ambiguity) live in
@@ -182,6 +183,23 @@ router.put(
 
     const { conflicts } = await listPayload();
     res.json({ template: row, conflicts });
+  }),
+);
+
+// POST /deal/:dealId/compose — the preview/compose endpoint. One pipeline for
+// preview AND send; accepts a one-shot overrideOverlay (never stored) and an
+// explicit language override for admin inspection. Template-resolution
+// failures are 422 with the tied template ids — the client names them.
+router.post(
+  '/deal/:dealId/compose',
+  handle(async (req, res) => {
+    const result = await composeConfirmationEmail(prisma, req.params.dealId, {
+      language: req.body?.language,
+      overrideOverlay: req.body?.overrideOverlay || null,
+    });
+    if (result.error === 'deal_not_found') return res.status(404).json({ error: result.error });
+    if (result.error) return res.status(422).json({ error: result.error, ...result.meta });
+    res.json(result);
   }),
 );
 
