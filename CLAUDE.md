@@ -267,6 +267,23 @@ Editing and display parity is mandatory.
 - New features must reuse `RichText`; introducing a separate/simplified
   renderer is a violation of this rule.
 
+## 17) Deal.title privacy invariant
+
+Deal.title is an INTERNAL CRM field ("ליד חדש - …", pipeline wording).
+It must NEVER appear on any customer-facing surface — pages, messages,
+emails, payment/invoice lines, document content, capability-URL pages.
+
+- The ONE approved exception: the explicit `{{deal_title}}` communication
+  variable, deliberately inserted by an operator.
+- Customer-facing display resolution is always canonical:
+  organization → contact full name → product name → the generic wording in
+  `server/src/displayFallbacks.js` (the ONE home for that wording).
+- Enforced by `server/src/dealTitleGuard.test.js`, which scans every
+  customer-facing renderer and fails on any Deal.title reference outside
+  the allowlist. New customer-facing modules must be added to its
+  CUSTOMER_FACING list; the allowlist only grows with an explicit owner
+  decision.
+
 # Product & UX Standards
 
 These are global implementation rules that apply to every future feature

@@ -57,6 +57,29 @@ test('English resolution prefers EN fields', () => {
   assert.equal(values.tour_city, 'Tel Aviv');
 });
 
+test('privacy: group_name is groupName → product → generic, NEVER internal Deal.title', () => {
+  const leadDeal = { orderNo: 27123, title: 'ליד חדש - לילי', groupName: null };
+  // Real group name wins.
+  const named = resolveVariables(['group_name'], { ...CTX, deal: { ...leadDeal, groupName: 'שכבת ז׳' } }, 'he');
+  assert.equal(named.values.group_name, 'שכבת ז׳');
+  // No group name → the activity's product name, in the message language.
+  const product = resolveVariables(['group_name'], { ...CTX, deal: leadDeal }, 'he');
+  assert.equal(product.values.group_name, 'סיור גרפיטי');
+  const productEn = resolveVariables(['group_name'], { ...CTX, deal: leadDeal }, 'en');
+  assert.equal(productEn.values.group_name, 'Graffiti Tour');
+  // No product anywhere → localized generic; the internal title never leaks.
+  const bare = resolveVariables(['group_name'], { deal: leadDeal, tour: null }, 'he');
+  assert.equal(bare.values.group_name, 'הפעילות');
+  const bareEn = resolveVariables(['group_name'], { deal: leadDeal, tour: null }, 'en');
+  assert.equal(bareEn.values.group_name, 'the activity');
+  for (const v of [named, product, productEn, bare, bareEn]) {
+    assert.ok(!JSON.stringify(v.values).includes('ליד חדש'));
+  }
+  // The explicit operator variable is the ONE approved exception.
+  const explicit = resolveVariables(['deal_title'], { ...CTX, deal: leadDeal }, 'he');
+  assert.equal(explicit.values.deal_title, 'ליד חדש - לילי');
+});
+
 test('missing values are reported, never silently substituted', () => {
   const { values, missing } = resolveVariables(['customer_phone'], { contact: { phones: [] } }, 'he');
   assert.equal(values.customer_phone, null);

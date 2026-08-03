@@ -14,6 +14,7 @@
 import { contactPhone, contactEmail, contactFullName } from './context.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { ingressLabel } from '../deals/marketing.js';
+import { GENERIC_ACTIVITY_EN, GENERIC_ACTIVITY_HE } from '../displayFallbacks.js';
 import {
   TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
 } from './format.js';
@@ -74,10 +75,23 @@ export const VARIABLES = [
   // ── deal ──
   { key: 'deal_number', labelHe: 'מספר הזמנה', labelEn: 'Order number', category: 'deal', contexts: ['deal'],
     resolve: (ctx) => (ctx.deal?.orderNo != null ? String(ctx.deal.orderNo) : null) },
+  // deal_title is the ONE approved Deal.title exposure in all of GOS: an
+  // EXPLICIT operator choice, labeled as the internal deal name. Every other
+  // customer-facing resolver must use canonical sources + displayFallbacks.js
+  // (see the dealTitleGuard test and the CLAUDE.md invariant).
   { key: 'deal_title', labelHe: 'שם הדיל', labelEn: 'Deal title', category: 'deal', contexts: ['deal'],
     resolve: (ctx) => ctx.deal?.title || null },
   { key: 'group_name', labelHe: 'שם הקבוצה', labelEn: 'Group name', category: 'deal', contexts: ['deal'],
-    resolve: (ctx) => ctx.deal?.groupName || ctx.deal?.title || null },
+    // Real group name → product/activity name → generic. NEVER Deal.title —
+    // internal CRM wording must not leak through a silent fallback.
+    resolve: (ctx, lang) => {
+      if (ctx.deal?.groupName) return ctx.deal.groupName;
+      const product = ctx.tour?.product || ctx.deal?.product || null;
+      const productName = lang === 'en'
+        ? product?.nameEn || product?.nameHe
+        : product?.nameHe || product?.nameEn;
+      return productName || (lang === 'en' ? GENERIC_ACTIVITY_EN : GENERIC_ACTIVITY_HE);
+    } },
   { key: 'deal_link', labelHe: 'קישור לדיל (פנימי)', labelEn: 'Deal link (internal)', category: 'deal', contexts: ['deal'],
     // Canonical internal route (the client dealPath convention: orderNo IS the URL).
     resolve: (ctx) => (ctx.deal?.orderNo != null && ctx.links?.origin
