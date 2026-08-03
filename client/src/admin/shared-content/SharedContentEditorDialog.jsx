@@ -74,7 +74,8 @@ export default function SharedContentEditorDialog({
     : `תוכן משותף חדש${fixedType ? ' — ' + (TYPE_LABEL[fixedType] || '') : ''}`;
 
   return (
-    <Dialog open={open} onClose={onClose} title={title} footer={footer} size="lg">
+    // xl so the He/En editors sit side-by-side with genuinely usable columns.
+    <Dialog open={open} onClose={onClose} title={title} footer={footer} size="xl">
       <div className="space-y-4">
         {isEdit && usedByCount > 1 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-800">
@@ -104,15 +105,18 @@ export default function SharedContentEditorDialog({
           </Field>
         </div>
 
-        <Field label="תוכן (עברית)">
-          <RichEditor value={bodyHe} onChange={setBodyHe} ariaLabel="shared content he" minContentHeight={120} placeholder="תוכן, הוראות, קישורים…" />
-        </Field>
-        <Field label="Content (EN)">
-          <div dir="rtl" className="mb-1 flex justify-end">
-            <TranslateButton getSource={() => bodyHe} getTarget={() => bodyEn} onResult={setBodyEn} />
-          </div>
-          <RichEditor value={bodyEn} onChange={setBodyEn} ariaLabel="shared content en" minContentHeight={120} placeholder="Content, directions, links…" />
-        </Field>
+        {/* Side-by-side He/En bilingual layout — stacks below lg. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Field label="תוכן (עברית)">
+            <RichEditor value={bodyHe} onChange={setBodyHe} ariaLabel="shared content he" minContentHeight={140} placeholder="תוכן, הוראות, קישורים…" />
+          </Field>
+          <Field label="Content (EN)">
+            <div dir="rtl" className="mb-1 flex justify-end">
+              <TranslateButton getSource={() => bodyHe} getTarget={() => bodyEn} onResult={setBodyEn} />
+            </div>
+            <RichEditor value={bodyEn} onChange={setBodyEn} ariaLabel="shared content en" minContentHeight={140} placeholder="Content, directions, links…" />
+          </Field>
+        </div>
 
         <Field label="תמונה (אופציונלי)">
           <SingleImage image={image} onChange={setImage} folder="shared-content" />

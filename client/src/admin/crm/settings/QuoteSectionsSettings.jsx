@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import SettingsChrome from '../../settings/SettingsChrome.jsx';
+import SettingsShell from '../../settings/SettingsShell.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
@@ -95,18 +95,11 @@ export default function QuoteSectionsSettings() {
   }
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
-      <header className="mb-8">
-        <SettingsChrome />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
-          הצעות מחיר
-        </h1>
-        <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          סעיפי תוכן קבועים לשימוש חוזר בהצעות מחיר עתידיות. כרגע ניהול תוכן בלבד
-          — עדיין לא נבנית הפקת הצעות מחיר.
-        </p>
-      </header>
-
+    <SettingsShell
+      width="wide"
+      title="הצעות מחיר"
+      subtitle="סעיפי תוכן קבועים לשימוש חוזר בהצעות מחיר עתידיות. כרגע ניהול תוכן בלבד — עדיין לא נבנית הפקת הצעות מחיר."
+    >
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
       ) : error ? (
@@ -214,7 +207,7 @@ export default function QuoteSectionsSettings() {
           />
         </SettingsCard>
       )}
-    </div>
+    </SettingsShell>
   );
 }
 
@@ -285,29 +278,31 @@ function SectionEditor({ item, onClose, onSaved }) {
         )}
       </label>
 
-      <div>
-        <span className={LABEL}>תוכן עשיר (עברית)</span>
-        <RichEditor
-          value={richTextHe}
-          onChange={setRichTextHe}
-          ariaLabel="תוכן הסעיף בעברית"
-          placeholder="כתבו כאן את תוכן הסעיף..."
-          minContentHeight={160}
-        />
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between">
-          <span className={LABEL}>Rich content (EN)</span>
-          <TranslateButton getSource={() => richTextHe} getTarget={() => richTextEn} onResult={setRichTextEn} />
+      {/* Side-by-side He/En bilingual layout — stacks below lg. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div>
+          <span className={LABEL}>תוכן עשיר (עברית)</span>
+          <RichEditor
+            value={richTextHe}
+            onChange={setRichTextHe}
+            ariaLabel="תוכן הסעיף בעברית"
+            placeholder="כתבו כאן את תוכן הסעיף..."
+            minContentHeight={160}
+          />
         </div>
-        <RichEditor
-          value={richTextEn}
-          onChange={setRichTextEn}
-          ariaLabel="Section content in English"
-          placeholder="Write the section content here..."
-          minContentHeight={160}
-        />
+        <div>
+          <div className="flex items-center justify-between">
+            <span className={LABEL}>Rich content (EN)</span>
+            <TranslateButton getSource={() => richTextHe} getTarget={() => richTextEn} onResult={setRichTextEn} />
+          </div>
+          <RichEditor
+            value={richTextEn}
+            onChange={setRichTextEn}
+            ariaLabel="Section content in English"
+            placeholder="Write the section content here..."
+            minContentHeight={160}
+          />
+        </div>
       </div>
 
       <div className="flex gap-1.5">

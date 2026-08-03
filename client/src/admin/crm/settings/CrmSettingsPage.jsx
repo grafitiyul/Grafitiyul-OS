@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import SettingsChrome from '../../settings/SettingsChrome.jsx';
+import SettingsShell from '../../settings/SettingsShell.jsx';
 import {
   SettingsCard,
   SortableList,
@@ -21,39 +21,39 @@ const FIELD_LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 // stored for future automatic insertion into quotes by type/subtype.
 function QuoteContentEditor({ draft, setDraft }) {
   return (
-    <div className="w-full space-y-3 pt-1">
-      <div>
-        <span className={FIELD_LABEL}>תוכן להצעת מחיר</span>
-        <RichEditor
-          value={draft.quoteContentHe || ''}
-          onChange={(v) => setDraft((d) => ({ ...d, quoteContentHe: v }))}
-          ariaLabel="תוכן להצעת מחיר בעברית"
-          placeholder="תוכן שיופיע בהצעות מחיר…"
-          minContentHeight={140}
-        />
-        <p className="text-[11px] text-gray-400 mt-1">
-          יופיע בהמשך אוטומטית בהצעות מחיר לפי סוג/תת־סוג הארגון.
-        </p>
-      </div>
-      <div>
-        <div className="flex items-center justify-between">
-          <span className={FIELD_LABEL}>Quote content</span>
-          <TranslateButton
-            getSource={() => draft.quoteContentHe}
-            getTarget={() => draft.quoteContentEn}
-            onResult={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
+    <div className="w-full pt-1">
+      {/* Side-by-side He/En bilingual layout — stacks below lg. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div>
+          <span className={FIELD_LABEL}>תוכן להצעת מחיר</span>
+          <RichEditor
+            value={draft.quoteContentHe || ''}
+            onChange={(v) => setDraft((d) => ({ ...d, quoteContentHe: v }))}
+            ariaLabel="תוכן להצעת מחיר בעברית"
+            placeholder="תוכן שיופיע בהצעות מחיר…"
+            minContentHeight={140}
+          />
+          <p className="text-[11px] text-gray-400 mt-1">
+            יופיע בהמשך אוטומטית בהצעות מחיר לפי סוג/תת־סוג הארגון.
+          </p>
+        </div>
+        <div>
+          <div className="flex items-center justify-between">
+            <span className={FIELD_LABEL}>Quote content</span>
+            <TranslateButton
+              getSource={() => draft.quoteContentHe}
+              getTarget={() => draft.quoteContentEn}
+              onResult={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
+            />
+          </div>
+          <RichEditor
+            value={draft.quoteContentEn || ''}
+            onChange={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
+            ariaLabel="Quote content (EN)"
+            placeholder="Content for quotes…"
+            minContentHeight={140}
           />
         </div>
-        <RichEditor
-          value={draft.quoteContentEn || ''}
-          onChange={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
-          ariaLabel="Quote content (EN)"
-          placeholder="Content for quotes…"
-          minContentHeight={140}
-        />
-        <p className="text-[11px] text-gray-400 mt-1" dir="ltr">
-          Will later appear automatically in quotes based on the organization type/subtype.
-        </p>
       </div>
     </div>
   );
@@ -142,18 +142,11 @@ export default function CrmSettingsPage() {
   }, [refresh]);
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
-      <header className="mb-8">
-        <SettingsChrome />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
-          סוגי ארגון ותת-סוגים
-        </h1>
-        <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          קטלוג סוגי הארגון ותת-הסוגים. שם בעברית הוא שדה החובה; שם באנגלית
-          אופציונלי.
-        </p>
-      </header>
-
+    <SettingsShell
+      width="wide"
+      title="סוגי ארגון ותת-סוגים"
+      subtitle="קטלוג סוגי הארגון ותת-הסוגים. שם בעברית הוא שדה החובה; שם באנגלית אופציונלי."
+    >
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
       ) : error ? (
@@ -166,7 +159,7 @@ export default function CrmSettingsPage() {
           <SubtypesSection subtypes={subtypes} types={types} onChange={refresh} />
         </div>
       )}
-    </div>
+    </SettingsShell>
   );
 }
 

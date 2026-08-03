@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import SettingsChrome from '../../settings/SettingsChrome.jsx';
+import SettingsShell from '../../settings/SettingsShell.jsx';
+import SaveBar from '../../settings/SaveBar.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import Dialog from '../../common/Dialog.jsx';
 import { SettingsCard } from './catalogKit.jsx';
@@ -137,30 +138,31 @@ export default function ConfirmationEmailSettings() {
   }
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
-      <header className="mb-8">
-        <SettingsChrome />
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">מייל אישור</h1>
-          {/* QA before go-live: real deal, real resolver, real queue — only
-              the recipient differs. */}
-          <button
-            type="button"
-            onClick={() => setTestSendOpen(true)}
-            className="h-10 shrink-0 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            🧪 שלח מייל בדיקה
-          </button>
-        </div>
-        <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
+    <SettingsShell
+      width="wide"
+      title="מייל אישור"
+      actions={
+        /* QA before go-live: real deal, real resolver, real queue — only
+           the recipient differs. */
+        <button
+          type="button"
+          onClick={() => setTestSendOpen(true)}
+          className="h-10 shrink-0 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+        >
+          🧪 שלח מייל בדיקה
+        </button>
+      }
+      subtitle={
+        <>
           תבניות מייל האישור ללקוח. לכל עסקה נבחרת בדיוק תבנית אחת — לפי מוצר, סוג
           פעילות וסוג ארגון (הכי ספציפית מנצחת). בלוקי התוכן מנוהלים{' '}
           <a href="/admin/settings/crm/shared-content" className="text-blue-600 hover:underline">
             בספריית התוכן המשותף
           </a>
           .
-        </p>
-      </header>
+        </>
+      }
+    >
 
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
@@ -280,7 +282,7 @@ export default function ConfirmationEmailSettings() {
         </>
       )}
       {testSendOpen && <ConfirmationTestSendDialog onClose={() => setTestSendOpen(false)} />}
-    </div>
+    </SettingsShell>
   );
 }
 
@@ -412,28 +414,40 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
     setPickerOpen(false);
   }
 
+  // Canonical save-state: dirty is DERIVED from the actual payload vs the
+  // last-saved baseline — no false "saved", no invisible autosave.
+  const buildPayload = () => ({
+    internalName: internalName.trim(),
+    productIds,
+    activityTypes,
+    orgTypeIds,
+    priority: Number(priority) || 0,
+    subjectHe: subjectHe.trim() || null,
+    subjectEn: subjectEn.trim() || null,
+    greetingHe: greetingHe || null,
+    greetingEn: greetingEn || null,
+    closingHe: closingHe || null,
+    closingEn: closingEn || null,
+    sections,
+  });
+  const [baseline, setBaseline] = useState(() => JSON.stringify(buildPayload()));
+  const [saveError, setSaveError] = useState(null);
+  const dirty = JSON.stringify(buildPayload()) !== baseline;
+
   async function save() {
-    if (!internalName.trim()) return;
+    if (!internalName.trim()) {
+      setSaveError('שם התבנית חסר');
+      return;
+    }
     setBusy(true);
+    setSaveError(null);
     try {
-      await api.confirmationEmail.update(template.id, {
-        internalName: internalName.trim(),
-        productIds,
-        activityTypes,
-        orgTypeIds,
-        priority: Number(priority) || 0,
-        subjectHe: subjectHe.trim() || null,
-        subjectEn: subjectEn.trim() || null,
-        greetingHe: greetingHe || null,
-        greetingEn: greetingEn || null,
-        closingHe: closingHe || null,
-        closingEn: closingEn || null,
-        sections,
-      });
-      await onSaved();
-      onClose();
+      const payload = buildPayload();
+      await api.confirmationEmail.update(template.id, payload);
+      setBaseline(JSON.stringify(payload)); // clean ONLY after the server said yes
+      await onSaved(); // list refresh; the editor stays open showing ✓ נשמר
     } catch (e) {
-      alert(errText(e));
+      setSaveError(errText(e)); // failed save keeps the dirty state
     } finally {
       setBusy(false);
     }
@@ -597,15 +611,8 @@ function TemplateEditor({ template, meta, products, orgTypes, onClose, onSaved }
       <BilingualRich label="פתיח (ריק = נוסח ברירת המחדל)" he={greetingHe} en={greetingEn} onHe={setGreetingHe} onEn={setGreetingEn} meta={meta} />
       <BilingualRich label="סגיר (ריק = נוסח ברירת המחדל)" he={closingHe} en={closingEn} onHe={setClosingHe} onEn={setClosingEn} meta={meta} />
 
-      <div className="flex gap-1.5">
-        <button
-          type="button"
-          onClick={save}
-          disabled={busy || !internalName.trim()}
-          className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-        >
-          {busy ? 'שומר…' : 'שמור תבנית'}
-        </button>
+      <div className="flex items-center gap-3 border-t border-blue-100 pt-3">
+        <SaveBar dirty={dirty} saving={busy} error={saveError} onSave={save} label="שמור תבנית" className="flex-1" />
         <button type="button" onClick={onClose} className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50">
           סגור
         </button>

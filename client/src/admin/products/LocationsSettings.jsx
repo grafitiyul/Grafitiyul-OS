@@ -10,7 +10,7 @@ import {
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../../lib/api.js';
-import SettingsChrome from '../settings/SettingsChrome.jsx';
+import SettingsShell from '../settings/SettingsShell.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from './ImageUploader.jsx';
 import TranslateButton from '../common/TranslateButton.jsx';
@@ -123,13 +123,11 @@ export default function LocationsSettings() {
   }
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
-      <header className="mb-8">
-        <SettingsChrome />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">מיקומים</h1>
-        <p className="text-[15px] text-gray-500 mt-1.5">קטלוג המיקומים (עיר / אזור). משמש ליצירת וריאציות מוצר.</p>
-      </header>
-
+    <SettingsShell
+      width="wide"
+      title="מיקומים"
+      subtitle="קטלוג המיקומים (עיר / אזור). משמש ליצירת וריאציות מוצר."
+    >
       <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <div className="p-2 sm:p-3">
           {loading ? (
@@ -163,7 +161,7 @@ export default function LocationsSettings() {
           </form>
         </div>
       </section>
-    </div>
+    </SettingsShell>
   );
 }
 
@@ -292,32 +290,36 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
             )}
           </div>
 
-          <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (עברית)</label>
-            <RichEditor value={meetingHe} onChange={setMeetingHe} ariaLabel="נקודת מפגש בעברית" placeholder="תיאור נקודת המפגש…" minContentHeight={90} />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-[13px] font-medium text-gray-700">נקודת מפגש (אנגלית)</label>
-              <TranslateButton getSource={() => meetingHe} getTarget={() => meetingEn} onResult={setMeetingEn} />
+          {/* Side-by-side He/En (the canonical bilingual layout) — stacks
+              below lg so tablet/mobile never crush the two columns. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (עברית)</label>
+              <RichEditor value={meetingHe} onChange={setMeetingHe} ariaLabel="נקודת מפגש בעברית" placeholder="תיאור נקודת המפגש…" minContentHeight={110} />
             </div>
-            <RichEditor value={meetingEn} onChange={setMeetingEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={90} />
-            <p className="text-[11px] text-gray-400 mt-1.5">לפסקה באנגלית השתמשו בכפתור כיוון LTR שבסרגל העריכה.</p>
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[13px] font-medium text-gray-700">נקודת מפגש (אנגלית)</label>
+                <TranslateButton getSource={() => meetingHe} getTarget={() => meetingEn} onResult={setMeetingEn} />
+              </div>
+              <RichEditor value={meetingEn} onChange={setMeetingEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={110} />
+            </div>
           </div>
 
           {/* City marketing content — bilingual rich HTML, consumed by the quote
-              composer's city_content block. He/En parity. */}
-          <div>
-            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">תוכן שיווקי לעיר (עברית)</label>
-            <RichEditor value={marketingHe} onChange={setMarketingHe} ariaLabel="תוכן שיווקי לעיר בעברית" placeholder="תוכן שיווקי שיופיע בהצעות מחיר…" minContentHeight={120} />
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-[13px] font-medium text-gray-700">City marketing content (EN)</label>
-              <TranslateButton getSource={() => marketingHe} getTarget={() => marketingEn} onResult={setMarketingEn} />
+              composer's city_content block. He/En parity, side-by-side. */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[13px] font-medium text-gray-700 mb-1.5">תוכן שיווקי לעיר (עברית)</label>
+              <RichEditor value={marketingHe} onChange={setMarketingHe} ariaLabel="תוכן שיווקי לעיר בעברית" placeholder="תוכן שיווקי שיופיע בהצעות מחיר…" minContentHeight={120} />
             </div>
-            <RichEditor value={marketingEn} onChange={setMarketingEn} ariaLabel="City marketing content (EN)" placeholder="Marketing content for quotes…" minContentHeight={120} />
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[13px] font-medium text-gray-700">City marketing content (EN)</label>
+                <TranslateButton getSource={() => marketingHe} getTarget={() => marketingEn} onResult={setMarketingEn} />
+              </div>
+              <RichEditor value={marketingEn} onChange={setMarketingEn} ariaLabel="City marketing content (EN)" placeholder="Marketing content for quotes…" minContentHeight={120} />
+            </div>
           </div>
 
           {/* Location logistics — bilingual side-by-side, consumed automatically
