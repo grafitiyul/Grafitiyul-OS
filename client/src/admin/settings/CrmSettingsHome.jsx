@@ -79,6 +79,12 @@ export default function CrmSettingsHome() {
           description="תוכן תפעולי לשימוש חוזר — נקודות מפגש/סיום ועוד — מקור אמת אחד, בהפניה."
         />
         <CategoryCard
+          to="/admin/settings/crm/confirmation-email"
+          icon="📧"
+          title="מייל אישור"
+          description="תבניות מייל האישור ללקוח — בחירה אוטומטית לפי מוצר, סוג פעילות וסוג ארגון."
+        />
+        <CategoryCard
           to="/admin/settings/crm/payment"
           icon="💳"
           title="הגדרות תשלום"

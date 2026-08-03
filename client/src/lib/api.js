@@ -1093,6 +1093,14 @@ export const api = {
     convert: (variantId, type) => request(`/api/shared-content/variant/${variantId}/convert`, { method: 'POST', body: JSON.stringify({ type }) }),
     detach: (variantId, type) => request(`/api/shared-content/variant/${variantId}/${type}`, { method: 'DELETE' }),
   },
+  // Confirmation Email (מייל אישור) — dedicated module, NOT the Communication
+  // Center. Template management; composition/preview/send arrive in later slices.
+  confirmationEmail: {
+    list: () => request('/api/confirmation-email'),
+    create: (data) => request('/api/confirmation-email', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/confirmation-email/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/confirmation-email/${id}`, { method: 'DELETE' }),
+  },
   payment: {
     listTerms: () => request('/api/payment-config/terms'),
     createTerm: (data) => request('/api/payment-config/terms', { method: 'POST', body: JSON.stringify(data) }),

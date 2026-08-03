@@ -86,6 +86,7 @@ import quoteTemplateRouter from './routes/quoteTemplate.js';
 import quoteImagesRouter from './routes/quoteImages.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
+import confirmationEmailRouter from './routes/confirmationEmail.js';
 import tourContentRouter from './routes/tourContent.js';
 import toursRouter from './routes/tours.js';
 import openToursRouter from './routes/openTours.js';
@@ -460,6 +461,9 @@ app.use('/api/quote-images', requireAdminAuth, quoteImagesRouter);
 app.use('/api/timeline', requireAdminAuth, timelineRouter);
 // Shared Content Library — platform-wide reusable content (meeting/ending point…).
 app.use('/api/shared-content', requireAdminAuth, sharedContentRouter);
+// Confirmation Email (מייל אישור) — dedicated module: template management.
+// Deliberately separate from the Communication Center.
+app.use('/api/confirmation-email', requireAdminAuth, confirmationEmailRouter);
 // Tour Content (Phase 1a foundation) — GOS-owned internal tour content
 // (Tour → Station → ordered Steps → reusable ContentBlocks). Admin-only. No
 // recruitment migration, no permissions/access, no R2 uploads yet.

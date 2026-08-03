@@ -29,6 +29,12 @@ export const SHARED_CONTENT_TYPES = [
 
 export const SHARED_CONTENT_TYPE_KEYS = SHARED_CONTENT_TYPES.map((t) => t.key);
 
+// The subset a confirmation-email template may reference (block picker +
+// block-link validation read THIS, never a hardcoded list).
+export const CONFIRMATION_CONTENT_TYPES = SHARED_CONTENT_TYPE_KEYS.filter((k) =>
+  k.startsWith('confirmation_'),
+);
+
 const BY_KEY = Object.fromEntries(SHARED_CONTENT_TYPES.map((t) => [t.key, t]));
 
 export function isValidSharedContentType(key) {

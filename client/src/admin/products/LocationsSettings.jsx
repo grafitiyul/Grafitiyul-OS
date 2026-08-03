@@ -185,6 +185,8 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
   const [meetingEn, setMeetingEn] = useState(row.meetingPointEn || '');
   const [marketingHe, setMarketingHe] = useState(row.marketingDescHe || '');
   const [marketingEn, setMarketingEn] = useState(row.marketingDescEn || '');
+  const [logisticsHe, setLogisticsHe] = useState(row.logisticsHe || '');
+  const [logisticsEn, setLogisticsEn] = useState(row.logisticsEn || '');
   const [image, setImage] = useState(row.meetingPointImage || null);
   const [busy, setBusy] = useState(false);
 
@@ -202,6 +204,8 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
     setMeetingEn(row.meetingPointEn || '');
     setMarketingHe(row.marketingDescHe || '');
     setMarketingEn(row.marketingDescEn || '');
+    setLogisticsHe(row.logisticsHe || '');
+    setLogisticsEn(row.logisticsEn || '');
     setImage(row.meetingPointImage || null);
     setEditing(true);
   }
@@ -219,6 +223,8 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
         meetingPointEn: meetingEn || null,
         marketingDescHe: marketingHe || null,
         marketingDescEn: marketingEn || null,
+        logisticsHe: logisticsHe || null,
+        logisticsEn: logisticsEn || null,
         meetingPointImageId: image?.id || null,
       });
       setEditing(false);
@@ -305,6 +311,25 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
           <div>
             <label className="block text-[13px] font-medium text-gray-700 mb-1.5">City marketing content (EN)</label>
             <RichEditor value={marketingEn} onChange={setMarketingEn} ariaLabel="City marketing content (EN)" placeholder="Marketing content for quotes…" minContentHeight={120} />
+          </div>
+
+          {/* Location logistics — bilingual side-by-side, consumed automatically
+              by the confirmation email's location_logistics section. */}
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">לוגיסטיקה למייל אישור</label>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <span className="block text-[12px] font-medium text-gray-500 mb-1">עברית</span>
+                <RichEditor value={logisticsHe} onChange={setLogisticsHe} ariaLabel="לוגיסטיקה במיקום — עברית" placeholder="חניה, הגעה, שירותים, נגישות…" minContentHeight={110} />
+              </div>
+              <div>
+                <span className="block text-[12px] font-medium text-gray-500 mb-1">English</span>
+                <div dir="ltr">
+                  <RichEditor value={logisticsEn} onChange={setLogisticsEn} ariaLabel="Location logistics — English" placeholder="Parking, arrival, restrooms, accessibility…" minContentHeight={110} />
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">מוצג אוטומטית במייל האישור ללקוח עבור פעילויות במיקום זה.</p>
           </div>
 
           <div>

@@ -124,6 +124,12 @@ router.put(
       data.marketingDescHe = req.body.marketingDescHe || null;
     if (req.body?.marketingDescEn !== undefined)
       data.marketingDescEn = req.body.marketingDescEn || null;
+    // Location logistics (rich HTML) — consumed by the confirmation email's
+    // location_logistics section. Empty string → null, like marketingDesc.
+    if (req.body?.logisticsHe !== undefined)
+      data.logisticsHe = req.body.logisticsHe || null;
+    if (req.body?.logisticsEn !== undefined)
+      data.logisticsEn = req.body.logisticsEn || null;
     // meetingPointImageId: string attaches, null detaches (R2 object is left in
     // place — orphan sweep is deferred).
     if (req.body?.meetingPointImageId !== undefined)

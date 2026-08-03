@@ -9,6 +9,10 @@ export const SHARED_CONTENT_TYPES = [
   { key: 'safety', label: 'בטיחות' },
   { key: 'map', label: 'מפה' },
   { key: 'custom', label: 'תוכן כללי' },
+  // Confirmation Email module blocks (מייל אישור) — same library, dedicated types.
+  { key: 'confirmation_cancellation_policy', label: 'מדיניות ביטול — מייל אישור' },
+  { key: 'confirmation_what_to_bring', label: 'מה להביא — מייל אישור' },
+  { key: 'confirmation_special_block', label: 'בלוק תוכן — מייל אישור' },
 ];
 
 export const TYPE_LABEL = Object.fromEntries(SHARED_CONTENT_TYPES.map((t) => [t.key, t.label]));
