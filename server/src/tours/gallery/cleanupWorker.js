@@ -212,6 +212,7 @@ export function startTourGalleryCleanupWorker(log = console) {
           log?.warn?.(
             '[tour-gallery] ⚠️ UPLOADS WILL FAIL — ' +
               JSON.stringify({
+                keyBuilder: result.keyBuilder,
                 serverPut: result.serverPut,
                 corsPreflight: result.corsPreflight,
                 requiredAction: result.requiredAction,

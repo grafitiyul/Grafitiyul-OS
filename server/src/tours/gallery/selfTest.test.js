@@ -62,6 +62,7 @@ test('healthy bucket → ready=true across all legs', async () => {
     storage: fakeStorage(),
     fetchImpl: fakeFetch({ corsConfigured: true }),
   });
+  assert.equal(result.keyBuilder, 'ok', 'key pipeline leg must run and pass');
   assert.equal(result.serverPut, 'ok');
   assert.equal(result.corsPreflight, 'ok');
   assert.equal(result.corsGet, 'ok');

@@ -28,6 +28,7 @@ import portalGalleryRouter from './routes/portalGallery.js';
 import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
 import accountingDocSettingsRouter from './routes/accountingDocSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
+import { keyPipelineSelfCheck } from './tours/gallery/keys.js';
 import adminUsersRouter from './routes/adminUsers.js';
 import navRouter from './routes/nav.js';
 import organizationsRouter from './routes/organizations.js';
@@ -219,6 +220,20 @@ app.use('/api', (_req, res, next) => {
   next();
 });
 
+// Gallery key-pipeline validation — pure (no storage), run ONCE at startup.
+// Guards the 2026-08-03 P0 class: id-shape rejection that only manifests on
+// production-shaped ids. A failure is loud but never crashes the server; the
+// readiness self-test and /health both surface it.
+const galleryKeyCheck = keyPipelineSelfCheck();
+if (!galleryKeyCheck.ok) {
+  console.warn(
+    '[tour-gallery] ⚠️ KEY PIPELINE BROKEN — every gallery upload will fail: ' +
+      galleryKeyCheck.failures.join('; '),
+  );
+} else {
+  console.log('[tour-gallery] key pipeline validation: OK (uuid+cuid build/parse)');
+}
+
 app.get('/health', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({
@@ -226,6 +241,8 @@ app.get('/health', (_req, res) => {
     service: 'grafitiyul-os-server',
     commit: runningVersion.commit,
     builtAt: runningVersion.builtAt,
+    // 'ok' | 'failed' — details stay in startup logs / admin self-test.
+    galleryKeys: galleryKeyCheck.ok ? 'ok' : 'failed',
     timestamp: new Date().toISOString(),
   });
 });

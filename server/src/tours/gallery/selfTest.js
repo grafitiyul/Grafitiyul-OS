@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import * as r2 from '../../r2.js';
-import { originalKey } from './keys.js';
+import { keyPipelineSelfCheck, originalKey } from './keys.js';
 
 // Upload-readiness self-test — answers, in one call, "why do uploads fail?"
 // by exercising the exact legs a browser upload uses:
@@ -40,19 +40,21 @@ export async function uploadReadinessSelfTest({
     result.requiredAction = 'set R2_* env vars';
     return result;
   }
-  // The probe key goes through the SAME builder real uploads use, with a
-  // uuid-shaped tour id — production TourEvent ids are uuids, and a hand-built
-  // probe key once hid a key-builder rejection that killed every real upload
-  // (2026-08-03 P0). The builder failing IS an upload-readiness failure.
-  let key;
-  try {
-    key = originalKey(crypto.randomUUID(), crypto.randomBytes(12).toString('hex'), 'selftest.txt');
-    result.keyBuilder = 'ok';
-  } catch (e) {
-    result.keyBuilder = `error: ${e?.message || e}`;
-    result.requiredAction = 'gallery key builder rejects production-shaped ids — fix tours/gallery/keys.js';
+  // The key pipeline is validated FIRST, with both id shapes (uuid = real
+  // production TourEvent ids, cuid = dev/test ids) and a parse round-trip —
+  // a hand-built probe key once hid a builder rejection that killed every
+  // production upload while every test stayed green (2026-08-03 P0). The
+  // check is pure (docs/ops/tour-gallery-key-validation.md); a failure IS an
+  // upload-readiness failure, reported without touching storage.
+  const pipeline = keyPipelineSelfCheck();
+  result.keyBuilder = pipeline.ok ? 'ok' : `failed: ${pipeline.failures.join('; ')}`;
+  if (!pipeline.ok) {
+    result.requiredAction =
+      'gallery key pipeline rejects real id shapes — fix tours/gallery/keys.js';
     return result;
   }
+  // The live probe object also goes through the REAL builder, uuid-shaped.
+  const key = originalKey(crypto.randomUUID(), crypto.randomBytes(12).toString('hex'), 'selftest.txt');
   try {
     const putUrl = await storage.presignPut({ key, contentType: 'text/plain', expiresIn: 120 });
 
