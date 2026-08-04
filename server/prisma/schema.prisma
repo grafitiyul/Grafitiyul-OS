@@ -2182,6 +2182,17 @@ model WhatsAppTemplate {
   bodyEnHtml     String? // editor HTML, English; null/empty = language unavailable
   isActive       Boolean  @default(true)
   sortOrder      Int      @default(0)
+  // The ONE template auto-sent to a genuinely new EXTERNAL lead ("הודעת ברירת
+  // מחדל לליד חדש"). At most one row may carry true — enforced in the database
+  // by a PARTIAL unique index (see the migration), because "at most one" is an
+  // invariant, not a convention a future code path may forget. Zero starred
+  // rows is fully valid and means no automatic reply is sent at all.
+  //
+  // Deliberately a column on THIS model rather than a second template system:
+  // the star is a property of a template, deletion clears it for free, and
+  // whatsapp/newLeadTemplate.js is the one writer that maintains the invariant
+  // (starring clears the previous star; an inactive template cannot hold it).
+  isNewLeadDefault Boolean @default(false)
   sourceSystem   String? // 'airtable' for migrated rows, null for hand-created
   sourceRecordId String? // Airtable recId (migration provenance)
   createdAt      DateTime @default(now())
@@ -2189,6 +2200,53 @@ model WhatsAppTemplate {
 
   @@unique([sourceSystem, sourceRecordId])
   @@index([isActive, sortOrder])
+}
+
+// One attempted automatic reply to a genuinely new external lead — created for
+// every ATTEMPT, including the ones that send nothing. A skip is a record with
+// a reason, never silence: "no starred template", "unknown country", "missing
+// English content" are all operational facts someone must be able to read back.
+//
+// `idempotencyKey` is THE exactly-once gate: unique, claimed before anything is
+// queued, so a webhook retried 27 times produces one row and one message. The
+// key derives from the DEAL id — the immutable creation identity shared by both
+// intake paths (ingress adapters and the Pipedrive lead bridge) — with the
+// ingress event id recorded alongside for provenance.
+//
+// Loose references throughout (no FKs): this is an audit ledger and must
+// survive deletion of the deal, contact, template or queue row it describes.
+model NewLeadAutoReply {
+  id                 String   @id @default(cuid())
+  idempotencyKey     String   @unique
+  // Provenance of the intake event: 'ingress:website_form', 'pipedrive' …
+  origin             String?
+  ingressEventId     String?
+  dealId             String?
+  contactId          String?
+  // The normalized international phone the language decision was made from, and
+  // the decision itself ('he' | 'en' | null when the number is unclassifiable).
+  phoneIntl          String?
+  language           String?
+  // The template as it was AT SEND TIME. WhatsAppTemplate has no version
+  // history, so the rendered text is frozen here — a later edit to the template
+  // must not rewrite what a customer actually received.
+  templateId         String?
+  templateName       String?
+  renderedText       String?
+  accountId          String? // the WhatsApp business number selected
+  scheduledMessageId String? // the canonical queue row that transports it
+  // 'pending' — the claim, written before any work so a concurrent retry cannot
+  // start a second attempt (a row stuck here means the process died mid-attempt
+  // and is visible rather than silently re-sent) | 'queued' — handed to the
+  // WhatsApp queue | 'skipped' — deliberately not sent, with `reason` |
+  // 'failed' — an unexpected error, with `reason`
+  status             String
+  reason             String?
+  createdAt          DateTime @default(now())
+
+  @@index([dealId])
+  @@index([status, createdAt])
+  @@index([createdAt])
 }
 
 // Raw iCount IPN payloads — audit log ONLY in this slice. The receiver persists

@@ -75,6 +75,36 @@ function dealTitleFor(normalized) {
   return normalized.kind === 'order' ? `הזמנה מהאתר — ${who}` : `ליד חדש — ${who}`;
 }
 
+/**
+ * THE activity-type rule for external intake — one function, every adapter.
+ *
+ * A LEAD carries NO activity type. Until 2026-08 every ingress event without an
+ * organization was stamped 'פרטי', which is a guess dressed as data: a website
+ * or Meta lead says nothing about whether the enquiry is private, group or
+ * business, and an operator reading "פרטי" on a fresh lead had no way to tell a
+ * real classification from the default. Unclassified is the honest state — the
+ * office classifies when it knows.
+ *
+ * A PAID Woo order is 'group': a completed purchase on the store is canonically
+ * a group activity, and that IS known from the order, not inferred. Payment is
+ * read from the canonical `order.paid` flag the Woo adapter already computes
+ * (PAID_STATUSES = processing | completed | on-hold), never re-derived here.
+ *
+ * An UNPAID order stays unclassified for the same reason a lead does — nothing
+ * about it is yet known. This branch IS live: POST /ingress/woocommerce/:store
+ * ingests every order webhook regardless of status (pending, cancelled and
+ * refunded orders all create a Deal today). Whether they should is a separate
+ * product question — flagged, deliberately not changed here.
+ *
+ * A linked organization still wins over all of this — normalizeClassification
+ * forces 'business', which is the project's classification SSOT and the only
+ * place 'business' may come from.
+ */
+export function activityTypeForIngress(normalized) {
+  if (normalized?.kind !== 'order') return null;
+  return normalized.order?.paid ? 'group' : null;
+}
+
 // Money: Deal.valueMinor is BigInt minor units (agorot).
 function toMinor(total) {
   if (total === null || total === undefined) return 0n;
@@ -111,9 +141,10 @@ export async function createLeadDeal(tx, { normalized, stageKey = null }) {
   // Canonical classification rule — a linked organization forces business and
   // clears the deal-level type copy. Same call shape as the deals route and the
   // reservations processor; never re-derived here.
+  //
   const classification = normalizeClassification({
     organizationId,
-    activityType: organizationId ? 'business' : 'private',
+    activityType: organizationId ? 'business' : activityTypeForIngress(normalized),
     organizationTypeId: null,
     organizationSubtypeId: null,
     orgTypeId: null,

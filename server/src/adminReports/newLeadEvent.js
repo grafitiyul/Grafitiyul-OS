@@ -25,6 +25,7 @@
 // owns it.
 
 import { fireAdminReport } from './dispatch.js';
+import { fireNewLeadAutoReply } from '../whatsapp/newLeadAutoReply.js';
 
 /** The idempotency identity of one lead notification. */
 export const newLeadKey = (dealId) => `new_lead:${dealId}`;
@@ -45,6 +46,17 @@ export async function reportNewLead({ dealId, origin = null, eventRef = null }, 
 /**
  * Fire-and-forget entry point for the intake paths. Never awaited by the
  * caller, never able to fail a lead creation.
+ *
+ * THE single fan-out for "a genuinely new external lead was born". Two things
+ * hang off it, each independently idempotent and each unable to affect the
+ * other or the intake path:
+ *   1. Manager Report #25   — the office is told (internal)
+ *   2. the automatic WhatsApp reply — the customer is answered (external)
+ *
+ * Both are wired HERE rather than at the call sites, so the external/internal
+ * distinction stays defined by who calls this function — ingress adapters and
+ * the Pipedrive lead bridge — and a future intake channel gets both behaviours
+ * by wiring one call instead of remembering two.
  */
 export function fireNewLeadReport(payload, log = console) {
   setImmediate(() => {
@@ -52,4 +64,8 @@ export function fireNewLeadReport(payload, log = console) {
       log.error?.(`[admin-reports] new-lead report failed: ${err?.message || err}`);
     });
   });
+  fireNewLeadAutoReply(
+    { dealId: payload?.dealId, origin: payload?.origin || null, ingressEventId: payload?.eventRef || null },
+    log,
+  );
 }

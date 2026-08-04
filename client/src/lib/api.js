@@ -652,6 +652,13 @@ export const api = {
     update: (id, data) => request(`/api/whatsapp-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/whatsapp-templates/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/whatsapp-templates/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    // The star — "הודעת ברירת מחדל לליד חדש". starred:false clears it entirely
+    // (no template answers new leads), which is a valid configuration.
+    setNewLeadDefault: (id, starred) =>
+      request(`/api/whatsapp-templates/${id}/new-lead-default`, {
+        method: 'PUT',
+        body: JSON.stringify({ starred }),
+      }),
     // subject: a dealId string (Deal modal) OR { chatId } (standalone inbox).
     resolved: (id, subject, lang) =>
       request(

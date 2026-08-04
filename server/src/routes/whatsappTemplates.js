@@ -12,6 +12,11 @@ import {
   canonicalizeTemplateTokens,
   TEMPLATE_VARIABLE_KEYS,
 } from '../whatsapp/templateResolve.js';
+import {
+  setNewLeadDefault,
+  clearNewLeadDefault,
+  TemplateNotStarrableError,
+} from '../whatsapp/newLeadTemplate.js';
 
 // CRM Settings → "נוסחים לתבניות ווטסאפ" + the Deal template modal.
 //
@@ -57,6 +62,9 @@ function toClient(t) {
     hasHe: !!t.bodyHeHtml,
     hasEn: !!t.bodyEnHtml,
     isActive: t.isActive,
+    // The star: this template is auto-sent to genuinely new EXTERNAL leads.
+    // At most one template carries it; zero is valid and means no auto-reply.
+    isNewLeadDefault: !!t.isNewLeadDefault,
     sortOrder: t.sortOrder,
     sourceSystem: t.sourceSystem,
     sourceRecordId: t.sourceRecordId,
@@ -149,7 +157,14 @@ router.put(
     }
     if (b.bodyHeHtml !== undefined) data.bodyHeHtml = cleanBody(b.bodyHeHtml);
     if (b.bodyEnHtml !== undefined) data.bodyEnHtml = cleanBody(b.bodyEnHtml);
-    if (b.isActive !== undefined) data.isActive = !!b.isActive;
+    if (b.isActive !== undefined) {
+      data.isActive = !!b.isActive;
+      // Deactivating the starred template CLEARS the star in the same write: a
+      // paused template must not keep answering real customers. The rule lives
+      // in whatsapp/newLeadTemplate.js; this mirrors it so a combined edit
+      // (body + isActive) still goes through one update.
+      if (!data.isActive) data.isNewLeadDefault = false;
+    }
 
     const nextHe = data.bodyHeHtml !== undefined ? data.bodyHeHtml : existing.bodyHeHtml;
     const nextEn = data.bodyEnHtml !== undefined ? data.bodyEnHtml : existing.bodyEnHtml;
@@ -159,6 +174,38 @@ router.put(
 
     const updated = await prisma.whatsAppTemplate.update({ where: { id: existing.id }, data });
     res.json(toClient(updated));
+  }),
+);
+
+// The star — "הודעת ברירת מחדל לליד חדש".
+//
+// PUT { starred: true }  → this template becomes THE automatic reply to new
+//                          external leads, clearing whichever held the star.
+// PUT { starred: false } → no template answers new leads (a valid state).
+//
+// All rules (at most one, inactive cannot be starred) live in the one owner
+// module; this route only translates its errors into HTTP.
+router.put(
+  '/:id/new-lead-default',
+  handle(async (req, res) => {
+    const starred = req.body?.starred !== false;
+    try {
+      if (!starred) {
+        // Unstar is idempotent and unconditional — clearing is always safe.
+        const existing = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
+        if (!existing) return res.status(404).json({ error: 'not_found' });
+        await clearNewLeadDefault(prisma);
+        const after = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
+        return res.json(toClient(after));
+      }
+      const updated = await setNewLeadDefault(prisma, req.params.id);
+      return res.json(toClient(updated));
+    } catch (err) {
+      if (err instanceof TemplateNotStarrableError) {
+        return res.status(err.code === 'not_found' ? 404 : 400).json({ error: err.code });
+      }
+      throw err;
+    }
   }),
 );
 

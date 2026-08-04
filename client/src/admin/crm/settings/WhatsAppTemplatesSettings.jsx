@@ -210,6 +210,10 @@ export default function WhatsAppTemplatesSettings() {
   const [editing, setEditing] = useState(null); // draft object or null
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [alertMsg, setAlertMsg] = useState(null);
+  // { item, action: 'star' | 'unstar' } — the star confirmation.
+  const [starTarget, setStarTarget] = useState(null);
+
+  const starred = items.find((t) => t.isNewLeadDefault) || null;
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -254,6 +258,30 @@ export default function WhatsAppTemplatesSettings() {
     }
   }
 
+  // Starring is a customer-facing switch (it turns automatic replies on), so it
+  // always goes through a confirmation that states exactly what will happen —
+  // including the language gap when the template has only one language.
+  function requestStar(item) {
+    if (item.isNewLeadDefault) return setStarTarget({ item, action: 'unstar' });
+    setStarTarget({ item, action: 'star' });
+  }
+
+  async function applyStar() {
+    const { item, action } = starTarget;
+    try {
+      await api.whatsappTemplates.setNewLeadDefault(item.id, action === 'star');
+      setStarTarget(null);
+      await refresh();
+    } catch (e) {
+      setStarTarget(null);
+      setAlertMsg(
+        e?.payload?.error === 'template_inactive'
+          ? 'לא ניתן לסמן נוסח שאינו פעיל. הפעילו אותו קודם.'
+          : 'שגיאה: ' + (e.payload?.error || e.message),
+      );
+    }
+  }
+
   async function remove(item) {
     try {
       await api.whatsappTemplates.remove(item.id);
@@ -284,6 +312,51 @@ export default function WhatsAppTemplatesSettings() {
           שגיאה בטעינה: <span dir="ltr" className="font-mono">{error}</span>
         </div>
       ) : (
+        <>
+        {/* The automatic-reply state, stated plainly and separately from the
+            library below — this is a different concept from "a nice default to
+            pick when writing a message by hand", and the two must never read as
+            the same thing. */}
+        <section
+          className={`mb-5 rounded-xl border px-5 py-4 ${
+            starred ? 'border-emerald-200 bg-emerald-50/60' : 'border-gray-200 bg-gray-50'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <span className={`text-[18px] leading-none ${starred ? 'text-amber-500' : 'text-gray-300'}`}>
+              {starred ? '★' : '☆'}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[14px] font-semibold text-gray-900">הודעת ברירת מחדל לליד חדש</h2>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-gray-600">
+                נשלחת אוטומטית רק ללידים חדשים ממקורות חיצוניים (טפסים באתר, מודעות
+                Meta וכדומה). שפת ההודעה נקבעת לפי קידומת הטלפון: מספר ישראלי מקבל
+                עברית, מספר זר מקבל אנגלית.
+                <br />
+                זו אינה ברירת מחדל לשליחה ידנית — בדיל בוחרים נוסח כרגיל.
+              </p>
+              <p className="mt-2 text-[12.5px] font-medium">
+                {starred ? (
+                  <span className="text-emerald-800">
+                    כרגע נשלח: “{starred.nameHe}”
+                    {(!starred.hasHe || !starred.hasEn) && (
+                      <span className="text-amber-700">
+                        {' '}· חסר {!starred.hasHe ? 'נוסח בעברית' : 'נוסח באנגלית'} —
+                        {!starred.hasHe ? ' לידים ישראליים' : ' לידים זרים'} לא יקבלו תשובה
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-gray-500">
+                    כרגע לא מסומן אף נוסח — לא נשלחת תשובה אוטומטית ללידים חדשים. זו הגדרה
+                    תקינה.
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </section>
+
         <SettingsCard
           title="ספריית הנוסחים"
           description="גררו לשינוי הסדר — זה גם הסדר בבורר של הדיל. נוסח לא פעיל לא מוצע בדיל."
@@ -312,8 +385,41 @@ export default function WhatsAppTemplatesSettings() {
                   }`}
                 >
                   {handle}
+                  {/* The star. Disabled on inactive templates — an inactive
+                      template is offered nowhere and must never be the thing
+                      that answers a real customer. */}
+                  <button
+                    type="button"
+                    onClick={() => requestStar(item)}
+                    disabled={!item.isActive && !item.isNewLeadDefault}
+                    aria-pressed={item.isNewLeadDefault}
+                    aria-label={
+                      item.isNewLeadDefault
+                        ? `ביטול הסימון של ${item.nameHe} כהודעת ברירת מחדל לליד חדש`
+                        : `סימון ${item.nameHe} כהודעת ברירת מחדל לליד חדש`
+                    }
+                    title={
+                      !item.isActive && !item.isNewLeadDefault
+                        ? 'נוסח לא פעיל — הפעילו אותו כדי לסמן'
+                        : 'הודעת ברירת מחדל לליד חדש — נשלחת אוטומטית רק ללידים ממקורות חיצוניים'
+                    }
+                    className={`rounded-lg px-2 py-1.5 text-[17px] leading-none transition ${
+                      item.isNewLeadDefault
+                        ? 'text-amber-500 hover:bg-amber-50'
+                        : 'text-gray-300 hover:bg-gray-100 hover:text-amber-400'
+                    } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent`}
+                  >
+                    {item.isNewLeadDefault ? '★' : '☆'}
+                  </button>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-medium text-gray-900">{item.nameHe}</p>
+                    <p className="truncate text-[14px] font-medium text-gray-900">
+                      {item.nameHe}
+                      {item.isNewLeadDefault && (
+                        <span className="mr-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800 align-middle">
+                          ברירת מחדל לליד חדש
+                        </span>
+                      )}
+                    </p>
                     <p className="mt-0.5 flex items-center gap-2 text-[11.5px] text-gray-500">
                       <span className={item.hasHe ? 'text-emerald-700' : 'text-gray-300'}>
                         {item.hasHe ? '● עברית' : '○ עברית'}
@@ -349,6 +455,7 @@ export default function WhatsAppTemplatesSettings() {
             />
           )}
         </SettingsCard>
+        </>
       )}
 
       {editing && (
@@ -379,6 +486,37 @@ export default function WhatsAppTemplatesSettings() {
         danger
         onCancel={() => setConfirmDelete(null)}
         onConfirm={() => remove(confirmDelete)}
+      />
+
+      {/* Starring turns on real messages to real strangers, so the dialog names
+          the consequence, names which language gap exists (if any), and names
+          the template that loses the star. */}
+      <ConfirmDialog
+        open={!!starTarget}
+        title={starTarget?.action === 'unstar' ? 'ביטול התשובה האוטומטית' : 'הודעת ברירת מחדל לליד חדש'}
+        body={
+          !starTarget
+            ? ''
+            : starTarget.action === 'unstar'
+              ? `לבטל את הסימון של "${starTarget.item.nameHe}"? מרגע זה לא תישלח תשובה אוטומטית ללידים חדשים ממקורות חיצוניים.`
+              : [
+                  `הנוסח "${starTarget.item.nameHe}" יישלח אוטומטית לכל ליד חדש שנכנס ממקור חיצוני.`,
+                  starTarget.item.hasHe && starTarget.item.hasEn
+                    ? 'לידים ישראליים יקבלו את הנוסח בעברית, לידים זרים באנגלית.'
+                    : !starTarget.item.hasEn
+                      ? '⚠ לנוסח הזה אין תוכן באנגלית — לידים עם מספר טלפון זר לא יקבלו שום תשובה (המערכת לא תשלח להם עברית).'
+                      : '⚠ לנוסח הזה אין תוכן בעברית — לידים עם מספר טלפון ישראלי לא יקבלו שום תשובה (המערכת לא תשלח להם אנגלית).',
+                  starred && starred.id !== starTarget.item.id
+                    ? `הסימון יוסר מהנוסח "${starred.nameHe}".`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n\n')
+        }
+        confirmLabel={starTarget?.action === 'unstar' ? 'בטל סימון' : 'סמן נוסח'}
+        danger={starTarget?.action === 'star' && !(starTarget?.item.hasHe && starTarget?.item.hasEn)}
+        onCancel={() => setStarTarget(null)}
+        onConfirm={applyStar}
       />
 
       <AlertDialog open={!!alertMsg} body={alertMsg || ''} onClose={() => setAlertMsg(null)} />

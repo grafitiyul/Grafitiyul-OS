@@ -17,9 +17,20 @@
 // row is created only after that index has admitted the event.
 
 import { prisma } from '../db.js';
-import { phoneToJid } from '../whatsapp/send.js';
-import { resolveSendAccount } from '../whatsapp/senderAccount.js';
-import { normalizePhoneIntl } from '../whatsapp/phone.js';
+import { enqueueCustomerWhatsApp } from '../whatsapp/customerQueue.js';
+
+// Destination resolution, account selection and the queue row itself now come
+// from whatsapp/customerQueue.js — the same helper the new-lead automatic reply
+// uses. Keeping a second copy here is what let a real bug live: this file used
+// to assign the resolver's `{accountId, reason}` OBJECT to the row's accountId
+// column, so every customer report failed at the Prisma layer instead of
+// sending. One helper, one correct unwrap.
+
+const FAILURE_TEXT = {
+  invalid_phone: 'מספר הטלפון של הלקוח אינו תקין',
+  no_account: 'לא הוגדר חשבון WhatsApp לשליחה',
+  empty_content: 'אין תוכן לשליחה',
+};
 
 /**
  * Hand a frozen customer message to the shared queue.
@@ -30,61 +41,33 @@ import { normalizePhoneIntl } from '../whatsapp/phone.js';
  */
 export async function enqueueCustomerMessage(delivery, { attachments = [], bypassWindow = false } = {}, log = console) {
   try {
-    const phoneIntl = normalizePhoneIntl(delivery.recipientPhone);
-    const jid = phoneIntl ? phoneToJid(phoneIntl) : null;
-    if (!jid) {
-      await prisma.adminReportDelivery.update({
-        where: { id: delivery.id },
-        data: { status: 'failed_final', lastError: 'מספר הטלפון של הלקוח אינו תקין' },
-      });
-      return { ok: false, reason: 'bad_phone' };
-    }
-
-    // The report's configured account wins; otherwise the canonical resolver
-    // decides and THROWS on ambiguity rather than guessing a business number.
-    let accountId = null;
-    try {
-      accountId = resolveSendAccount({ explicit: delivery.waAccountId || null });
-    } catch { accountId = null; }
-    if (!accountId) {
-      await prisma.adminReportDelivery.update({
-        where: { id: delivery.id },
-        data: { status: 'failed_final', lastError: 'לא הוגדר חשבון WhatsApp לשליחה' },
-      });
-      return { ok: false, reason: 'no_account' };
-    }
-
-    // An existing customer chat keeps thread continuity; without one the queue
-    // sends to the JID directly (the same shape the staff-send path uses).
-    const chat = await prisma.whatsAppChat.findFirst({
-      where: { accountId, phoneNumber: phoneIntl, type: 'private' },
-      select: { id: true },
+    const queued = await enqueueCustomerWhatsApp(prisma, {
+      phone: delivery.recipientPhone,
+      text: delivery.renderedText || '',
+      // The report's configured account wins; otherwise the canonical resolver
+      // decides and refuses rather than guessing a business number.
+      explicitAccountId: delivery.waAccountId || null,
+      attachments,
+      bypassWindow,
+      createdById: `admin-report:${delivery.reportNumber}`,
     });
 
-    const row = await prisma.whatsAppScheduledMessage.create({
-      data: {
-        accountId,
-        chatId: chat?.id || null,
-        destinationJid: jid,
-        destinationPhone: phoneIntl,
-        // NO personRefId: that is what marks a row as a staff send. A customer
-        // row resolves to the 'customer' sending-window policy, which is the
-        // whole reason this goes through the queue.
-        personRefId: null,
-        attachments: attachments.length ? attachments : null,
-        bypassSendingWindow: !!bypassWindow,
-        content: delivery.renderedText || '',
-        scheduledAt: new Date(),
-        createdById: `admin-report:${delivery.reportNumber}`,
-      },
-      select: { id: true },
-    });
+    if (!queued.ok) {
+      await prisma.adminReportDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          status: 'failed_final',
+          lastError: FAILURE_TEXT[queued.reason] || queued.reason,
+        },
+      });
+      return { ok: false, reason: queued.reason };
+    }
 
     await prisma.adminReportDelivery.update({
       where: { id: delivery.id },
-      data: { status: 'queued', scheduledMessageId: row.id },
+      data: { status: 'queued', scheduledMessageId: queued.scheduledMessageId },
     });
-    return { ok: true, scheduledMessageId: row.id };
+    return { ok: true, scheduledMessageId: queued.scheduledMessageId };
   } catch (err) {
     log.error?.(`[admin-reports] customer enqueue failed: ${err?.message || err}`);
     await prisma.adminReportDelivery
