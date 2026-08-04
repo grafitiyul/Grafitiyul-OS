@@ -60,6 +60,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   const [loading, setLoading] = useState(true);
   const [reqId, setReqId] = useState(null); // set → edit mode (existing active)
   const [reqInfo, setReqInfo] = useState(null); // full active request — lifecycle visibility
+  const [enSource, setEnSource] = useState(null); // 'variant' | 'product' | 'request' | null
   // Deal-owned (read-only, kept in sync with the Deal by the server).
   const [dealAmount, setDealAmount] = useState({ amount: 0, currency: 'ILS' });
   const [form, setForm] = useState({
@@ -92,6 +93,10 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
           currency: activeRequest ? activeRequest.currency : defaults.currency || 'ILS',
         });
         setReqInfo(activeRequest || null);
+        // Where the English description came from — drives the prefill note and
+        // the "no English name on this deal" warning. Read ONCE per open, so a
+        // later render can never overwrite what the operator typed.
+        setEnSource(activeRequest ? 'request' : defaults.productDescriptionEnSource || null);
         if (activeRequest) {
           setReqId(activeRequest.id);
           setLink(publicUrl);
@@ -129,6 +134,14 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   // the request is FROZEN: no edits, no cancel — the money may already be real.
   const verifying = reqInfo?.status === 'payment_returned';
   const canSubmit = !busy && !verifying && form.productDescriptionEn.trim() && dealHasAmount;
+  // The deal carries no English product identity at all — the operator must
+  // write one. Shown only while the field is genuinely empty: the moment they
+  // type, the warning is answered and gets out of the way.
+  const missingEnglishName = !form.productDescriptionEn.trim() && !enSource;
+  const englishPrefillNote =
+    enSource === 'variant' ? 'מולא אוטומטית מהשם המסחרי באנגלית של הווריאציה. ניתן לערוך.'
+    : enSource === 'product' ? 'מולא אוטומטית משם המוצר באנגלית. ניתן לערוך.'
+    : null;
 
   async function submit() {
     if (!canSubmit) return;
@@ -286,9 +299,20 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
 
           <label className="mt-3 block text-[12px] text-gray-600">
             תיאור המוצר / השירות (אנגלית) *
-            <input value={form.productDescriptionEn} onChange={set('productDescriptionEn')} dir="ltr" className={`mt-1 ${FIELD}`}
-              placeholder="e.g. Graffiti workshop" />
+            {/* maxLength matches the provider's own limit, so the text the
+                operator sees IS exactly the text Cardcom receives. */}
+            <input value={form.productDescriptionEn} onChange={set('productDescriptionEn')} dir="ltr" maxLength={250}
+              className={`mt-1 ${FIELD}`} placeholder="e.g. Graffiti workshop" />
           </label>
+          {missingEnglishName ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+              לעסקה אין שם מוצר באנגלית, ולכן לא היה במה למלא את השדה אוטומטית.
+              הלקוח רואה את הטקסט הזה בדף התשלום ובחשבונית — הזינו תיאור באנגלית ידנית,
+              או הוסיפו שם אנגלי למוצר בקטלוג כדי שימולא אוטומטית בפעם הבאה.
+            </p>
+          ) : (
+            englishPrefillNote && <p className="text-[11.5px] text-gray-500">{englishPrefillNote}</p>
+          )}
           </fieldset>
 
           {/* Deal-owned: read-only here, synchronized with the Deal automatically

@@ -219,6 +219,18 @@ test('refresh before paying REUSES the same LowProfile (no second mint)', async 
   assert.equal(mint.calls.length, 1, 'a refresh must NEVER mint a second payable session');
 });
 
+test('Cardcom receives EXACTLY the description the operator saw in the field', async () => {
+  env();
+  const typed = 'Private Graffiti Workshop — Florentin (2h)';
+  const db = makeDb([baseRequest({ productDescriptionEn: typed })]);
+  const mint = mintStub();
+  await ensureCurrentCardcomLowProfile(db, await db.paymentRequest.findUnique({ where: { id: 'req1' } }), {
+    deps: { createLowProfile: mint },
+  });
+  assert.equal(mint.calls[0].productName, typed, 'no rewriting, no re-resolution at mint time');
+  assert.equal(mint.calls[0].productName, db._store.get('req1').productDescriptionEn);
+});
+
 // ── 3-4, 8. customer return: state moves, payment page never reopens ──────────
 
 test('customer return moves the request to payment_returned WITHOUT marking paid', async () => {

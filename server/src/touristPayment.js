@@ -5,6 +5,7 @@ import { settleDealWonFromPayment } from './deals/paymentWon.js';
 import { ICOUNT_DEAL_INCLUDE, issueDocument, systemOrigin } from './icountDocs.js';
 import { emitTimelineEvent, userOrigin } from './timeline/events.js';
 import { newPaymentToken, pickPaymentContact, resolvePublicOrigin } from './dealPayment.js';
+import { PRODUCT_LABEL_EN_INCLUDE, resolveProductLabelEn } from './productLabelEn.js';
 import { dealVatExempt } from './pricing/dealVat.js';
 
 // Cardcom tourist-payment domain logic — the "קישור לתשלום כרטיס תייר" flow.
@@ -68,11 +69,12 @@ function codedError(code, message) {
   return err;
 }
 
-// The deal shape needed to prefill/freeze a request (product English name on top
-// of the accounting include, which the auto-issue path also uses).
+// The deal shape needed to prefill/freeze a request: the accounting include
+// (also used by the auto-issue path) plus the ENGLISH-STRICT product-label
+// shape, so the canonical resolver can see the variant as well as the product.
 export const TOURIST_DEAL_INCLUDE = {
   ...ICOUNT_DEAL_INCLUDE,
-  product: { select: { nameHe: true, nameEn: true } },
+  ...PRODUCT_LABEL_EN_INCLUDE,
 };
 
 function contactNames(contact) {
@@ -90,16 +92,24 @@ function contactNames(contact) {
 
 // Modal prefill — customer-facing values + the English product, straight from
 // the Deal. `deal` must be loaded with TOURIST_DEAL_INCLUDE.
+//
+// The English description prefills from THE canonical English-strict resolver
+// (productLabelEn.js): variant commercial name → product name → nothing. It is
+// never the Hebrew name (the customer reading the Cardcom page cannot read it)
+// and never Deal.title. `productDescriptionEnSource` tells the modal whether it
+// prefilled and from where, so it can warn instead of silently opening empty.
 export function buildTouristDefaults(deal) {
   const contact = pickPaymentContact(deal.contacts)?.contact || null;
   const { en, he } = contactNames(contact);
+  const productEn = resolveProductLabelEn(deal);
   return {
     cardcomConfigured: isCardcomConfigured(),
     supportedCurrencies: SUPPORTED_CURRENCIES,
     customerName: en || he || deal.organization?.name || '',
     customerEmail: contact?.emails?.[0]?.value || '',
     customerPhone: contact?.phones?.[0]?.value || '',
-    productDescriptionEn: deal.product?.nameEn || '',
+    productDescriptionEn: productEn.label || '',
+    productDescriptionEnSource: productEn.source,
     amountIls: Number(deal.valueMinor || 0n) / 100,
     currency: deal.currency || 'ILS',
     quantity: 1,
@@ -310,17 +320,23 @@ export async function editRequest(prisma, deal, req, input, userId, { reopened =
 // silently update the row when they drifted (Deal edits already produce their
 // own changelog events; this sync adds no timeline noise). The English
 // description follows the Deal's PRODUCT only when the product itself changed
-// (and has an English name) — the wording stays operator-owned otherwise.
+// (and an English label resolves) — the wording stays operator-owned otherwise,
+// so an operator's edit is never overwritten by a later read/open.
 // Paid/canceled requests are never touched (frozen forever).
 export async function syncPendingRequestWithDeal(prisma, deal, req) {
   // Deal stays SSOT only while the request is still PAYABLE. Once the customer
   // returned (verification pending) or the request went terminal, it is frozen.
   if (!req || !PAYABLE_STATUSES.includes(req.status)) return req;
   const biz = dealBusinessFields(deal);
-  const productDescriptionEn =
-    req.productId !== biz.productId && deal.product?.nameEn
-      ? deal.product.nameEn
-      : req.productDescriptionEn;
+  // Same canonical English-strict resolver as the modal prefill — one mapping,
+  // so the page can never disagree with what the operator was shown.
+  // The resolver's most specific input is the VARIANT, so a variant switch
+  // moves the label exactly like a product switch would — otherwise the page
+  // would keep a stale label for a product identity the deal no longer has.
+  const resolvedEn = resolveProductLabelEn(deal).label;
+  const identityChanged =
+    req.productId !== biz.productId || (req.productVariantId || null) !== biz.productVariantId;
+  const productDescriptionEn = identityChanged && resolvedEn ? resolvedEn : req.productDescriptionEn;
   const changed =
     String(req.amountMinor) !== String(biz.amountMinor) ||
     req.currency !== biz.currency ||
