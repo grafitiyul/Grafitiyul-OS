@@ -34,7 +34,13 @@ const DEAL_26617 = () => ({
   quoteVersions: [{ id: 'cmsdf63ju000tagpqt2hfanc6', vatMode: 'exempt', lines: [] }],
 });
 
-const CANONICAL_26617 = 'Graffiti Tour – Classic – 1.5 hours';
+// Slice G (owner decision 2026-08-04): the tourist Cardcom label is ONLY the
+// product's plain English name — never the variant's commercial wording,
+// duration, classic/special modifiers or location. #26617's correct label is
+// therefore Product.nameEn ('Graffiti Tour'); the variant label below must
+// NEVER appear on this surface.
+const CANONICAL_26617 = 'Graffiti Tour';
+const VARIANT_LABEL = 'Graffiti Tour – Classic – 1.5 hours';
 const STALE = 'Premium Graffiti Tour & Workshop Including Wall Mural';
 
 // The product the deal briefly carried on 2026-08-03 — the source of the stale
@@ -94,22 +100,23 @@ const create = (db, deal, input) => createOrReopenRequest(db, deal, { productDes
 
 // ── 1-4. the canonical label for #26617 ──────────────────────────────────────
 
-test('#26617: the popup default is the Tel Aviv variant label, not the stale premium wording', () => {
+test('#26617: the popup default is Product.nameEn ONLY — never variant wording, never the stale premium text', () => {
   const d = buildTouristDefaults(DEAL_26617());
   assert.equal(d.productDescriptionEn, CANONICAL_26617);
-  assert.equal(d.productDescriptionEnSource, 'variant');
+  assert.equal(d.productDescriptionEnSource, 'product');
   assert.notEqual(d.productDescriptionEn, STALE);
+  assert.notEqual(d.productDescriptionEn, VARIANT_LABEL, 'the variant label belongs to agent documents, not this field');
 });
 
-test('auto-derived label follows the CURRENT variant', async () => {
+test('auto-derived label stores the product name and stays auto', async () => {
   const db = makeDb();
   const { request } = await create(db, DEAL_26617(), { productDescriptionEn: CANONICAL_26617 });
   assert.equal(request.productDescriptionEn, CANONICAL_26617);
   assert.equal(request.productDescriptionSource, 'auto');
 });
 
-test('falls back to the product English name when the variant has none', async () => {
-  const deal = { ...DEAL_26617(), productVariant: { agentDisplayNameEn: null } };
+test('the variant English label is IGNORED even when present (product name wins)', async () => {
+  const deal = DEAL_26617(); // carries agentDisplayNameEn — must not matter
   const db = makeDb();
   const { request } = await create(db, deal, { productDescriptionEn: 'anything' });
   assert.equal(request.productDescriptionEn, 'Graffiti Tour');
@@ -230,6 +237,41 @@ test('the stored/displayed text is byte-identical to the Cardcom ProductName', a
   });
   assert.equal(calls[0].productName, CANONICAL_26617);
   assert.equal(calls[0].productName, db._store.get(request.id).productDescriptionEn);
+});
+
+// ── 12-13. invoice-email choice (Slice G2) ───────────────────────────────────
+
+test('the invoice-email choice is FROZEN onto the request at create/edit', async () => {
+  const db = makeDb();
+  const deal = DEAL_26617();
+  const { request } = await create(db, deal, {
+    productDescriptionEn: CANONICAL_26617,
+    customerEmail: 'tourist@example.com',
+    emailInvoiceToCustomer: true,
+  });
+  assert.equal(request.emailInvoiceToCustomer, true, 'frozen on the row — never re-read from UI state after payment');
+
+  // Unchecking on edit updates the frozen choice (still pending).
+  const { request: off } = await editRequest(db, deal, request, {
+    productDescriptionEn: CANONICAL_26617,
+    customerEmail: 'tourist@example.com',
+    emailInvoiceToCustomer: false,
+    quantity: 1,
+  }, null);
+  assert.equal(off.emailInvoiceToCustomer, false);
+});
+
+test('requesting the invoice email WITHOUT a customer email is refused up front', async () => {
+  const db = makeDb();
+  await assert.rejects(
+    () => create(db, DEAL_26617(), {
+      productDescriptionEn: CANONICAL_26617,
+      customerEmail: '',
+      emailInvoiceToCustomer: true,
+    }),
+    (e) => e.code === 'invoice_email_requires_customer_email',
+  );
+  assert.equal(db._store.size, 0, 'nothing was created — never a silent "will be sent"');
 });
 
 test('re-opening the popup on a deal that already has a link never creates a second request', async () => {

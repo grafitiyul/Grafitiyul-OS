@@ -5,7 +5,10 @@ import { settleDealWonFromPayment } from './deals/paymentWon.js';
 import { ICOUNT_DEAL_INCLUDE, issueDocument, systemOrigin } from './icountDocs.js';
 import { emitTimelineEvent, userOrigin } from './timeline/events.js';
 import { newPaymentToken, pickPaymentContact, resolvePublicOrigin } from './dealPayment.js';
-import { PRODUCT_LABEL_EN_INCLUDE, resolveProductLabelEn } from './productLabelEn.js';
+// Tourist Cardcom uses the PRODUCT-ONLY English resolver (Product.nameEn, no
+// variant wording) — owner decision, Slice G. The variant-first resolver stays
+// for agent-reservation surfaces only.
+import { PRODUCT_LABEL_EN_INCLUDE, resolveTouristPaymentLabelEn } from './productLabelEn.js';
 import { dealVatExempt } from './pricing/dealVat.js';
 
 // Cardcom tourist-payment domain logic — the "קישור לתשלום כרטיס תייר" flow.
@@ -101,7 +104,7 @@ function contactNames(contact) {
 export function buildTouristDefaults(deal) {
   const contact = pickPaymentContact(deal.contacts)?.contact || null;
   const { en, he } = contactNames(contact);
-  const productEn = resolveProductLabelEn(deal);
+  const productEn = resolveTouristPaymentLabelEn(deal);
   return {
     cardcomConfigured: isCardcomConfigured(),
     supportedCurrencies: SUPPORTED_CURRENCIES,
@@ -123,12 +126,20 @@ function normalizeOperatorInput(input) {
   const productDescriptionEn = String(input.productDescriptionEn || '').trim();
   if (!productDescriptionEn) throw codedError('product_description_required');
   const quantity = Math.max(1, Math.round(Number(input.quantity) || 1));
+  const customerEmail = String(input.customerEmail || '').trim() || null;
+  // "שלח את החשבונית ללקוח לאחר התשלום" — FROZEN onto the request at
+  // create/update time (never re-read from UI state after payment). Requesting
+  // it without a customer email is refused up front — the system must never
+  // silently claim it will email a document it has no address for.
+  const emailInvoiceToCustomer = input.emailInvoiceToCustomer === true;
+  if (emailInvoiceToCustomer && !customerEmail) throw codedError('invoice_email_requires_customer_email');
   return {
     quantity,
     productDescriptionEn,
     customerName: String(input.customerName || '').trim() || null,
-    customerEmail: String(input.customerEmail || '').trim() || null,
+    customerEmail,
     customerPhone: String(input.customerPhone || '').trim() || null,
+    emailInvoiceToCustomer,
   };
 }
 
@@ -148,7 +159,7 @@ function normalizeOperatorInput(input) {
 // to fall back to, so any text there is necessarily human-authored and is
 // recorded as an override rather than thrown away.
 function resolveDescriptionOwnership(deal, submittedText, wantsOverride) {
-  const canonical = resolveProductLabelEn(deal).label;
+  const canonical = resolveTouristPaymentLabelEn(deal).label;
   if (!canonical) {
     return { productDescriptionEn: submittedText, productDescriptionSource: 'operator' };
   }
@@ -216,6 +227,9 @@ export function toClientRequest(req) {
     docStatus: req.docStatus,
     paidAt: req.paidAt,
     createdAt: req.createdAt,
+    // Frozen "email the invoice to the customer" choice + the delivery audit.
+    emailInvoiceToCustomer: !!req.emailInvoiceToCustomer,
+    invoiceEmailOutcome: req.invoiceEmailOutcome || null,
     // Who owns the English wording — drives the modal's override badge and
     // whether "reset to default" is offered.
     productDescriptionSource: req.productDescriptionSource || 'auto',
@@ -372,7 +386,7 @@ export async function syncPendingRequestWithDeal(prisma, deal, req) {
   const biz = dealBusinessFields(deal);
   // Same canonical English-strict resolver as the modal prefill — one mapping,
   // so the page can never disagree with what the operator was shown.
-  const resolvedEn = resolveProductLabelEn(deal).label;
+  const resolvedEn = resolveTouristPaymentLabelEn(deal).label;
   const productDescriptionEn =
     req.productDescriptionSource !== 'operator' && resolvedEn ? resolvedEn : req.productDescriptionEn;
   const changed =
@@ -690,7 +704,12 @@ async function autoIssueDocument(prisma, req, result) {
             holderName: req.customerName || undefined,
           },
         ],
-        sendEmail: false, // never auto-send to the customer
+        // Email to the customer ONLY when the operator froze that choice onto
+        // the request ("שלח את החשבונית ללקוח לאחר התשלום"). Sent via the
+        // proven iCount send_email-at-issue path; the idempotent doc creation
+        // (cardcom:<lowProfileId>) makes the email exactly-once — a webhook
+        // retry can neither re-issue nor re-send.
+        sendEmail: req.emailInvoiceToCustomer === true && !!req.customerEmail,
         idempotencyKey: `cardcom:${lowProfileId}`,
         origin: systemOrigin(),
         source: 'webhook',
@@ -698,10 +717,20 @@ async function autoIssueDocument(prisma, req, result) {
       },
       null,
     );
-    await prisma.paymentRequest.update({ where: { id: req.id }, data: { docStatus: 'issued', icountDocumentId: doc.id } });
+    // Immutable delivery audit: was email requested, and what happened.
+    const invoiceEmailOutcome = req.emailInvoiceToCustomer
+      ? (req.customerEmail ? 'sent' : 'skipped_no_email')
+      : null;
+    await prisma.paymentRequest.update({
+      where: { id: req.id },
+      data: { docStatus: 'issued', icountDocumentId: doc.id, invoiceEmailOutcome },
+    });
   } catch (err) {
     console.error(`[cardcom] auto-issue failed for request ${req.id}: ${err?.code || ''} ${err?.reason || err?.message || err}`);
-    await prisma.paymentRequest.update({ where: { id: req.id }, data: { docStatus: 'failed' } });
+    await prisma.paymentRequest.update({
+      where: { id: req.id },
+      data: { docStatus: 'failed', ...(req.emailInvoiceToCustomer ? { invoiceEmailOutcome: 'doc_failed' } : {}) },
+    });
     // Pinned note — payment is final; a document must be issued manually.
     await emitPinnedEvent(prisma, {
       dealId: req.dealId,

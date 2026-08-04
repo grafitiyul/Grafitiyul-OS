@@ -30,6 +30,7 @@ const CARDCOM_ERROR = {
   currency_unsupported: 'מטבע לא נתמך.',
   amount_missing: 'לעסקה אין סכום — קבעו שווי עסקה קודם.',
   product_description_required: 'נדרש תיאור מוצר באנגלית.',
+  invoice_email_requires_customer_email: 'סומן ״שלח את החשבונית ללקוח״ אך לא הוזן אימייל ללקוח — הזינו אימייל או בטלו את הסימון.',
 };
 function friendly(e) {
   const code = e?.payload?.error || e?.code || '';
@@ -71,6 +72,9 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
     productDescriptionEn: '',
     quantity: '1',
   });
+  // "שלח את החשבונית ללקוח לאחר התשלום" — default OFF; frozen onto the
+  // request at create/update (never read from UI state after payment).
+  const [emailInvoice, setEmailInvoice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [link, setLink] = useState(null); // stable GOS URL (create or edit result)
@@ -105,6 +109,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
         if (activeRequest) {
           setReqId(activeRequest.id);
           setLink(publicUrl);
+          setEmailInvoice(!!activeRequest.emailInvoiceToCustomer);
           setForm({
             customerName: activeRequest.customerName || '',
             customerEmail: activeRequest.customerEmail || '',
@@ -113,6 +118,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             quantity: String(activeRequest.quantity || 1),
           });
         } else {
+          setEmailInvoice(false);
           setReqId(null);
           setForm({
             customerName: defaults.customerName || '',
@@ -138,15 +144,19 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   // While the customer is back from Cardcom and the payment is being verified,
   // the request is FROZEN: no edits, no cancel — the money may already be real.
   const verifying = reqInfo?.status === 'payment_returned';
-  const canSubmit = !busy && !verifying && form.productDescriptionEn.trim() && dealHasAmount;
+  const canSubmit =
+    !busy && !verifying && form.productDescriptionEn.trim() && dealHasAmount
+    // Requesting an invoice email without an address is refused (the server
+    // enforces the same rule) — never a silent "will be sent".
+    && !(emailInvoice && !form.customerEmail.trim());
   // The deal carries no English product identity at all — the operator must
   // write one. Shown only while the field is genuinely empty: the moment they
   // type, the warning is answered and gets out of the way.
   const missingEnglishName = !form.productDescriptionEn.trim() && !enSource && !canonicalEn;
+  // The default is ALWAYS the product's plain English name (Product.nameEn) —
+  // never variant wording, duration or location (Slice G owner decision).
   const englishPrefillNote =
-    enSource === 'variant' ? 'מולא אוטומטית מהשם המסחרי באנגלית של הווריאציה. ניתן לערוך.'
-    : enSource === 'product' ? 'מולא אוטומטית משם המוצר באנגלית. ניתן לערוך.'
-    : null;
+    enSource === 'product' ? 'מולא אוטומטית משם המוצר באנגלית. ניתן לערוך.' : null;
   // A REAL override = the text differs from the Deal's current canonical label.
   // Computed from what is on screen, so it reflects the operator's live edit —
   // and is exactly the flag sent to the server, which decides ownership the
@@ -168,6 +178,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
       productDescriptionEn: description,
       productDescriptionOverride: resetDescription ? false : isOverride,
       quantity: Math.max(1, Math.round(Number(form.quantity) || 1)),
+      emailInvoiceToCustomer: emailInvoice,
     };
     try {
       const res = reqId
@@ -333,7 +344,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
                plainly and offer the one-click way back. */
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
               <span className="text-[12px] text-blue-800">
-                טקסט מותאם ידנית. ברירת המחדל לפי המוצר/הווריאציה בעסקה:
+                טקסט מותאם ידנית. ברירת המחדל — שם המוצר באנגלית:
                 <span dir="ltr" className="mx-1 font-semibold">{canonicalEn}</span>
               </span>
               <button type="button" onClick={() => submit({ resetDescription: true })} disabled={busy || verifying}
@@ -345,6 +356,36 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             englishPrefillNote && <p className="text-[11.5px] text-gray-500">{englishPrefillNote}</p>
           )}
           </fieldset>
+
+          {/* Invoice email — the document is ALWAYS issued after verified
+              payment; this controls only whether it is emailed to the customer
+              (frozen onto the request now, never re-read after payment). */}
+          <div className="mt-3">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-gray-700">
+              <input
+                type="checkbox"
+                checked={emailInvoice}
+                onChange={(e) => setEmailInvoice(e.target.checked)}
+                disabled={verifying}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-300"
+              />
+              שלח את החשבונית ללקוח לאחר התשלום
+            </label>
+            {emailInvoice && !form.customerEmail.trim() && (
+              <p className="mt-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-800">
+                לא הוזן אימייל ללקוח — לא ניתן לשלוח את החשבונית בלי כתובת. הזינו אימייל למעלה או בטלו את הסימון.
+              </p>
+            )}
+            {reqInfo?.invoiceEmailOutcome && (
+              <p className="mt-1 text-[11.5px] text-gray-500">
+                {reqInfo.invoiceEmailOutcome === 'sent'
+                  ? 'החשבונית נשלחה ללקוח במייל בעת ההפקה.'
+                  : reqInfo.invoiceEmailOutcome === 'doc_failed'
+                    ? 'הפקת המסמך נכשלה — החשבונית לא נשלחה.'
+                    : 'שליחת החשבונית דולגה — לא הייתה כתובת מייל.'}
+              </p>
+            )}
+          </div>
 
           {/* Deal-owned: read-only here, synchronized with the Deal automatically
               (also while the link is already out with the customer). */}

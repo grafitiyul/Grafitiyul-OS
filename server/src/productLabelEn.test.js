@@ -64,11 +64,11 @@ const fullDeal = (over = {}) => ({
   quoteVersions: [],
 });
 
-test('the popup prefills the English description and reports its source', () => {
+test('the popup prefills Product.nameEn ONLY — variant wording is ignored (Slice G)', () => {
   const d = fullDeal({ productVariant: { agentDisplayNameEn: 'Florentin Graffiti Tour' } });
   const defaults = buildTouristDefaults(d);
-  assert.equal(defaults.productDescriptionEn, 'Florentin Graffiti Tour');
-  assert.equal(defaults.productDescriptionEnSource, 'variant');
+  assert.equal(defaults.productDescriptionEn, 'Graffiti Tour & Workshop');
+  assert.equal(defaults.productDescriptionEnSource, 'product');
 });
 
 test('a deal with no English content prefills EMPTY with a null source (the modal warns)', () => {

@@ -12,6 +12,7 @@ import {
   toClientRequest,
   publicPaymentUrl,
 } from '../touristPayment.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Cardcom tourist-payment endpoints — mounted under /api/deals (admin-auth like
 // the other deal routers).
@@ -25,6 +26,9 @@ import {
 // bodies with its own HTML, which breaks the modal — 4xx bodies pass through.
 
 const router = Router();
+
+// Deal-scoped routes accept orderNo OR cuid — the shared resolver.
+registerDealOrderNoParam(router, 'id');
 
 function statusFor(code) {
   return code === 'cardcom_request_failed' ||

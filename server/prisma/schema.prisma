@@ -1797,6 +1797,15 @@ model PaymentRequest {
   // Accounting outcome (auto-issue is best-effort; payment stays paid regardless)
   docStatus        String  @default("none") // 'none' | 'issued' | 'failed'
   icountDocumentId String?
+  // "שלח את החשבונית ללקוח לאחר התשלום" — the operator's choice, FROZEN onto
+  // the request at create/update (never re-read from UI state after payment).
+  // Default OFF: the document is issued but not emailed. When ON, the auto-issue
+  // sends via the proven iCount doc/email path (send_email at issue time), so
+  // the idempotent doc creation also makes the email exactly-once.
+  emailInvoiceToCustomer Boolean @default(false)
+  // Immutable audit of the delivery request + outcome:
+  // null (not requested) | 'sent' | 'skipped_no_email' | 'doc_failed'
+  invoiceEmailOutcome    String?
 
   createdBy           String? // loose AdminUser id
   rawProviderResponse Json? // last Cardcom LowProfile/Create response, for audit

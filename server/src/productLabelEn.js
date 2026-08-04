@@ -52,3 +52,17 @@ export function resolveProductLabelEn(deal) {
 export function productLineEnOrGeneric(deal) {
   return resolveProductLabelEn(deal).label || GENERIC_PRODUCT_LINE_EN;
 }
+
+/**
+ * The TOURIST CARDCOM label — deliberately DIFFERENT precedence from the
+ * agent-reservation resolver above (owner decision, Slice G 2026-08-04): the
+ * payment popup / accounting line shows ONLY the product's plain English name.
+ * No variant wording, no duration, no classic/special/shortened modifiers, no
+ * location — the variant's agentDisplayNameEn belongs to agent documents, not
+ * to this field. Missing Product.nameEn → null (the modal warns; never Hebrew,
+ * never Deal.title).
+ */
+export function resolveTouristPaymentLabelEn(deal) {
+  const product = String(deal?.product?.nameEn || '').trim();
+  return product ? { label: product, source: 'product' } : { label: null, source: null };
+}
