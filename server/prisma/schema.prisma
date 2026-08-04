@@ -1752,6 +1752,15 @@ model PaymentRequest {
   amountMinor          BigInt // minor units, VAT-inclusive gross
   quantity             Int     @default(1)
   productDescriptionEn String // English line shown on the page + accounting document
+  // WHO owns the English wording above:
+  //   'auto'     — derived from the Deal's canonical English label
+  //                (productLabelEn.js) and kept equal to it on every read, so a
+  //                product/variant change refreshes it automatically.
+  //   'operator' — a deliberate manual override; never auto-refreshed.
+  // Set ONLY by an explicit operator intent flag on the create/edit API, so a
+  // script or QA restore can never silently convert 'auto' into 'operator'
+  // (the #26617 stale-label incident, 2026-08-04).
+  productDescriptionSource String @default("auto")
   customerName         String?
   customerEmail        String?
   customerPhone        String?

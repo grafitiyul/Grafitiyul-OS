@@ -132,6 +132,32 @@ function normalizeOperatorInput(input) {
   };
 }
 
+// THE decision: who owns the English wording after this write.
+//
+// Ownership is claimed ONLY by an explicit operator intent flag
+// (`productDescriptionOverride: true`, sent by the modal when the operator
+// actually edited the field) AND only when the text really differs from the
+// canonical label — re-saving the canonical value is not an override.
+//
+// Everything else resolves to 'auto' and STORES THE CANONICAL LABEL, ignoring
+// whatever text came in. That is what makes a QA restore, a migration script or
+// any other machine write incapable of freezing stale wording: without the
+// explicit flag, a write cannot invent operator ownership (#26617).
+//
+// The one exception: a deal with NO English label at all has no canonical value
+// to fall back to, so any text there is necessarily human-authored and is
+// recorded as an override rather than thrown away.
+function resolveDescriptionOwnership(deal, submittedText, wantsOverride) {
+  const canonical = resolveProductLabelEn(deal).label;
+  if (!canonical) {
+    return { productDescriptionEn: submittedText, productDescriptionSource: 'operator' };
+  }
+  const claims = wantsOverride === true && submittedText !== canonical;
+  return claims
+    ? { productDescriptionEn: submittedText, productDescriptionSource: 'operator' }
+    : { productDescriptionEn: canonical, productDescriptionSource: 'auto' };
+}
+
 // The business fields the DEAL owns while the request is pending — recomputed
 // from the live Deal on every create / edit / sync, so a Deal edit through the
 // normal workflow flows into the pending request automatically.
@@ -190,6 +216,9 @@ export function toClientRequest(req) {
     docStatus: req.docStatus,
     paidAt: req.paidAt,
     createdAt: req.createdAt,
+    // Who owns the English wording — drives the modal's override badge and
+    // whether "reset to default" is offered.
+    productDescriptionSource: req.productDescriptionSource || 'auto',
     // Operator visibility — payment-attempt lifecycle (Cardcom session, return,
     // webhook, verification) so the office can see exactly where a payment is.
     attemptNo: req.attemptNo ?? 1,
@@ -227,7 +256,8 @@ export async function createOrReopenRequest(prisma, deal, input, userId) {
   const op = normalizeOperatorInput(input);
   const biz = dealBusinessFields(deal);
   if (biz.amountMinor <= 0n) throw codedError('amount_missing');
-  const fields = { ...op, ...biz };
+  const owned = resolveDescriptionOwnership(deal, op.productDescriptionEn, input.productDescriptionOverride);
+  const fields = { ...op, ...biz, ...owned };
   const data = {
     dealId: deal.id,
     provider: 'cardcom',
@@ -273,7 +303,11 @@ export async function editRequest(prisma, deal, req, input, userId, { reopened =
   if (!EDITABLE_STATUSES.includes(req.status)) throw codedError('request_not_editable');
   const op = normalizeOperatorInput(input);
   const biz = dealBusinessFields(deal);
-  const fields = { ...op, ...biz };
+  // Ownership is re-decided on every save: an operator edit claims it, and a
+  // save WITHOUT the explicit flag (or one that just re-saves the canonical
+  // text) hands it back to 'auto' — that is the reset-to-default path.
+  const owned = resolveDescriptionOwnership(deal, op.productDescriptionEn, input.productDescriptionOverride);
+  const fields = { ...op, ...biz, ...owned };
   const pageChanged =
     String(req.amountMinor) !== String(fields.amountMinor) ||
     req.currency !== fields.currency ||
@@ -318,10 +352,18 @@ export async function editRequest(prisma, deal, req, input, userId, { reopened =
 // PENDING ↔ DEAL sync — the Deal stays the Single Source of Truth while the
 // request is pending: recompute the business fields from the live Deal and
 // silently update the row when they drifted (Deal edits already produce their
-// own changelog events; this sync adds no timeline noise). The English
-// description follows the Deal's PRODUCT only when the product itself changed
-// (and an English label resolves) — the wording stays operator-owned otherwise,
-// so an operator's edit is never overwritten by a later read/open.
+// own changelog events; this sync adds no timeline noise).
+//
+// The English description follows OWNERSHIP, not change-detection: an 'auto'
+// row is kept EQUAL to the Deal's canonical English label on every read, so a
+// product/variant change refreshes it and a value that went stale for any
+// reason repairs itself on the next open. An 'operator' row is never touched.
+//
+// (The previous rule fired only when the request's stored identity differed
+// from the Deal's. Any write that updated identity and wording together — a QA
+// restore, a script, a product changed and changed back between opens —
+// satisfied the trigger and froze stale wording forever. That is exactly how
+// Deal #26617 ended up advertising a wall-mural package for a plain tour.)
 // Paid/canceled requests are never touched (frozen forever).
 export async function syncPendingRequestWithDeal(prisma, deal, req) {
   // Deal stays SSOT only while the request is still PAYABLE. Once the customer
@@ -330,13 +372,9 @@ export async function syncPendingRequestWithDeal(prisma, deal, req) {
   const biz = dealBusinessFields(deal);
   // Same canonical English-strict resolver as the modal prefill — one mapping,
   // so the page can never disagree with what the operator was shown.
-  // The resolver's most specific input is the VARIANT, so a variant switch
-  // moves the label exactly like a product switch would — otherwise the page
-  // would keep a stale label for a product identity the deal no longer has.
   const resolvedEn = resolveProductLabelEn(deal).label;
-  const identityChanged =
-    req.productId !== biz.productId || (req.productVariantId || null) !== biz.productVariantId;
-  const productDescriptionEn = identityChanged && resolvedEn ? resolvedEn : req.productDescriptionEn;
+  const productDescriptionEn =
+    req.productDescriptionSource !== 'operator' && resolvedEn ? resolvedEn : req.productDescriptionEn;
   const changed =
     String(req.amountMinor) !== String(biz.amountMinor) ||
     req.currency !== biz.currency ||

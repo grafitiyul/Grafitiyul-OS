@@ -49,10 +49,14 @@ router.get(
     const active = await findActiveRequest(prisma, deal.id).then((r) =>
       r ? syncPendingRequestWithDeal(prisma, deal, r) : null,
     );
+    const defaults = buildTouristDefaults(deal);
     res.json({
-      defaults: buildTouristDefaults(deal),
+      defaults,
       activeRequest: active ? toClientRequest(active) : null,
       publicUrl: active ? publicPaymentUrl(req, active.token) : null,
+      // The Deal's CURRENT canonical English label, always — the modal shows it
+      // as "what reset would restore" when the wording is an operator override.
+      canonicalProductDescriptionEn: defaults.productDescriptionEn || null,
     });
   }),
 );

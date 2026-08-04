@@ -61,6 +61,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   const [reqId, setReqId] = useState(null); // set → edit mode (existing active)
   const [reqInfo, setReqInfo] = useState(null); // full active request — lifecycle visibility
   const [enSource, setEnSource] = useState(null); // 'variant' | 'product' | 'request' | null
+  const [canonicalEn, setCanonicalEn] = useState(''); // the Deal's current canonical label
   // Deal-owned (read-only, kept in sync with the Deal by the server).
   const [dealAmount, setDealAmount] = useState({ amount: 0, currency: 'ILS' });
   const [form, setForm] = useState({
@@ -84,8 +85,12 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
     setCopied(false);
     (async () => {
       try {
-        const { defaults, activeRequest, publicUrl } = await api.deals.touristPayment(dealId);
+        const { defaults, activeRequest, publicUrl, canonicalProductDescriptionEn } =
+          await api.deals.touristPayment(dealId);
         if (cancelled) return;
+        // The Deal's CURRENT canonical label — what "reset to default" restores,
+        // and the yardstick for deciding whether an edit is a real override.
+        setCanonicalEn(canonicalProductDescriptionEn || '');
         // Amount + currency always come from the Deal (server keeps a pending
         // request in sync with it) — displayed, never edited here.
         setDealAmount({
@@ -137,22 +142,31 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   // The deal carries no English product identity at all — the operator must
   // write one. Shown only while the field is genuinely empty: the moment they
   // type, the warning is answered and gets out of the way.
-  const missingEnglishName = !form.productDescriptionEn.trim() && !enSource;
+  const missingEnglishName = !form.productDescriptionEn.trim() && !enSource && !canonicalEn;
   const englishPrefillNote =
     enSource === 'variant' ? 'מולא אוטומטית מהשם המסחרי באנגלית של הווריאציה. ניתן לערוך.'
     : enSource === 'product' ? 'מולא אוטומטית משם המוצר באנגלית. ניתן לערוך.'
     : null;
+  // A REAL override = the text differs from the Deal's current canonical label.
+  // Computed from what is on screen, so it reflects the operator's live edit —
+  // and is exactly the flag sent to the server, which decides ownership the
+  // same way. Re-saving the canonical text is never an override.
+  const isOverride = !!canonicalEn && form.productDescriptionEn.trim() !== canonicalEn;
 
-  async function submit() {
-    if (!canSubmit) return;
+  async function submit({ resetDescription = false } = {}) {
+    if (resetDescription ? busy || verifying : !canSubmit) return;
     setBusy(true);
     setError(null);
     // Operator-owned fields only — amount/currency/VAT derive from the Deal.
+    // `productDescriptionOverride` is the EXPLICIT ownership claim: only a real
+    // operator edit sets it, so nothing else can freeze wording as manual.
+    const description = resetDescription ? canonicalEn : form.productDescriptionEn.trim();
     const payload = {
       customerName: form.customerName.trim() || null,
       customerEmail: form.customerEmail.trim() || null,
       customerPhone: form.customerPhone.trim() || null,
-      productDescriptionEn: form.productDescriptionEn.trim(),
+      productDescriptionEn: description,
+      productDescriptionOverride: resetDescription ? false : isOverride,
       quantity: Math.max(1, Math.round(Number(form.quantity) || 1)),
     };
     try {
@@ -161,6 +175,10 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
         : await api.deals.createTouristPayment(dealId, payload);
       setReqId(res.request.id);
       setLink(res.publicUrl);
+      // Show exactly what the server stored — the field and the Cardcom payload
+      // must never disagree.
+      setForm((s) => ({ ...s, productDescriptionEn: res.request.productDescriptionEn || '' }));
+      setReqInfo(res.request);
       emitDealTasksChanged(dealId);
       onChanged?.();
     } catch (e) {
@@ -216,7 +234,7 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
               className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50">
               סגירה
             </button>
-            <button type="button" onClick={submit} disabled={!canSubmit}
+            <button type="button" onClick={() => submit()} disabled={!canSubmit}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
               {busy ? 'שומר…' : reqId ? 'עדכון ויצירת קישור' : 'יצירת קישור'}
             </button>
@@ -310,6 +328,19 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
               הלקוח רואה את הטקסט הזה בדף התשלום ובחשבונית — הזינו תיאור באנגלית ידנית,
               או הוסיפו שם אנגלי למוצר בקטלוג כדי שימולא אוטומטית בפעם הבאה.
             </p>
+          ) : isOverride ? (
+            /* The wording no longer matches the deal's product/variant — say so
+               plainly and offer the one-click way back. */
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2">
+              <span className="text-[12px] text-blue-800">
+                טקסט מותאם ידנית. ברירת המחדל לפי המוצר/הווריאציה בעסקה:
+                <span dir="ltr" className="mx-1 font-semibold">{canonicalEn}</span>
+              </span>
+              <button type="button" onClick={() => submit({ resetDescription: true })} disabled={busy || verifying}
+                className="rounded-md border border-blue-300 bg-white px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+                איפוס לברירת המחדל
+              </button>
+            </div>
           ) : (
             englishPrefillNote && <p className="text-[11.5px] text-gray-500">{englishPrefillNote}</p>
           )}
