@@ -30,7 +30,7 @@ export default function ToastHost() {
   // around the operator is invalid CSS and drops the whole declaration.
   return (
     <div
-      className="pointer-events-none fixed top-4 right-4 z-[200] flex w-80 max-w-[90vw] flex-col gap-2"
+      className="pointer-events-none fixed bottom-4 right-4 z-[200] flex w-80 max-w-[90vw] flex-col gap-2"
       dir="rtl"
       aria-live="polite"
     >
@@ -40,10 +40,10 @@ export default function ToastHost() {
           <div
             key={t.id}
             role="status"
-            className={`pointer-events-auto flex items-start gap-2 rounded-xl border px-3.5 py-2.5 shadow-lg ${
-              success
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-                : 'border-red-200 bg-red-50 text-red-900'
+            // Fully opaque fills — no /NN alpha and no tinted-50 wash, so the
+            // toast reads as solid colour over any page content behind it.
+            className={`pointer-events-auto flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-white shadow-lg ${
+              success ? 'border-emerald-700 bg-emerald-600' : 'border-red-700 bg-red-600'
             }`}
           >
             <span className="mt-0.5 shrink-0 text-[15px] leading-none" aria-hidden>
@@ -51,19 +51,13 @@ export default function ToastHost() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px] font-semibold">{t.title}</div>
-              {t.detail && (
-                <div className={`text-[12px] ${success ? 'text-emerald-800/80' : 'text-red-800/80'}`}>
-                  {t.detail}
-                </div>
-              )}
+              {t.detail && <div className="text-[12px] text-white/85">{t.detail}</div>}
             </div>
             <button
               type="button"
               aria-label="סגירה"
               onClick={() => setToasts((cur) => cur.filter((x) => x.id !== t.id))}
-              className={`shrink-0 rounded-md px-1.5 text-[15px] leading-none ${
-                success ? 'text-emerald-700 hover:bg-emerald-100' : 'text-red-700 hover:bg-red-100'
-              }`}
+              className="shrink-0 rounded-md px-1.5 text-[15px] leading-none text-white hover:bg-white/20"
             >
               ×
             </button>
