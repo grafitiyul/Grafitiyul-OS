@@ -31,6 +31,7 @@
 
 import { extractTokens, resolveVariables, substituteTokens, TOKEN_RE } from './communication/variables.js';
 import { normalizeAfterEmptyFill } from './whatsapp/templateResolve.js';
+import { documentNotesText } from './documentNotes.js';
 
 // ── Bank tokens — resolved from the structured settings fields ───────────────
 export const BANK_VARIABLES = [
@@ -170,8 +171,12 @@ export function renderBlock(template, settings, dealCtx) {
  * Doctypes without default flags (invrec / receipt / refund) get the inherited
  * text only.
  */
-export function composeNotesForDoctype(settings, doctype, dealCtx, { inheritedNotes = '' } = {}) {
-  const inherited = String(inheritedNotes || '').trim();
+export function composeNotesForDoctype(settings, doctype, dealCtx, { inheritedNotes = '', language = 'he' } = {}) {
+  // Inherited text arrives from a provider free-form field (iCount `hwc`) —
+  // normalize at the boundary so the composition (and the dedup anchor match
+  // below) works on readable plain text, never on markup. Idempotent: text the
+  // caller already normalized passes through unchanged.
+  const inherited = documentNotesText(inheritedNotes, { language });
   const flagSuffix = doctype === 'deal' ? 'IncludeDeal' : doctype === 'invoice' ? 'IncludeInvoice' : null;
   if (!flagSuffix) return inherited;
 
@@ -191,9 +196,10 @@ export function composeNotesForDoctype(settings, doctype, dealCtx, { inheritedNo
  *  changes the document type / base selection. */
 export function buildNotesByDoctype(settings, deal, { inheritedNotes = '' } = {}) {
   const ctx = dealNotesContext(deal);
+  const language = deal?.communicationLanguage === 'en' ? 'en' : 'he';
   const map = {};
   for (const doctype of ['deal', 'invoice', 'invrec', 'receipt', 'refund']) {
-    map[doctype] = composeNotesForDoctype(settings, doctype, ctx, { inheritedNotes });
+    map[doctype] = composeNotesForDoctype(settings, doctype, ctx, { inheritedNotes, language });
   }
   return map;
 }

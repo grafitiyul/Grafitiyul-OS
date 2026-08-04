@@ -10,6 +10,7 @@ import {
   unknownDocNoteTokens,
   dealNotesContext,
 } from './accountingDocNotes.js';
+import { documentNotesText } from './documentNotes.js';
 
 // A deal shaped like an ICOUNT_DEAL_INCLUDE load (only the fields the note
 // variables read).
@@ -125,4 +126,41 @@ test('buildNotesByDoctype returns a suggestion per producible type', () => {
   assert.deepEqual(Object.keys(map).sort(), ['deal', 'invoice', 'invrec', 'receipt', 'refund'].sort());
   assert.equal(map.deal, RENDERED_STANDARD);
   assert.equal(map.receipt, '');
+});
+
+// ── Inherited notes arrive from a FREE-FORM provider field ───────────────────
+// iCount's own UI writes rich HTML into `hwc`. The composition layer normalizes
+// at the boundary (documentNotes.js), so the suggestion the operator reviews is
+// readable text — and, being already normalized, it is byte-identical to what
+// buildIssuePayload sends as `hwc`. Production shape: Deal #25707 → base
+// document 54513.
+const PROD_54513_HWC =
+  '<div>סדנה למחלקת נשים ויולדות<br /><br />ניתן לשלם בהעברה בנקאית לחשבון: ' +
+  'גרפיטיול בע"מ, הפועלים - בנק 12, סניף 500- הרימון, מס\' חשבון: 219587</div>';
+
+test('inherited HTML notes are normalized before composition (Deal #25707 shape)', () => {
+  const map = buildNotesByDoctype(DEFAULT_SETTINGS, deal, { inheritedNotes: PROD_54513_HWC });
+  // חשבונית מס קבלה inherits ONLY — this is the exact value the modal shows.
+  const invrec = map.invrec;
+  assert.ok(!/<[a-z/]/i.test(invrec), `markup leaked into the suggestion: ${invrec}`);
+  assert.equal(
+    invrec,
+    'סדנה למחלקת נשים ויולדות\n\n' +
+      'ניתן לשלם בהעברה בנקאית לחשבון: גרפיטיול בע"מ, הפועלים - בנק 12, סניף 500- הרימון, מס\' חשבון: 219587',
+  );
+  // Preview === payload: buildIssuePayload runs the same normalizer over the
+  // operator's (unedited) text and must not change a character.
+  assert.equal(documentNotesText(invrec), invrec);
+});
+
+test('dedup anchors match against normalized inherited text, not markup', () => {
+  // The bank block wrapped in HTML by iCount must still be recognised as
+  // present, so a follow-up never appends a duplicate bank paragraph.
+  const html = `<div>${DEFAULT_SETTINGS.bankTemplate.replace(/\{\{[a-z_]+\}\}/g, 'x')}</div>`;
+  const map = buildNotesByDoctype(
+    { ...DEFAULT_SETTINGS, bankIncludeInvoice: true, dealInfoIncludeInvoice: false, cancellationIncludeInvoice: false },
+    deal,
+    { inheritedNotes: html },
+  );
+  assert.equal(map.invoice.match(/ניתן לשלם בהעברה בנקאית מראש לחשבון:/g).length, 1);
 });

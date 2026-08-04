@@ -3,6 +3,7 @@ import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.j
 import { resolveBuilderVatMode, effectiveLineVatMode } from '../../shared/vatMode.mjs';
 import { normalizeDocumentVatMode, documentRowCalc, documentTotals } from '../../shared/documentVat.mjs';
 import { GENERIC_PRODUCT_LINE_EN, GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
+import { normalizeDocumentNotes, documentNotesText } from './documentNotes.js';
 
 // iCount document production — the domain logic behind "הפק מסמך".
 //
@@ -254,6 +255,9 @@ export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
   const gross = grossFromDocInfo(info) ?? localGross;
   const rows = normalizeBaseDocItems(info?.items);
   const amountIls = gross ?? round2(rows.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
+  const inheritedNotes = normalizeDocumentNotes(info?.hwc, {
+    language: deal.communicationLanguage === 'en' ? 'en' : 'he',
+  });
   console.log(
     `[icount] base prefill ${doctype}/${docnum}: items=${Array.isArray(info?.items) ? info.items.length : 'none'} gross=${gross ?? '?'} → rows=${rows.length} total=${amountIls}`,
   );
@@ -268,7 +272,16 @@ export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
     // sends on doc/create; verified live 2026-08-02 that doc/info returns it).
     // Deliberately NOT `internal_comments` — internal/provider metadata never
     // reaches a follow-up document.
-    notes: String(info?.hwc || '').trim() || null,
+    //
+    // hwc is FREE-FORM: iCount's own UI writes rich HTML into it, and legacy
+    // sources can hand back a JSON blob. THE canonical normalizer turns any of
+    // those into the readable plain text the operator edits — and, because the
+    // issue payload runs the same function, into the exact text iCount receives.
+    notes: inheritedNotes.text || null,
+    notesFormat: inheritedNotes.format,
+    // Set only when the source notes were unreadable — an internal signal for
+    // the operator, never customer-facing content.
+    notesWarning: inheritedNotes.warning,
   };
 }
 
@@ -508,6 +521,7 @@ export async function issueDocument(prisma, deal, input, userId) {
   // Document currency: an explicit override (e.g. a Cardcom charge in USD/EUR)
   // wins over the deal's default currency.
   const currency = input.currency || deal.currency || 'ILS';
+  const notesText = documentNotesText(input.notes, { language: lang });
 
   // EMAIL-first customer identity: reuse+update an existing iCount customer
   // with this email (client_id) instead of letting doc/create mint a
@@ -542,7 +556,11 @@ export async function issueDocument(prisma, deal, input, userId) {
         ...(r.details ? { long_description: r.details } : {}),
       };
     }),
-    ...(String(input.notes || '').trim() ? { hwc: String(input.notes).trim() } : {}),
+    // Notes go out through THE SAME normalizer the preview used, so the text
+    // the operator approved is the text iCount stores. Normalization is
+    // idempotent — already-normalized text passes through untouched — and it
+    // is repeated here because the payload, not the client, is the boundary.
+    ...(notesText ? { hwc: notesText } : {}),
     ...(input.sendEmail && client.email ? { send_email: 1 } : {}),
     ...payments,
   };

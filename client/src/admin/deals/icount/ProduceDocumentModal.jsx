@@ -78,6 +78,11 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   // an operator edit is never silently erased, only offered a reset.
   const [notesMap, setNotesMap] = useState(null);
   const [notesEdited, setNotesEdited] = useState(false);
+  // Internal-only signal: the base document's notes were stored in a format the
+  // server could not read (malformed legacy structure). The server sends EMPTY
+  // text in that case — raw markup/JSON never reaches this field — and the
+  // operator is told to type the notes instead.
+  const [notesWarning, setNotesWarning] = useState(null);
   const [payments, setPayments] = useState([]);
   const [baseDoc, setBaseDoc] = useState(null); // { doctype, docnum }
   const [baseLoading, setBaseLoading] = useState(false);
@@ -128,6 +133,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
         setNotes(d.notes || '');
         setNotesMap(d.notesByDoctype || null);
         setNotesEdited(false);
+        setNotesWarning(null);
         setPayments([]);
         setBaseDoc(null);
         setBaseError(null);
@@ -232,6 +238,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       const restoredMode = defaults?.vatMode || 'included';
       setVatMode(restoredMode);
       setNotesMap(defaults?.notesByDoctype || null);
+      setNotesWarning(null);
       if (!notesEdited) setNotes(defaults?.notesByDoctype?.[forDoctype] ?? '');
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
       const restoredGross = documentTotals(restored, restoredMode, defaults?.vatRate ?? 18).grossIls;
@@ -246,6 +253,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       // target type's missing default blocks (composed server-side, per
       // doctype) — applied even when the rows are unreadable, the inheritance
       // is independent of the item lines.
+      setNotesWarning(prefill.notesWarning || null);
       if (prefill.notesByDoctype) {
         setNotesMap(prefill.notesByDoctype);
         if (!notesEdited) setNotes(prefill.notesByDoctype[forDoctype] ?? '');
@@ -774,6 +782,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
                 onChange={(e) => { setNotes(e.target.value); setNotesEdited(true); }}
                 className={`mt-1 ${FIELD} resize-y leading-relaxed`}
               />
+              {notesWarning && <span className="mt-1 block text-[12px] text-amber-700">⚠ {notesWarning}</span>}
             </label>
             {!sendFlow && (
               <label className="flex items-center gap-2 pb-1 text-[13px] text-gray-700">
