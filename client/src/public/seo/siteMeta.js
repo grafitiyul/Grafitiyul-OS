@@ -15,8 +15,12 @@ export const siteMeta = {
   // is the ONE absolute URL the app hardcodes — every functional link (OAuth
   // callback, payment, tracking pixel, portal, deep links) derives from
   // PUBLIC_ORIGIN (server) or window.location.origin (client) instead.
+  // The live marketing site serves the APEX host and 301s www -> apex, and its
+  // own <link rel="canonical"> is apex. The fallback must match it exactly, or
+  // GOS-rendered pages would advertise a canonical the website itself redirects
+  // away from (two canonicals for one page).
   baseUrl:
-    (import.meta.env.VITE_PUBLIC_BASE_URL || 'https://www.grafitiyul.co.il').replace(/\/+$/, ''),
+    (import.meta.env.VITE_PUBLIC_BASE_URL || 'https://grafitiyul.co.il').replace(/\/+$/, ''),
   defaultTitle: 'גרפיטיול — סיורי וסדנאות גרפיטי',
   titleTemplate: '%s | גרפיטיול',
   defaultDescription:
