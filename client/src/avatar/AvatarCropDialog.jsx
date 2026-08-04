@@ -13,8 +13,31 @@ const VIEW = 280; // css px of the crop viewport (square)
 const OUT = 512; // output rendition size
 const MAX_ZOOM = 4;
 
+// LANGUAGE: shared by the ADMIN person card (always Hebrew) and the Guide
+// Portal (the guide's language). Its words come in as props with the existing
+// Hebrew defaults, so admin callers are unchanged.
+const DEFAULT_LABELS = {
+  title: 'מיקום התמונה',
+  loading: 'טוען תמונה…',
+  loadFailed: 'טעינת התמונה נכשלה',
+  renderFailed: 'יצירת התמונה נכשלה',
+  zoomAria: 'זום',
+  previewNote: 'כך התמונה תוצג במערכת',
+  pickAnother: '⬆ העלאת תמונה אחרת',
+  removeQuestion: 'להסיר את התמונה?',
+  remove: 'הסרה',
+  removePhoto: '🗑 הסרת תמונה',
+  saveImage: 'שמירת תמונה',
+};
+
 export default function AvatarCropDialog({
   open,
+  labels = DEFAULT_LABELS,
+  // Text direction. Defaults to RTL so every existing admin caller is
+  // unchanged; the Guide Portal passes the direction of the guide's language.
+  dir = 'rtl',
+  cancelLabel = 'ביטול',
+  savingLabel = 'שומר…',
   src, // object URL or existing /api/media/:id URL of the ORIGINAL image
   initialCrop = null, // { x, y, zoom } from a previous crop (recrop flow)
   saving = false,
@@ -45,7 +68,7 @@ export default function AvatarCropDialog({
       if (alive) setImg(el);
     };
     el.onerror = () => {
-      if (alive) setError('טעינת התמונה נכשלה');
+      if (alive) setError(labels.loadFailed);
     };
     el.src = src;
     return () => {
@@ -120,7 +143,7 @@ export default function AvatarCropDialog({
     ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     ctx.restore();
     const blob = await new Promise((r) => out.toBlob(r, 'image/webp', 0.85));
-    if (!blob) return setError('יצירת התמונה נכשלה');
+    if (!blob) return setError(labels.renderFailed);
     // Normalized crop — viewport-relative so any future viewport size works.
     onSave(blob, { x: offset.x / VIEW, y: offset.y / VIEW, zoom });
   }
@@ -132,20 +155,20 @@ export default function AvatarCropDialog({
       className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 sm:items-center"
       role="dialog"
       aria-modal="true"
-      dir="rtl"
+      dir={dir}
       onClick={saving ? undefined : onCancel}
     >
       <div
         className="w-full max-w-md rounded-t-2xl bg-white p-4 shadow-xl sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="mb-3 text-[15px] font-bold text-gray-900">מיקום התמונה</h2>
+        <h2 className="mb-3 text-[15px] font-bold text-gray-900">{labels.title}</h2>
 
         <div className="flex flex-col items-center gap-3">
           {error ? (
             <div className="py-10 text-sm text-red-600">{error}</div>
           ) : !img ? (
-            <div className="py-10 text-sm text-gray-400">טוען תמונה…</div>
+            <div className="py-10 text-sm text-gray-400">{labels.loading}</div>
           ) : (
             <>
               {/* Crop viewport — drag to reposition, wheel/slider to zoom.
@@ -183,7 +206,7 @@ export default function AvatarCropDialog({
                   value={zoom}
                   onChange={(e) => setZoom(Number(e.target.value))}
                   className="w-full"
-                  aria-label="זום"
+                  aria-label={labels.zoomAria}
                 />
                 <span className="text-lg text-gray-400" aria-hidden>
                   +
@@ -193,7 +216,7 @@ export default function AvatarCropDialog({
               {/* Avatar-size preview — the face must survive the small circle. */}
               <div className="flex items-center gap-2 text-[12px] text-gray-500">
                 <SmallPreview img={img} offset={offset} scale={scale} />
-                כך התמונה תוצג במערכת
+                {labels.previewNote}
               </div>
             </>
           )}
@@ -210,7 +233,7 @@ export default function AvatarCropDialog({
                   disabled={saving}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
-                  ⬆ העלאת תמונה אחרת
+                  {labels.pickAnother}
                 </button>
                 <input
                   ref={pickRef}
@@ -228,14 +251,14 @@ export default function AvatarCropDialog({
             {onRemove &&
               (confirmRemove ? (
                 <span className="inline-flex items-center gap-2 text-[12.5px]">
-                  <span className="text-red-700">להסיר את התמונה?</span>
+                  <span className="text-red-700">{labels.removeQuestion}</span>
                   <button
                     type="button"
                     onClick={onRemove}
                     disabled={saving}
                     className="rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
                   >
-                    הסרה
+                    {labels.remove}
                   </button>
                   <button
                     type="button"
@@ -243,7 +266,7 @@ export default function AvatarCropDialog({
                     disabled={saving}
                     className="rounded-lg px-2 py-1.5 text-gray-500 hover:bg-gray-100"
                   >
-                    ביטול
+                    {cancelLabel}
                   </button>
                 </span>
               ) : (
@@ -253,7 +276,7 @@ export default function AvatarCropDialog({
                   disabled={saving}
                   className="rounded-lg border border-red-200 px-3 py-1.5 text-[12.5px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                 >
-                  🗑 הסרת תמונה
+                  {labels.removePhoto}
                 </button>
               ))}
           </div>
@@ -266,7 +289,7 @@ export default function AvatarCropDialog({
             disabled={saving}
             className="rounded-lg px-4 py-2 text-[13.5px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
           >
-            ביטול
+            {cancelLabel}
           </button>
           <button
             type="button"
@@ -274,7 +297,7 @@ export default function AvatarCropDialog({
             disabled={saving || !img}
             className="rounded-lg bg-blue-600 px-5 py-2 text-[13.5px] font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
           >
-            {saving ? 'שומר…' : 'שמירת תמונה'}
+            {saving ? savingLabel : labels.saveImage}
           </button>
         </div>
       </div>

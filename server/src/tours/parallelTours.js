@@ -88,8 +88,12 @@ const PARALLEL_INCLUDE = {
 // One canonical CORE row per parallel tour — the full operational summary both
 // surfaces derive from. `epoch` is internal (used only for sorting) and is
 // stripped by the DTO mappers.
-function toCoreRow(tour, epoch, activeSeats) {
-  const he = isHebrewTour(tour.tourLanguage);
+// `readerLang` (optional) overrides whose language the names render in. Absent
+// → the tour's OWN customer language, which is what the admin calendar/tour
+// surfaces want. The Guide Portal passes the READING GUIDE's language, because
+// there the row is operational context for a person, not customer output.
+function toCoreRow(tour, epoch, activeSeats, readerLang = null) {
+  const he = readerLang ? readerLang !== 'en' : isHebrewTour(tour.tourLanguage);
   const productName = he ? tour.product?.nameHe : tour.product?.nameEn || tour.product?.nameHe;
   const variantName = variantDisplayName(tour, he); // canonical "product · city"
   const loc = tour.location || tour.productVariant?.location || null;
@@ -115,7 +119,11 @@ function toCoreRow(tour, epoch, activeSeats) {
 //
 // Query budget: ONE findMany over ≤3 candidate dates, then ONE batched
 // occupancyFor over the matched ids. No per-tour queries (no N+1).
-export async function findParallelTours(client, viewed, { timeZone = CALENDAR_TIMEZONE } = {}) {
+export async function findParallelTours(
+  client,
+  viewed,
+  { timeZone = CALENDAR_TIMEZONE, readerLang = null } = {},
+) {
   if (!viewed?.id || !viewed?.date || !viewed?.startTime) return [];
   const viewedEpoch = wallTimeToEpoch(viewed.date, viewed.startTime, timeZone);
   if (!Number.isFinite(viewedEpoch)) return [];
@@ -151,7 +159,7 @@ export async function findParallelTours(client, viewed, { timeZone = CALENDAR_TI
 
   return within
     .sort((a, b) => a.epoch - b.epoch || a.tour.id.localeCompare(b.tour.id))
-    .map(({ tour, epoch }) => toCoreRow(tour, epoch, occ[tour.id]?.activeSeats));
+    .map(({ tour, epoch }) => toCoreRow(tour, epoch, occ[tour.id]?.activeSeats, readerLang));
 }
 
 // ── Surface DTOs — expose only what each surface is allowed to see ───────────

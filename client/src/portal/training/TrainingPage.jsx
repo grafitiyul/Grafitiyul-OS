@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
+import { usePortalLanguage } from '../PortalLanguage.jsx';
 
 // מערכי הדרכה — the guide's permitted training content. The API already
 // returns ONLY permitted tours/stations (double server gate); this page just
 // renders what it gets:
 //   * multiple tours  → tour list; opening one shows its permitted stations
 //   * exactly one tour → skip the selector, land straight on its stations
-//   * nothing granted → polished honest empty state (no fake "בקרוב")
+//   * nothing granted → polished honest empty state (no fake "coming soon")
+//
+// LANGUAGE: the screen's own wording comes from the ONE portal registry. The
+// training CONTENT itself (tour titles, station titles/descriptions, body) is
+// single-language in the schema — Tour/TourStation/TourContentBlock have no
+// English columns at all — so it renders exactly as authored. That gap is a
+// DATA gap, listed in the English-coverage report, never patched in code.
 
 export function useTrainingFeed(token) {
   const [state, setState] = useState({ phase: 'loading' });
@@ -21,7 +28,7 @@ export function useTrainingFeed(token) {
       const data = await res.json();
       setState({ phase: 'ready', tours: data.tours || [] });
     } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
+      setState({ phase: 'error', message: e?.message || 'network_error' });
     }
   }, [token]);
   useEffect(() => {
@@ -31,28 +38,27 @@ export function useTrainingFeed(token) {
 }
 
 export function TrainingStates({ state, children }) {
+  const { t } = usePortalLanguage();
   if (state.phase === 'loading') {
-    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+    return <div className="py-10 text-center text-sm text-gray-500">{t.common.loading}</div>;
   }
   if (state.phase === 'forbidden') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">
-        מערכי ההדרכה אינם זמינים.
+        {t.training.forbidden}
       </div>
     );
   }
   if (state.phase === 'error') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
-        <div className="mb-1 text-base font-semibold text-gray-800">
-          שגיאה בטעינת מערכי ההדרכה
-        </div>
+        <div className="mb-1 text-base font-semibold text-gray-800">{t.training.errorTitle}</div>
         <button
           type="button"
           onClick={state.reload}
           className="mt-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
         >
-          נסה שוב
+          {t.common.retry}
         </button>
       </div>
     );
@@ -68,6 +74,7 @@ const KIND_ICONS = {
 };
 
 export function StationList({ token, tour }) {
+  const { rtl } = usePortalLanguage();
   return (
     <div className="space-y-2">
       {tour.stations.map((s) => (
@@ -95,7 +102,7 @@ export function StationList({ token, tour }) {
               <span className="block truncate text-[12px] text-gray-500">{s.descriptionHe}</span>
             )}
           </span>
-          <span className="text-gray-300">‹</span>
+          <span className="text-gray-300">{rtl ? '‹' : '›'}</span>
         </Link>
       ))}
     </div>
@@ -104,20 +111,21 @@ export function StationList({ token, tour }) {
 
 export default function TrainingPage() {
   const { token } = useOutletContext();
+  const { t } = usePortalLanguage();
   const state = useTrainingFeed(token);
 
   return (
     <TrainingStates state={state}>
       {state.tours && state.tours.length === 0 && (
         <div>
-          <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">מערכי הדרכה</h1>
+          <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">{t.training.title}</h1>
           <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
             <div className="mb-3 text-4xl opacity-60">🎓</div>
             <div className="mb-1 text-base font-semibold text-gray-800">
-              אין עדיין תוכן הדרכה זמין עבורך
+              {t.training.emptyTitle}
             </div>
             <p className="mx-auto max-w-xs text-sm leading-relaxed text-gray-500">
-              כשהמשרד יפתח עבורך מערכי הדרכה, התחנות שלהם יופיעו כאן.
+              {t.training.emptyBody}
             </p>
           </div>
         </div>
@@ -142,27 +150,10 @@ export default function TrainingPage() {
 
       {state.tours && state.tours.length > 1 && (
         <div>
-          <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">מערכי הדרכה</h1>
+          <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">{t.training.title}</h1>
           <div className="space-y-2">
-            {state.tours.map((t) => (
-              <Link
-                key={t.id}
-                to={`/p/${encodeURIComponent(token)}/training/tours/${encodeURIComponent(t.id)}`}
-                className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm active:bg-gray-50"
-              >
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-xl" aria-hidden>
-                  🎓
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px] font-semibold text-gray-900">
-                    {t.titleHe}
-                  </span>
-                  <span className="block text-[12px] text-gray-500">
-                    {t.stations.length === 1 ? 'תחנה אחת' : `${t.stations.length} תחנות`}
-                  </span>
-                </span>
-                <span className="text-gray-300">‹</span>
-              </Link>
+            {state.tours.map((tour) => (
+              <TourRow key={tour.id} token={token} tour={tour} />
             ))}
           </div>
         </div>
@@ -171,12 +162,41 @@ export default function TrainingPage() {
   );
 }
 
+function TourRow({ token, tour }) {
+  const { t, rtl } = usePortalLanguage();
+  return (
+    <Link
+      to={`/p/${encodeURIComponent(token)}/training/tours/${encodeURIComponent(tour.id)}`}
+      className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm active:bg-gray-50"
+    >
+      <span
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-xl"
+        aria-hidden
+      >
+        🎓
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] font-semibold text-gray-900">
+          {tour.titleHe}
+        </span>
+        <span className="block text-[12px] text-gray-500">
+          {tour.stations.length === 1
+            ? t.training.stationsOne
+            : t.training.stationsMany(tour.stations.length)}
+        </span>
+      </span>
+      <span className="text-gray-300">{rtl ? '‹' : '›'}</span>
+    </Link>
+  );
+}
+
 // Stations of ONE tour (the multi-tour case's second screen).
 export function TrainingTourPage() {
   const { token } = useOutletContext();
+  const { t, rtl } = usePortalLanguage();
   const { tourId } = useParams();
   const state = useTrainingFeed(token);
-  const tour = state.tours?.find((t) => t.id === tourId) || null;
+  const tour = state.tours?.find((x) => x.id === tourId) || null;
 
   return (
     <TrainingStates state={state}>
@@ -186,10 +206,10 @@ export function TrainingTourPage() {
             <div className="mb-3 flex items-center gap-2">
               <Link
                 to={`/p/${encodeURIComponent(token)}/training`}
-                aria-label="חזרה למערכי ההדרכה"
+                aria-label={t.training.backAria}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg text-gray-500 active:bg-gray-100"
               >
-                →
+                {rtl ? '→' : '←'}
               </Link>
               <h1 className="min-w-0 flex-1 truncate text-[17px] font-bold text-gray-900">
                 {tour.titleHe}
@@ -199,7 +219,7 @@ export function TrainingTourPage() {
           </div>
         ) : (
           <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">
-            מערך ההדרכה אינו זמין.
+            {t.training.tourNotAvailable}
           </div>
         ))}
     </TrainingStates>

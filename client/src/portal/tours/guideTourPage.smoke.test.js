@@ -232,8 +232,8 @@ test('workshop locations: one assigned + one empty → only the assigned row ren
   tourDetail = {
     ...BASE_DETAIL,
     workshopLocations: [
-      { id: 'c1', nameHe: 'סדנת גרפיטי', icon: '🎨', location: { nameHe: 'גג הסטודיו', address: 'רח׳ העם 1', instructions: null } },
-      { id: 'c2', nameHe: 'סדנת סטנסיל', icon: '🖌️', location: null }, // defensive: must be dropped
+      { id: 'c1', name: 'סדנת גרפיטי', icon: '🎨', location: { name: 'גג הסטודיו', address: 'רח׳ העם 1', instructions: null } },
+      { id: 'c2', name: 'סדנת סטנסיל', icon: '🖌️', location: null }, // defensive: must be dropped
     ],
   };
   const { container, unmount } = await renderTourPage(WORKSHOP_PERMS);
@@ -250,8 +250,8 @@ test('workshop locations: all assigned → all rows render', async () => {
   tourDetail = {
     ...BASE_DETAIL,
     workshopLocations: [
-      { id: 'c1', nameHe: 'סדנת גרפיטי', icon: '🎨', location: { nameHe: 'גג הסטודיו', address: null, instructions: null } },
-      { id: 'c2', nameHe: 'סדנת סטנסיל', icon: '🖌️', location: { nameHe: 'מרתף הגלריה', address: null, instructions: 'להביא כפפות' } },
+      { id: 'c1', name: 'סדנת גרפיטי', icon: '🎨', location: { name: 'גג הסטודיו', address: null, instructions: null } },
+      { id: 'c2', name: 'סדנת סטנסיל', icon: '🖌️', location: { name: 'מרתף הגלריה', address: null, instructions: 'להביא כפפות' } },
     ],
   };
   const { container, unmount } = await renderTourPage(WORKSHOP_PERMS);

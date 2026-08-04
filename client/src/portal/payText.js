@@ -1,12 +1,25 @@
 import { formatMinor } from '../lib/money.js';
 
-// Canonical Hebrew wording for the payroll summary cards — ONE place for the
-// singular/plural rule (the waiting card counts ACTIVITIES awaiting the
-// guide's action; it never shows their monetary total).
-export function waitingLabel(count) {
-  if (count === 0) return 'אין פעילויות הממתינות לאישורך';
-  if (count === 1) return 'פעילות אחת ממתינה לאישורך';
-  return `${count} פעילויות ממתינות לאישורך`;
+// Payroll line/summary wording for the Guide Portal.
+//
+// Every function takes the portal string registry (`t.pay`) so there is exactly
+// one place where these sentences are written per language — this module holds
+// the RULES (singular/plural, when a rate breakdown may be shown), never the
+// words.
+//
+// Note on the DATA: payroll component names, activity titles and unit nouns are
+// single-language columns in the schema (PayrollComponent.nameHe,
+// PayrollActivity.titleHe, GeneralActivityType.unitLabel*He) — there is no
+// English source anywhere in GOS. They are therefore rendered exactly as
+// stored, never translated in code, and are listed in the English-coverage
+// report as a data gap.
+
+// The waiting card counts ACTIVITIES awaiting the guide's action; it never
+// shows their monetary total.
+export function waitingLabel(count, t) {
+  if (count === 0) return t.waitingNone;
+  if (count === 1) return t.waitingOne;
+  return t.waitingMany(count);
 }
 
 // A quantity without noisy trailing zeros: 1.5 → "1.5", 2 → "2", 1.25 → "1.25".
@@ -28,7 +41,11 @@ export function formatQuantity(n) {
 //   quantity === 1 → singular noun ("1 שעה"); otherwise plural ("1.5 שעות").
 //   rate noun is always the singular ("₪40 לשעה"). Missing nouns degrade
 //   gracefully to the bare multiplier.
-export function lineCalcLabel(line) {
+//
+// The unit noun is Hebrew-only DATA. The "ל" rate preposition only makes sense
+// glued to a Hebrew noun, so for an English reader the bare multiplier form is
+// used with the stored noun appended — honest, and never a fake translation.
+export function lineCalcLabel(line, lang = 'he') {
   const { unitPriceMinor, quantity, amountMinor, unitLabelSingular, unitLabelPlural } = line || {};
   if (unitPriceMinor == null || quantity == null) return null;
   if (Math.round(Number(unitPriceMinor) * Number(quantity)) !== Number(amountMinor)) return null;
@@ -39,16 +56,19 @@ export function lineCalcLabel(line) {
   const plural = String(unitLabelPlural || '').trim();
   if (!singular && !plural) return `${rate} × ${qty}`;
 
-  const ratePart = singular ? `${rate} ל${singular}` : rate;
   const qtyNoun = Number(quantity) === 1 ? singular || plural : plural || singular;
+  const ratePart = lang === 'en' ? rate : singular ? `${rate} ל${singular}` : rate;
   return `${ratePart} × ${qty} ${qtyNoun}`.trim();
 }
 
 // User-facing label for a payroll component in the guide portal. Tours show
 // "קיזוז" for the deduction component historically named "ניכוי" — a display
 // relabel only; the stored componentNameHe and the accounting concept are
-// unchanged.
-export function lineDisplayName(name, sourceType) {
-  if (sourceType === 'tour_event' && name === 'ניכוי') return 'קיזוז';
+// unchanged. The rule is defined over the HEBREW stored name and has no English
+// counterpart, so it applies regardless of the reader's language.
+export function lineDisplayName(name, sourceType, t) {
+  if (sourceType === 'tour_event' && name === t.deductionStoredName) {
+    return t.deductionDisplayName;
+  }
   return name;
 }

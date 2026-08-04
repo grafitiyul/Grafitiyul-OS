@@ -3,15 +3,23 @@ import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import AvatarCropDialog from '../avatar/AvatarCropDialog.jsx';
 import BankDetailsFields from '../profile/BankDetailsFields.jsx';
+import { usePortalLanguage } from './PortalLanguage.jsx';
 
 // פרטים אישיים — the guide's own profile. Editable (when the server-side
 // editPersonalProfile permission is on): full name, photo (shared crop
 // tool), phone, email, and bank details (beneficiary / bank / branch /
 // account). Every save is recorded in the immutable person changelog on the
 // server; the shell header refreshes immediately after save.
+//
+// LANGUAGE: labels and errors come from the ONE portal registry. The DISPLAYED
+// name (hero) is the canonical staff-name resolution in the guide's language;
+// the EDITABLE field is the legacy PersonRef name the portal has always written
+// (`editableName`), so an edit here can never silently overwrite the
+// management-owned bilingual name pair.
 
 export default function ProfilePage() {
   const { token, refreshHome } = useOutletContext();
+  const { t } = usePortalLanguage();
   const [state, setState] = useState({ phase: 'loading' });
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -31,14 +39,14 @@ export default function ProfilePage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setForm({
-        displayName: data.displayName || '',
+        displayName: data.editableName ?? data.displayName ?? '',
         phone: data.phone || '',
         email: data.email || '',
         bank: { ...data.bank },
       });
       setState({ phase: 'ready', data });
     } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
+      setState({ phase: 'error', message: e?.message || 'network_error' });
     }
   }, [apiBase]);
 
@@ -64,16 +72,11 @@ export default function ProfilePage() {
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
-        const messages = {
-          empty_name: 'יש למלא שם.',
-          invalid_phone: 'מספר הטלפון אינו תקין.',
-          invalid_email: 'כתובת האימייל אינה תקינה.',
-          not_allowed: 'עדכון פרטים אינו זמין.',
-        };
-        throw new Error(messages[payload?.error] || `HTTP ${res.status}`);
+        throw new Error(t.profile.saveErrors[payload?.error] || `HTTP ${res.status}`);
       }
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2000);
+      await load(); // the hero name re-resolves from the server, never guessed here
       refreshHome?.(); // header shows the new name immediately
     } catch (e) {
       setSaveError(e.message);
@@ -115,7 +118,7 @@ export default function ProfilePage() {
       await load();
       refreshHome?.();
     } catch (e) {
-      alert('הסרת התמונה נכשלה: ' + e.message);
+      alert(t.profile.photoRemoveFailed + e.message);
     } finally {
       setPhotoBusy(false);
     }
@@ -152,25 +155,25 @@ export default function ProfilePage() {
       await load();
       refreshHome?.(); // header shows the new photo immediately
     } catch (e) {
-      alert('שמירת התמונה נכשלה: ' + e.message);
+      alert(t.profile.photoSaveFailed + e.message);
     } finally {
       setPhotoBusy(false);
     }
   }
 
   if (state.phase === 'loading') {
-    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+    return <div className="py-10 text-center text-sm text-gray-500">{t.common.loading}</div>;
   }
   if (state.phase === 'error') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
-        <div className="mb-1 text-base font-semibold text-gray-800">שגיאה בטעינת הפרטים</div>
+        <div className="mb-1 text-base font-semibold text-gray-800">{t.profile.loadError}</div>
         <button
           type="button"
           onClick={load}
           className="mt-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
         >
-          נסה שוב
+          {t.common.retry}
         </button>
       </div>
     );
@@ -178,10 +181,11 @@ export default function ProfilePage() {
 
   const p = state.data;
   const canEdit = p.canEdit;
+  const lifecycleLabel = p.lifecycleStage ? t.profile.lifecycle[p.lifecycleStage] : null;
 
   return (
     <div>
-      <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">פרטים אישיים</h1>
+      <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">{t.profile.title}</h1>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         {/* photo + name row */}
@@ -191,7 +195,7 @@ export default function ProfilePage() {
             disabled={!canEdit || photoBusy}
             onClick={openEditor}
             className="relative shrink-0"
-            aria-label="עריכת תמונת פרופיל"
+            aria-label={t.profile.editPhotoAria}
           >
             {p.imageUrl ? (
               <img
@@ -205,15 +209,19 @@ export default function ProfilePage() {
               </div>
             )}
             {canEdit && (
-              <span className="absolute -bottom-0.5 -left-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-[11px] shadow-sm">
+              // The badge sits on the TRAILING corner in both directions
+              // (logical inset, so it mirrors automatically).
+              <span className="absolute -bottom-0.5 end-[-2px] flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-[11px] shadow-sm">
                 ✎
               </span>
             )}
           </button>
           <div className="min-w-0 flex-1">
             <div className="text-[17px] font-bold text-gray-900">{p.displayName}</div>
-            {p.lifecycleLabel && (
-              <div className="text-[12.5px] text-gray-500">{p.lifecycleLabel} · גרפיטיול</div>
+            {lifecycleLabel && (
+              <div className="text-[12.5px] text-gray-500">
+                {lifecycleLabel} · {t.profile.org}
+              </div>
             )}
             {canEdit && p.imageUrl && (
               <button
@@ -222,7 +230,7 @@ export default function ProfilePage() {
                 disabled={photoBusy}
                 className="mt-1 text-[12px] font-semibold text-blue-700 active:underline"
               >
-                עריכת התמונה
+                {t.profile.editPhoto}
               </button>
             )}
           </div>
@@ -241,13 +249,13 @@ export default function ProfilePage() {
         {/* identity fields */}
         <div className="mt-5 space-y-3">
           <Field
-            label="שם מלא"
+            label={t.profile.fullName}
             value={form.displayName}
             disabled={!canEdit}
             onChange={(v) => setForm((f) => ({ ...f, displayName: v }))}
           />
           <Field
-            label="טלפון"
+            label={t.profile.phone}
             dir="ltr"
             type="tel"
             value={form.phone}
@@ -255,7 +263,7 @@ export default function ProfilePage() {
             onChange={(v) => setForm((f) => ({ ...f, phone: v }))}
           />
           <Field
-            label="אימייל"
+            label={t.profile.email}
             dir="ltr"
             type="email"
             value={form.email}
@@ -267,10 +275,11 @@ export default function ProfilePage() {
 
       {/* bank details */}
       <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-[13px] font-bold text-gray-500">פרטי חשבון לתשלום</h2>
+        <h2 className="mb-3 text-[13px] font-bold text-gray-500">{t.profile.bankSection}</h2>
         <BankSection
           value={form.bank}
           disabled={!canEdit}
+          labels={t.bank}
           onChange={(patch) => setForm((f) => ({ ...f, bank: { ...f.bank, ...patch } }))}
         />
       </div>
@@ -283,15 +292,15 @@ export default function ProfilePage() {
             disabled={saving}
             className="rounded-xl bg-blue-600 px-5 py-2.5 text-[14px] font-semibold text-white active:bg-blue-700 disabled:opacity-60"
           >
-            {saving ? 'שומר…' : 'שמירה'}
+            {saving ? t.common.saving : t.common.save}
           </button>
           {savedFlash && (
-            <span className="text-[13px] font-semibold text-emerald-600">✓ נשמר</span>
+            <span className="text-[13px] font-semibold text-emerald-600">✓ {t.common.saved}</span>
           )}
           {saveError && <span className="text-[13px] text-red-600">{saveError}</span>}
         </div>
       ) : (
-        <p className="mt-4 px-1 text-[12.5px] text-gray-400">לעדכון פרטים יש לפנות למשרד.</p>
+        <p className="mt-4 px-1 text-[12.5px] text-gray-400">{t.profile.readOnlyNote}</p>
       )}
 
       {cropState && (
@@ -301,6 +310,9 @@ export default function ProfilePage() {
           src={cropState.src}
           initialCrop={cropState.initialCrop || null}
           saving={photoBusy}
+          labels={t.avatar}
+          cancelLabel={t.common.cancel}
+          savingLabel={t.common.saving}
           onCancel={() => !photoBusy && setCropState(null)}
           onSave={saveCrop}
           onPickNew={pickNewPhoto}
@@ -311,7 +323,7 @@ export default function ProfilePage() {
   );
 }
 
-function BankSection({ value, disabled, onChange }) {
+function BankSection({ value, disabled, labels, onChange }) {
   const [banks, setBanks] = useState([]);
   useEffect(() => {
     api.bankCatalog
@@ -320,7 +332,13 @@ function BankSection({ value, disabled, onChange }) {
       .catch(() => setBanks([])); // catalog failure never blocks editing
   }, []);
   return (
-    <BankDetailsFields value={value} onChange={onChange} banks={banks} disabled={disabled} />
+    <BankDetailsFields
+      value={value}
+      onChange={onChange}
+      banks={banks}
+      disabled={disabled}
+      labels={labels}
+    />
   );
 }
 

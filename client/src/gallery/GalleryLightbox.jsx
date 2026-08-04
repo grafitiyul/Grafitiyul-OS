@@ -7,6 +7,17 @@ import { formatBytes, uploaderLabel } from './galleryFormat.js';
 // buttons (download always; staff/guide add cover/delete) while the customer
 // page stays clean of any management control.
 
+// LANGUAGE: shared by every gallery surface (office, guide portal, customer
+// page), so direction and the handful of aria labels arrive as props with the
+// existing Hebrew/RTL defaults.
+const DEFAULT_LABELS = {
+  itemAria: 'מדיה',
+  uploadedBy: 'העלה',
+  closeAria: 'סגירה',
+  prevAria: 'הקודם',
+  nextAria: 'הבא',
+};
+
 export default function GalleryLightbox({
   media,
   index,
@@ -14,6 +25,8 @@ export default function GalleryLightbox({
   onNavigate,
   actions = null,
   showUploader = false,
+  dir = 'rtl',
+  labels = DEFAULT_LABELS,
 }) {
   const m = media[index];
   const [touchStartX, setTouchStartX] = useState(null);
@@ -26,31 +39,36 @@ export default function GalleryLightbox({
     [index, media.length, onNavigate],
   );
 
+  const rtl = dir !== 'ltr';
+
   useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape') onClose();
-      // RTL: הקודם is to the RIGHT.
-      else if (e.key === 'ArrowRight') go(-1);
-      else if (e.key === 'ArrowLeft') go(1);
+      // "Previous" is the arrow that points at the READING start edge: RIGHT
+      // in RTL, LEFT in LTR. Same key, opposite meaning per direction.
+      else if (e.key === 'ArrowRight') go(rtl ? -1 : 1);
+      else if (e.key === 'ArrowLeft') go(rtl ? 1 : -1);
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [go, onClose]);
+  }, [go, onClose, rtl]);
 
   if (!m) return null;
 
   return (
     <div
-      dir="rtl"
+      dir={dir}
       role="dialog"
       aria-modal="true"
-      aria-label={m.originalFileName || 'מדיה'}
+      aria-label={m.originalFileName || labels.itemAria}
       className="fixed inset-0 z-[80] flex flex-col bg-black/95"
       onTouchStart={(e) => setTouchStartX(e.touches[0]?.clientX ?? null)}
       onTouchEnd={(e) => {
         if (touchStartX == null) return;
         const dx = (e.changedTouches[0]?.clientX ?? touchStartX) - touchStartX;
-        if (Math.abs(dx) > 60) go(dx > 0 ? -1 : 1); // swipe follows RTL reading
+        // Swiping toward the reading START edge goes back: in RTL that is a
+        // rightward swipe, in LTR a leftward one.
+        if (Math.abs(dx) > 60) go(dx > 0 === rtl ? -1 : 1);
         setTouchStartX(null);
       }}
     >
@@ -61,7 +79,11 @@ export default function GalleryLightbox({
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-white/50">
             <span dir="ltr" className="tabular-nums">{index + 1} / {media.length}</span>
             {m.byteSize > 0 && <span dir="ltr">{formatBytes(m.byteSize)}</span>}
-            {showUploader && uploaderLabel(m) && <span>העלה: {uploaderLabel(m)}</span>}
+            {showUploader && uploaderLabel(m) && (
+              <span>
+                {labels.uploadedBy}: {uploaderLabel(m)}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -69,7 +91,7 @@ export default function GalleryLightbox({
           <button
             type="button"
             onClick={onClose}
-            aria-label="סגירה"
+            aria-label={labels.closeAria}
             className="flex h-9 w-9 items-center justify-center rounded-full text-xl text-white/70 hover:bg-white/10 hover:text-white"
           >
             ✕
@@ -98,25 +120,27 @@ export default function GalleryLightbox({
           />
         )}
 
-        {/* Desktop arrows — RTL: previous on the right, next on the left. */}
+        {/* Desktop arrows. PREVIOUS always sits on the reading START edge and
+            points backwards; `start-2`/`end-2` are logical insets, so the pair
+            mirrors itself and the glyphs flip with the direction. */}
         {index > 0 && (
           <button
             type="button"
             onClick={() => go(-1)}
-            aria-label="הקודם"
-            className="absolute right-2 top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white/80 backdrop-blur-sm hover:bg-white/20 sm:flex"
+            aria-label={labels.prevAria}
+            className="absolute start-2 top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white/80 backdrop-blur-sm hover:bg-white/20 sm:flex"
           >
-            ›
+            {rtl ? '›' : '‹'}
           </button>
         )}
         {index < media.length - 1 && (
           <button
             type="button"
             onClick={() => go(1)}
-            aria-label="הבא"
-            className="absolute left-2 top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white/80 backdrop-blur-sm hover:bg-white/20 sm:flex"
+            aria-label={labels.nextAria}
+            className="absolute end-2 top-1/2 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-xl text-white/80 backdrop-blur-sm hover:bg-white/20 sm:flex"
           >
-            ‹
+            {rtl ? '‹' : '›'}
           </button>
         )}
       </div>

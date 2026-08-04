@@ -3,6 +3,8 @@ import { useOutletContext } from 'react-router-dom';
 import { formatMinor } from '../lib/money.js';
 import { usePayrollRealtime } from '../lib/payrollRealtime.js';
 import { waitingLabel, lineCalcLabel, lineDisplayName } from './payText.js';
+import { usePortalLanguage } from './PortalLanguage.jsx';
+import { fmtMonthLabel, portalLocale } from './format.js';
 
 // שכר — the guide's payroll view. Server truth only (viewPay-gated,
 // office-approved entries): the guide sees ONLY components that actually
@@ -14,12 +16,12 @@ import { waitingLabel, lineCalcLabel, lineDisplayName } from './payText.js';
 // Combined display state: approval (pending|approved) and inquiry
 // (none|open|accepted|rejected) are separate server truths — only the chip
 // combines them.
-function entryChip(entry) {
-  if (entry.guideStatus === 'approved') return { label: 'אושר על ידך ✓', cls: 'bg-emerald-50 text-emerald-700' };
-  if (entry.inquiryStatus === 'open') return { label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
-  if (entry.inquiryStatus === 'accepted') return { label: 'ההערה התקבלה — ממתין לאישורך', cls: 'bg-emerald-50 text-emerald-700' };
-  if (entry.inquiryStatus === 'rejected') return { label: 'ההערה נדחתה — ממתין לאישורך', cls: 'bg-rose-50 text-rose-700' };
-  return { label: 'ממתין לאישורך', cls: 'bg-blue-50 text-blue-700' };
+function entryChip(entry, t) {
+  if (entry.guideStatus === 'approved') return { label: t.chipApproved, cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.inquiryStatus === 'open') return { label: t.chipInquiry, cls: 'bg-orange-50 text-orange-700' };
+  if (entry.inquiryStatus === 'accepted') return { label: t.chipInquiryAccepted, cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.inquiryStatus === 'rejected') return { label: t.chipInquiryRejected, cls: 'bg-rose-50 text-rose-700' };
+  return { label: t.chipWaiting, cls: 'bg-blue-50 text-blue-700' };
 }
 
 // Blocked / no-entry icon — an explicit symbol, never color alone.
@@ -32,17 +34,14 @@ function NoEntryIcon() {
   );
 }
 
-function monthLabel(m) {
-  const [y, mm] = String(m).split('-');
-  const names = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
-  return `${names[Number(mm) - 1] || mm} ${y}`;
-}
-
 function EntryCard({ token, entry, onChanged }) {
+  const { lang, t: strings, rtl } = usePortalLanguage();
+  const t = strings.pay;
+  const locale = portalLocale(lang);
   const [busy, setBusy] = useState(false);
   const [commenting, setCommenting] = useState(false);
   const [text, setText] = useState('');
-  const meta = entryChip(entry);
+  const meta = entryChip(entry, t);
   // Accordion (presentation only — approval state/API untouched): entries the
   // guide already approved need no action, so they rest COLLAPSED; anything
   // waiting/inquiry stays fully expanded and prominent. Approving mid-session
@@ -70,12 +69,15 @@ function EntryCard({ token, entry, onChanged }) {
 
   const header = (
     <div className="flex items-start gap-2">
-      <div className="flex-1 min-w-0 text-right">
+      <div className={`flex-1 min-w-0 ${rtl ? 'text-right' : 'text-left'}`}>
+        {/* The activity title is a stored snapshot in ONE language — verbatim. */}
         <div className="text-[15px] font-semibold text-gray-900 truncate">{entry.activityTitle}</div>
         <div className="text-[12px] text-gray-500">
-          {entry.date ? entry.date.split('-').reverse().join('/') : monthLabel(entry.payrollMonth)}
-          {entry.sourceType === 'tour_event' ? ' · סיור' : ' · תוספת כללית'}
-          {approved && !open && entry.officeNote ? ' · 📌 הערת משרד' : ''}
+          {entry.date
+            ? entry.date.split('-').reverse().join('/')
+            : fmtMonthLabel(entry.payrollMonth, lang)}
+          {` · ${entry.sourceType === 'tour_event' ? t.sourceTour : t.sourceGeneral}`}
+          {approved && !open && entry.officeNote ? ` · 📌 ${t.officeNoteChip}` : ''}
         </div>
       </div>
       {approved && !open && (
@@ -104,7 +106,9 @@ function EntryCard({ token, entry, onChanged }) {
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={false}
-        className="block w-full rounded-2xl border border-gray-200 bg-white p-4 text-right hover:bg-gray-50 transition"
+        className={`block w-full rounded-2xl border border-gray-200 bg-white p-4 hover:bg-gray-50 transition ${
+          rtl ? 'text-right' : 'text-left'
+        }`}
       >
         {header}
       </button>
@@ -114,7 +118,12 @@ function EntryCard({ token, entry, onChanged }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4">
       {approved ? (
-        <button type="button" onClick={() => setOpen(false)} aria-expanded className="block w-full text-right">
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-expanded
+          className={`block w-full ${rtl ? 'text-right' : 'text-left'}`}
+        >
           {header}
         </button>
       ) : (
@@ -123,11 +132,11 @@ function EntryCard({ token, entry, onChanged }) {
 
       <div className="mt-3 space-y-1">
         {entry.lines.map((l, i) => {
-          const calc = lineCalcLabel(l);
+          const calc = lineCalcLabel(l, lang);
           return (
             <div key={i} className="flex items-start justify-between gap-2 text-[13px]">
               <span className="min-w-0 text-gray-600">
-                {lineDisplayName(l.name, entry.sourceType)}
+                {lineDisplayName(l.name, entry.sourceType, t)}
                 {calc && (
                   <span className="block text-[11px] text-gray-400 tabular-nums" dir="ltr">
                     {calc}
@@ -146,21 +155,21 @@ function EntryCard({ token, entry, onChanged }) {
         {entry.vatStatus === 'vat_18' ? (
           <>
             <div className="flex items-center justify-between text-[12px] text-gray-500">
-              <span>לפני מע״מ</span>
+              <span>{t.beforeVat}</span>
               <span className="tabular-nums">{formatMinor(entry.totals.netMinor)}</span>
             </div>
             <div className="flex items-center justify-between text-[12px] text-gray-500">
-              <span>מע״מ ({entry.vatRate}%)</span>
+              <span>{t.vat} ({entry.vatRate}%)</span>
               <span className="tabular-nums">{formatMinor(entry.totals.vatMinor)}</span>
             </div>
             <div className="flex items-center justify-between text-[14px] font-semibold text-gray-900">
-              <span>סה״כ</span>
+              <span>{t.total}</span>
               <span className="tabular-nums">{formatMinor(entry.totals.totalMinor)}</span>
             </div>
           </>
         ) : (
           <div className="flex items-center justify-between text-[14px] font-semibold text-gray-900">
-            <span>סה״כ לתשלום</span>
+            <span>{t.totalToPay}</span>
             <span className="tabular-nums">{formatMinor(entry.totals.totalMinor)}</span>
           </div>
         )}
@@ -169,17 +178,17 @@ function EntryCard({ token, entry, onChanged }) {
       {/* Inquiry resolution — explicit icon + label, never color alone. */}
       {entry.inquiryStatus === 'accepted' && (
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] font-medium text-emerald-800">
-          <span className="text-emerald-600">✓</span> ההערה התקבלה
+          <span className="text-emerald-600">✓</span> {t.inquiryAccepted}
           {entry.guideStatus !== 'approved' && (
-            <span className="font-normal text-emerald-700">— בדקו את הסכום המעודכן ואשרו</span>
+            <span className="font-normal text-emerald-700">{t.inquiryAcceptedNext}</span>
           )}
         </div>
       )}
       {entry.inquiryStatus === 'rejected' && (
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] font-medium text-rose-800">
-          <span className="text-rose-600"><NoEntryIcon /></span> ההערה נדחתה
+          <span className="text-rose-600"><NoEntryIcon /></span> {t.inquiryRejected}
           {entry.guideStatus !== 'approved' && (
-            <span className="font-normal text-rose-700">— ראו את הסבר המשרד ואשרו</span>
+            <span className="font-normal text-rose-700">{t.inquiryRejectedNext}</span>
           )}
         </div>
       )}
@@ -187,7 +196,7 @@ function EntryCard({ token, entry, onChanged }) {
       {/* Official office note — distinct from the conversation. */}
       {entry.officeNote && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-          <div className="text-[10px] font-semibold text-amber-700">הערת המשרד</div>
+          <div className="text-[10px] font-semibold text-amber-700">{t.officeNoteTitle}</div>
           {/* Preserve the office's exact line breaks / paragraph spacing
               (pre-wrap) while still wrapping long lines and never overflowing
               horizontally (break-words). The stored text is untouched. */}
@@ -207,7 +216,7 @@ function EntryCard({ token, entry, onChanged }) {
               }`}
             >
               <span className="block text-[10px] text-gray-400">
-                {m.byGuide ? 'אתה' : 'המשרד'} · {new Date(m.at).toLocaleString('he-IL')}
+                {m.byGuide ? t.speakerYou : t.speakerOffice} · {new Date(m.at).toLocaleString(locale)}
               </span>
               {m.text}
             </div>
@@ -218,7 +227,7 @@ function EntryCard({ token, entry, onChanged }) {
       {/* Approval details — expanded view of an approved entry. */}
       {approved && entry.guideApprovedAt && (
         <div className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
-          אושר על ידך · {new Date(entry.guideApprovedAt).toLocaleString('he-IL')}
+          {t.approvedAtPrefix} · {new Date(entry.guideApprovedAt).toLocaleString(locale)}
         </div>
       )}
 
@@ -232,7 +241,7 @@ function EntryCard({ token, entry, onChanged }) {
                 onClick={() => post('approve')}
                 className="flex-1 h-10 rounded-xl bg-emerald-600 text-white text-[14px] font-medium hover:bg-emerald-700 disabled:opacity-50"
               >
-                אשר ✓
+                {t.approve}
               </button>
               <button
                 type="button"
@@ -240,7 +249,9 @@ function EntryCard({ token, entry, onChanged }) {
                 onClick={() => setCommenting(true)}
                 className="flex-1 h-10 rounded-xl border border-gray-300 text-gray-700 text-[13px] hover:bg-gray-50"
               >
-                {entry.inquiryStatus === 'open' || entry.conversation?.length > 0 ? 'הוסף הודעה' : 'יש הערה? לחץ כאן'}
+                {entry.inquiryStatus === 'open' || entry.conversation?.length > 0
+                  ? t.addMessage
+                  : t.haveComment}
               </button>
             </div>
           ) : (
@@ -250,7 +261,7 @@ function EntryCard({ token, entry, onChanged }) {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={3}
-                placeholder="מה לא מסתדר? המשרד יקבל את ההערה והרשומה תעבור לבירור."
+                placeholder={t.commentPlaceholder}
                 className="w-full rounded-xl border border-gray-300 p-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
               <div className="flex gap-2">
@@ -260,14 +271,14 @@ function EntryCard({ token, entry, onChanged }) {
                   onClick={() => post('comment', { text: text.trim() })}
                   className="flex-1 h-9 rounded-xl bg-orange-500 text-white text-[13px] font-medium hover:bg-orange-600 disabled:opacity-50"
                 >
-                  שלח הערה
+                  {t.sendComment}
                 </button>
                 <button
                   type="button"
                   onClick={() => { setCommenting(false); setText(''); }}
                   className="h-9 px-4 rounded-xl border border-gray-300 text-gray-600 text-[13px]"
                 >
-                  ביטול
+                  {strings.common.cancel}
                 </button>
               </div>
             </div>
@@ -280,6 +291,8 @@ function EntryCard({ token, entry, onChanged }) {
 
 export default function PayPage() {
   const { token } = useOutletContext();
+  const { lang, t: strings } = usePortalLanguage();
+  const t = strings.pay;
   const [month, setMonth] = useState(null); // null → server default (current month)
   const [state, setState] = useState({ phase: 'loading', data: null });
 
@@ -314,20 +327,26 @@ export default function PayPage() {
   );
 
   if (state.phase === 'loading' && !state.data) {
-    return <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">טוען…</div>;
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
+        {strings.common.loading}
+      </div>
+    );
   }
   if (state.phase === 'forbidden') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">
-        צפייה בנתוני שכר אינה זמינה.
+        {t.forbidden}
       </div>
     );
   }
   if (state.phase === 'error') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
-        <div className="mb-2 text-sm text-gray-600">שגיאה בטעינת נתוני השכר</div>
-        <button type="button" onClick={load} className="text-[13px] text-blue-600 hover:underline">נסה שוב</button>
+        <div className="mb-2 text-sm text-gray-600">{t.errorTitle}</div>
+        <button type="button" onClick={load} className="text-[13px] text-blue-600 hover:underline">
+          {strings.common.retry}
+        </button>
       </div>
     );
   }
@@ -338,14 +357,14 @@ export default function PayPage() {
   return (
     <div>
       <div className="mb-3 flex items-center gap-2 px-1">
-        <h1 className="flex-1 text-[17px] font-bold text-gray-900">שכר</h1>
+        <h1 className="flex-1 text-[17px] font-bold text-gray-900">{t.title}</h1>
         <select
           value={data.month}
           onChange={(e) => setMonth(e.target.value)}
           className="h-9 rounded-xl border border-gray-300 bg-white px-2 text-[13px]"
         >
           {months.map((m) => (
-            <option key={m} value={m}>{monthLabel(m)}</option>
+            <option key={m} value={m}>{fmtMonthLabel(m, lang)}</option>
           ))}
         </select>
       </div>
@@ -353,14 +372,14 @@ export default function PayPage() {
       <div className="mb-4 grid grid-cols-2 gap-2">
         {/* Amount appears here ONLY after the guide approves (both-sides truth). */}
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-center">
-          <div className="text-[11px] text-emerald-700">אושר על ידך</div>
+          <div className="text-[11px] text-emerald-700">{t.approvedByYou}</div>
           <div className="text-[17px] font-bold text-emerald-800 tabular-nums">{formatMinor(data.totals.approvedMinor)}</div>
         </div>
         {/* Count, not money — unapproved amounts are never aggregated here. */}
         <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-center">
-          <div className="text-[11px] text-blue-700">ממתין לאישורך</div>
+          <div className="text-[11px] text-blue-700">{t.waitingForYou}</div>
           <div className="text-[13px] font-bold text-blue-800 leading-snug pt-1">
-            {waitingLabel(data.totals.pendingCount)}
+            {waitingLabel(data.totals.pendingCount, t)}
           </div>
         </div>
       </div>
@@ -368,8 +387,8 @@ export default function PayPage() {
       {data.entries.length === 0 ? (
         <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
           <div className="mb-3 text-4xl opacity-50">🧾</div>
-          <div className="mb-1 text-base font-semibold text-gray-800">אין רשומות שכר לחודש זה</div>
-          <div className="text-sm text-gray-500">רשומות מופיעות כאן אחרי אישור המשרד.</div>
+          <div className="mb-1 text-base font-semibold text-gray-800">{t.emptyTitle}</div>
+          <div className="text-sm text-gray-500">{t.emptyBody}</div>
         </div>
       ) : (
         <div className="space-y-3">

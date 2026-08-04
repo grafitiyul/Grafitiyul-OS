@@ -8,15 +8,27 @@ import { uploadErrorLabel } from './uploadErrors.js';
 // נכשלו"); the expandable list gives per-file progress/retry/cancel. The
 // panel renders nothing when the queue is empty.
 
-const STATUS_LABELS = {
-  preparing: 'מכין…',
-  queued: 'ממתין',
-  uploading: 'מעלה…',
-  processing: 'מאמת…',
-  done: 'הושלם',
-  failed: 'נכשל',
-  rejected: 'לא נתמך',
-  canceled: 'בוטל',
+// LANGUAGE: shared by the office, guide-portal and customer surfaces. All of
+// its wording arrives as one `labels` prop with the existing Hebrew defaults,
+// so admin/customer callers are unchanged and the portal passes its registry.
+const DEFAULT_LABELS = {
+  states: {
+    preparing: 'מכין…',
+    queued: 'ממתין',
+    uploading: 'מעלה…',
+    processing: 'מאמת…',
+    done: 'הושלם',
+    failed: 'נכשל',
+    rejected: 'לא נתמך',
+    canceled: 'בוטל',
+  },
+  doneOf: (done, total) => `${done} מתוך ${total} הועלו`,
+  uploadingN: (n) => `${n} מעלים`,
+  queuedN: (n) => `${n} ממתינים`,
+  failedN: (n) => `${n} נכשלו`,
+  rejectedN: (n) => `${n} לא נתמכים`,
+  retryAllFailed: '↻ נסה שוב את כל הכושלים',
+  cancelAria: 'ביטול',
 };
 
 function Bar({ value, failed }) {
@@ -32,7 +44,12 @@ function Bar({ value, failed }) {
   );
 }
 
-export default function UploadQueuePanel({ snapshot, uploader }) {
+export default function UploadQueuePanel({
+  snapshot,
+  uploader,
+  dir = 'rtl',
+  labels = DEFAULT_LABELS,
+}) {
   const [open, setOpen] = useState(false);
   const { items, totals } = snapshot || { items: [], totals: { total: 0 } };
   if (!totals.total) return null;
@@ -40,21 +57,23 @@ export default function UploadQueuePanel({ snapshot, uploader }) {
   const inFlight =
     (totals.preparing || 0) + (totals.queued || 0) + (totals.uploading || 0) + (totals.processing || 0);
   const parts = [];
-  parts.push(`${totals.done || 0} מתוך ${totals.total} הועלו`);
-  if (totals.uploading || totals.processing) parts.push(`${(totals.uploading || 0) + (totals.processing || 0)} מעלים`);
-  if (totals.queued) parts.push(`${totals.queued} ממתינים`);
-  if (totals.failed) parts.push(`${totals.failed} נכשלו`);
-  if (totals.rejected) parts.push(`${totals.rejected} לא נתמכים`);
+  parts.push(labels.doneOf(totals.done || 0, totals.total));
+  if (totals.uploading || totals.processing) {
+    parts.push(labels.uploadingN((totals.uploading || 0) + (totals.processing || 0)));
+  }
+  if (totals.queued) parts.push(labels.queuedN(totals.queued));
+  if (totals.failed) parts.push(labels.failedN(totals.failed));
+  if (totals.rejected) parts.push(labels.rejectedN(totals.rejected));
 
   const overall = totals.bytesTotal > 0 ? totals.bytesSent / totals.bytesTotal : 0;
   const allDone = inFlight === 0;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" dir="rtl">
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" dir={dir}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="block w-full px-3.5 py-2.5 text-right hover:bg-gray-50"
+        className="block w-full px-3.5 py-2.5 text-start hover:bg-gray-50"
       >
         <div className="flex items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-gray-800">
@@ -83,7 +102,7 @@ export default function UploadQueuePanel({ snapshot, uploader }) {
                 onClick={() => uploader.retryFailed()}
                 className="rounded-md px-2 py-1 text-[12px] font-semibold text-red-700 hover:bg-red-100"
               >
-                ↻ נסה שוב את כל הכושלים
+                {labels.retryAllFailed}
               </button>
             </div>
           )}
@@ -121,7 +140,7 @@ export default function UploadQueuePanel({ snapshot, uploader }) {
                       : 'text-gray-500'
                 }`}
               >
-                {STATUS_LABELS[it.status] || it.status}
+                {labels.states[it.status] || it.status}
               </span>
               {it.status === 'failed' && (
                 <button
@@ -136,7 +155,7 @@ export default function UploadQueuePanel({ snapshot, uploader }) {
                 <button
                   type="button"
                   onClick={() => uploader.cancel(it.key)}
-                  aria-label="ביטול"
+                  aria-label={labels.cancelAria}
                   className="shrink-0 rounded-md px-1.5 py-0.5 text-[12px] text-gray-400 hover:bg-gray-100 hover:text-gray-700"
                 >
                   ✕

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import {
-  ACTIVITY_LABELS,
-  ROLE_LABELS,
   ROLE_STYLES,
-  TOUR_LANG_LABELS,
-  fmtDayLineHe,
+  activityLabel,
+  fmtDayLine,
   isToday,
   participantsLabel,
+  roleLabel,
+  tourLanguageLabel,
 } from '../format.js';
+import { usePortalLanguage } from '../PortalLanguage.jsx';
 import { FeedError } from './feedStates.jsx';
 // ONE participant-card presentation, shared with the admin Tour modal —
 // hierarchy, typography and spacing (incl. the customerInfo tight face).
@@ -20,15 +21,17 @@ import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog
 // Guide Tour Detail — the read-only operational view of ONE tour, mirroring
 // the Admin Tour modal's hierarchy (header → team → components → workshop
 // locations → participants) but adapted for guides:
-//   * everything comes from the guide detail DTO (server permission-gated)
+//   * everything comes from the guide detail DTO (server permission-gated),
+//     already resolved into the guide's language for every field GOS keeps
+//     bilingually (product, city, activity components, contact names, ticket
+//     types). This screen owns only its own CHROME wording.
 //   * no edit controls anywhere, no History, no CRM/commercial data
 //   * the Deal order number is an internal CRM identifier — admin-only,
 //     deliberately NOT rendered here (the DTO still ships it by contract)
-// The "סיכום סיור" section (summary questionnaire + gallery) is appended by
-// Slice D; until then the gallery keeps a plain entry row.
 
 export default function GuideTourPage() {
   const { token, person, permissions } = useOutletContext();
+  const { lang, t, rtl } = usePortalLanguage();
   const { tourEventId } = useParams();
   const navigate = useNavigate();
   const [state, setState] = useState({ phase: 'loading' });
@@ -51,7 +54,7 @@ export default function GuideTourPage() {
       } catch (e) {
         // Transient network failure on a silent refresh keeps the last good
         // data; the next poll retries. Loud loads surface the error.
-        if (!silent) setState({ phase: 'error', message: e?.message || 'שגיאה' });
+        if (!silent) setState({ phase: 'error', message: e?.message || 'network_error' });
       }
     },
     [apiBase],
@@ -76,7 +79,7 @@ export default function GuideTourPage() {
   // the tour disappear WITHOUT a manual reload: poll softly and re-check on
   // focus/visibility (same convention as the feeds).
   useEffect(() => {
-    const t = setInterval(() => load({ silent: true }), 45000);
+    const timer = setInterval(() => load({ silent: true }), 45000);
     const onVis = () => {
       if (document.visibilityState === 'visible') {
         load({ silent: true });
@@ -86,28 +89,26 @@ export default function GuideTourPage() {
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('focus', onVis);
     return () => {
-      clearInterval(t);
+      clearInterval(timer);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onVis);
     };
   }, [load, loadSectionStatus]);
 
   if (state.phase === 'loading') {
-    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+    return <div className="py-10 text-center text-sm text-gray-500">{t.common.loading}</div>;
   }
   if (state.phase === 'blocked') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
         <div className="mb-2 text-3xl">🔒</div>
-        <div className="text-sm text-gray-600">
-          הסיור אינו זמין — ייתכן שאינך משובץ לסיור זה.
-        </div>
+        <div className="text-sm text-gray-600">{t.tourDetail.blocked}</div>
         <button
           type="button"
           onClick={() => navigate(`/p/${encodeURIComponent(token)}`)}
           className="mt-3 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
         >
-          חזרה לסיורים
+          {t.tourDetail.backToTours}
         </button>
       </div>
     );
@@ -122,14 +123,14 @@ export default function GuideTourPage() {
 
   return (
     <div>
-      <BackRow token={token} title={tour.variantName} />
+      <BackRow token={token} title={tour.variantName || t.tours.untitledTour} rtl={rtl} label={t.tourDetail.backToTours} />
 
       {/* Cancelled tours never render — the server 403s them and the
           silent revalidation flips this page to the blocked state. */}
       <HeaderCard tour={tour} />
 
       {tour.team && tour.team.length > 0 && (
-        <SectionCard title="הצוות בסיור">
+        <SectionCard title={t.tourDetail.team}>
           <div className="space-y-2.5">
             {tour.team.map((m) => (
               <TeamRow key={m.id} member={m} isMe={m.displayName === person?.displayName} />
@@ -139,7 +140,7 @@ export default function GuideTourPage() {
       )}
 
       {(tour.components || []).length > 0 && (
-        <SectionCard title="מרכיבי הפעילות">
+        <SectionCard title={t.tourDetail.components}>
           <div className="flex flex-wrap gap-1.5">
             {tour.components.map((c) => (
               <ComponentChip key={c.id} component={c} />
@@ -149,7 +150,7 @@ export default function GuideTourPage() {
       )}
 
       {workshopLocations.length > 0 && (
-        <SectionCard title="מיקומי סדנאות">
+        <SectionCard title={t.tourDetail.workshopLocations}>
           <div className="space-y-2.5">
             {workshopLocations.map((w) => (
               <WorkshopLocationRow key={w.id} component={w} />
@@ -159,19 +160,22 @@ export default function GuideTourPage() {
       )}
 
       {(tour.parallelTours || []).length > 0 && (
-        <SectionCard title="סיורים מקבילים">
+        <SectionCard title={t.tourDetail.parallelTours}>
           <div className="space-y-2.5">
-            {tour.parallelTours.map((t, i) => (
-              <ParallelTourRow key={t.id || `pt-${i}`} tour={t} token={token} />
+            {tour.parallelTours.map((pt, i) => (
+              <ParallelTourRow key={pt.id || `pt-${i}`} tour={pt} token={token} />
             ))}
           </div>
         </SectionCard>
       )}
 
-      <SectionCard title={`משתתפים · ${participantsLabel(tour.participantsTotal)}`}>
+      <SectionCard
+        title={`${t.tourDetail.participants} · ${participantsLabel(tour.participantsTotal, lang)}`}
+      >
         {/* שם הקבוצה (agent reservations) — above the participant cards. On
             the common single-booking business tour this is THE group name;
-            with several bookings each distinct name is listed once. */}
+            with several bookings each distinct name is listed once. A group
+            name is customer-authored text and is never translated. */}
         {(() => {
           const names = [...new Set((tour.participants || []).map((p) => p.groupName).filter(Boolean))];
           return names.length ? (
@@ -188,9 +192,7 @@ export default function GuideTourPage() {
           </div>
         ) : null}
         {(tour.participants || []).length === 0 ? (
-          <div className="py-2 text-center text-sm text-gray-500">
-            אין עדיין נרשמים לסיור.
-          </div>
+          <div className="py-2 text-center text-sm text-gray-500">{t.tourDetail.noParticipants}</div>
         ) : (
           <div className="space-y-3">
             {tour.participants.map((p) => (
@@ -205,7 +207,7 @@ export default function GuideTourPage() {
         )}
         {(tour.provisionalParticipants || []).length > 0 && (
           <div className="mt-4 space-y-3">
-            <div className="text-[12.5px] font-medium text-gray-400">שריון בהמתנה לאישור</div>
+            <div className="text-[12.5px] font-medium text-gray-400">{t.tourDetail.provisional}</div>
             {tour.provisionalParticipants.map((p) => (
               <HeldParticipantCard key={p.registrationId} participant={p} />
             ))}
@@ -228,6 +230,7 @@ export default function GuideTourPage() {
 // ── סיכום סיור — summary questionnaire + gallery, one dedicated card ─
 
 function TourSummarySection({ token, tour, apiBase, permissions, status, onStatusChange }) {
+  const { t } = usePortalLanguage();
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const showSummary = permissions.fillTourSummary;
@@ -237,11 +240,11 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
   const gallery = status?.gallery;
   const galleryCountLabel = gallery
     ? [
-        gallery.imageCount > 0 ? `${gallery.imageCount} תמונות` : null,
-        gallery.videoCount > 0 ? `${gallery.videoCount} סרטונים` : null,
+        gallery.imageCount > 0 ? t.tourDetail.galleryImages(gallery.imageCount) : null,
+        gallery.videoCount > 0 ? t.tourDetail.galleryVideos(gallery.videoCount) : null,
       ]
         .filter(Boolean)
-        .join(' · ') || 'הגלריה ריקה'
+        .join(' · ') || t.tourDetail.galleryEmpty
     : null;
 
   // Guide transport — same fill dialog, portal-token endpoints. The server
@@ -270,20 +273,22 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
   };
 
   return (
-    <SectionCard title="סיכום סיור">
+    <SectionCard title={t.tourDetail.summarySection}>
       <div className="space-y-2.5">
         {showSummary && (
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 text-[13.5px] text-gray-700">טופס סיכום סיור</div>
+            <div className="min-w-0 text-[13.5px] text-gray-700">{t.tourDetail.summaryFormRow}</div>
             <FormActionButton
               label={
                 status?.summary?.status === 'draft'
-                  ? 'המשך מילוי'
+                  ? t.tourDetail.summaryContinue
                   : status?.summary
-                  ? 'פתיחת הטופס'
-                  : 'מילוי הטופס'
+                  ? t.tourDetail.summaryOpen
+                  : t.tourDetail.summaryFill
               }
               status={status?.summary?.status || null}
+              statusLabels={t.form.statuses}
+              busyLabel={t.common.opening}
               onClick={() => setSummaryOpen(true)}
             />
           </div>
@@ -291,7 +296,7 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
         {showGallery && (
           <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2.5 first:border-t-0 first:pt-0">
             <div className="min-w-0 text-[13.5px] text-gray-700">
-              גלריית תמונות וסרטונים
+              {t.tourDetail.galleryRow}
               {galleryCountLabel && (
                 <span className="ms-1 text-[12px] text-gray-400">· {galleryCountLabel}</span>
               )}
@@ -301,7 +306,7 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
               className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-[12.5px] font-semibold text-indigo-800 shadow-sm active:scale-[0.99]"
             >
               <span aria-hidden>📸</span>
-              פתיחת הגלריה
+              {t.tourDetail.galleryOpen}
             </Link>
           </div>
         )}
@@ -313,8 +318,9 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
             setSummaryOpen(false);
             onStatusChange?.();
           }}
-          title="טופס סיכום סיור"
+          title={t.tourDetail.summaryFormTitle}
           transport={transport}
+          strings={t.form}
           adminLinks={false}
           onStatusChange={() => onStatusChange?.()}
         />
@@ -347,15 +353,17 @@ async function portalJson(url, options = {}) {
   return res.json();
 }
 
-function BackRow({ token, title }) {
+// The back arrow points at the READING direction's start edge: → in RTL,
+// ← in LTR. A glyph, not a mirrored icon, so it is always unambiguous.
+function BackRow({ token, title, rtl, label }) {
   return (
     <div className="mb-3 flex items-center gap-2">
       <Link
         to={`/p/${encodeURIComponent(token)}`}
-        aria-label="חזרה לסיורים"
+        aria-label={label}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg text-gray-500 active:bg-gray-100"
       >
-        →
+        {rtl ? '→' : '←'}
       </Link>
       <h1 className="min-w-0 flex-1 truncate text-[17px] font-bold text-gray-900">{title}</h1>
     </div>
@@ -363,26 +371,27 @@ function BackRow({ token, title }) {
 }
 
 function HeaderCard({ tour }) {
+  const { lang, t } = usePortalLanguage();
   const today = isToday(tour.date) && tour.status !== 'cancelled';
   const facts = [
     {
       icon: '📅',
       label: (
         <>
-          {fmtDayLineHe(tour.date)} ·{' '}
+          {fmtDayLine(tour.date, lang)} ·{' '}
           <span dir="ltr" className="tabular-nums font-semibold">
             {tour.startTime}
           </span>
-          {tour.durationHours ? ` · ${tour.durationHours} שעות` : ''}
+          {tour.durationHours ? ` · ${tour.durationHours} ${t.common.hours}` : ''}
         </>
       ),
     },
     tour.locationName && { icon: '📍', label: tour.locationName },
-    TOUR_LANG_LABELS[tour.tourLanguage] && {
+    tourLanguageLabel(tour.tourLanguage, lang) && {
       icon: '🌐',
-      label: TOUR_LANG_LABELS[tour.tourLanguage],
+      label: tourLanguageLabel(tour.tourLanguage, lang),
     },
-    { icon: '👥', label: participantsLabel(tour.participantsTotal) },
+    { icon: '👥', label: participantsLabel(tour.participantsTotal, lang) },
   ].filter(Boolean);
 
   return (
@@ -390,21 +399,21 @@ function HeaderCard({ tour }) {
       <div className="flex flex-wrap items-center gap-1.5">
         {today && (
           <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
-            היום
+            {t.tours.today}
           </span>
         )}
-        {ACTIVITY_LABELS[tour.activityType] && (
+        {activityLabel(tour.activityType, lang) && (
           <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-            {ACTIVITY_LABELS[tour.activityType]}
+            {activityLabel(tour.activityType, lang)}
           </span>
         )}
-        {ROLE_LABELS[tour.viewerRole] && (
+        {roleLabel(tour.viewerRole, lang) && (
           <span
             className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
               ROLE_STYLES[tour.viewerRole] || 'bg-gray-100 text-gray-700'
             }`}
           >
-            התפקיד שלך: {ROLE_LABELS[tour.viewerRole]}
+            {t.tourDetail.yourRole}: {roleLabel(tour.viewerRole, lang)}
           </span>
         )}
       </div>
@@ -418,9 +427,11 @@ function HeaderCard({ tour }) {
           </div>
         ))}
       </div>
+      {/* Operational tour notes are free text authored in ONE language and are
+          shown exactly as written — never translated. */}
       {tour.notes && (
         <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[13px] leading-relaxed text-amber-900">
-          <span className="font-semibold">הערות: </span>
+          <span className="font-semibold">{t.tourDetail.notes}: </span>
           {tour.notes}
         </div>
       )}
@@ -434,6 +445,7 @@ function HeaderCard({ tour }) {
 // tour and thus an id to link to); otherwise it is inert summary text. This
 // mirrors, and never weakens, the portal's server-side access rule.
 function ParallelTourRow({ tour, token }) {
+  const { lang, t } = usePortalLanguage();
   const staffNames = (tour.staff || []).map((s) => s.displayName).join(' · ');
   const inner = (
     <>
@@ -442,14 +454,14 @@ function ParallelTourRow({ tour, token }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-semibold text-gray-900">
-          {tour.variantName || '—'}
+          {tour.variantName || t.tours.untitledTour}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-gray-500">
-          <span>{participantsLabel(tour.participantsTotal)}</span>
+          <span>{participantsLabel(tour.participantsTotal, lang)}</span>
           {staffNames ? (
             <span className="truncate">{staffNames}</span>
           ) : (
-            <span className="text-gray-400">ללא שיבוץ</span>
+            <span className="text-gray-400">{t.tourDetail.unassigned}</span>
           )}
         </div>
       </div>
@@ -478,6 +490,7 @@ function SectionCard({ title, children }) {
 // ── team ─────────────────────────────────────────────────────────────
 
 function TeamRow({ member, isMe }) {
+  const { lang, t } = usePortalLanguage();
   return (
     <div className="flex items-center gap-3">
       {member.imageUrl ? (
@@ -493,14 +506,14 @@ function TeamRow({ member, isMe }) {
       )}
       <div className="min-w-0 flex-1 text-[14px] font-medium text-gray-900">
         {member.displayName}
-        {isMe && <span className="ms-1 text-[11px] font-semibold text-blue-600">(את/ה)</span>}
+        {isMe && <span className="ms-1 text-[11px] font-semibold text-blue-600">{t.tourDetail.you}</span>}
       </div>
       <span
         className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
           ROLE_STYLES[member.role] || 'bg-gray-100 text-gray-700'
         }`}
       >
-        {ROLE_LABELS[member.role] || member.role}
+        {roleLabel(member.role, lang) || member.role}
       </span>
     </div>
   );
@@ -526,13 +539,18 @@ function ComponentChip({ component }) {
       className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12.5px] font-semibold ${tone}`}
     >
       {component.icon && <span aria-hidden>{component.icon}</span>}
-      {component.nameHe}
+      {/* `name` arrives already resolved to the guide's language from the
+          ActivityComponent nameHe/nameEn pair. */}
+      {component.name}
     </span>
   );
 }
 
 // ── workshop locations ───────────────────────────────────────────────
 
+// WorkshopLocation is single-language in the schema (no English columns exist
+// for its name, address or access instructions), so these render exactly as
+// stored. Reported as a data gap; never translated here.
 function WorkshopLocationRow({ component }) {
   const loc = component.location;
   if (!loc) return null; // defensive — the section only passes located rows
@@ -540,9 +558,9 @@ function WorkshopLocationRow({ component }) {
     <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
       <div className="text-[12px] font-semibold text-gray-500">
         {component.icon && <span aria-hidden>{component.icon} </span>}
-        {component.nameHe}
+        {component.name}
       </div>
-      <div className="mt-0.5 text-[14px] font-semibold text-gray-900">{loc.nameHe}</div>
+      <div className="mt-0.5 text-[14px] font-semibold text-gray-900">{loc.name}</div>
       {loc.address && <div className="text-[12.5px] text-gray-600">{loc.address}</div>}
       {loc.instructions && (
         <div className="mt-1 text-[12.5px] leading-relaxed text-gray-600">{loc.instructions}</div>
@@ -555,18 +573,22 @@ function WorkshopLocationRow({ component }) {
 
 // A conditional (HELD) reservation — "probably coming, not yet confirmed". The
 // server DTO already strips phone/email/coordination, so this card reuses the
-// shared presentation with those omitted and adds the "עוד לא סופי" badge. No
+// shared presentation with those omitted and adds the "not confirmed" badge. No
 // contact/coordination affordance can appear (nothing to render).
 function HeldParticipantCard({ participant: p }) {
+  const { lang, t } = usePortalLanguage();
+  const customerName = p.customerName || p.title || t.tourDetail.customerFallback;
   return (
     <ParticipantCardView
-      customerName={p.customerName || p.title}
+      lang={lang}
+      labels={t.participantCard}
+      customerName={customerName}
       organizationLine={p.title && p.title !== p.customerName ? p.title : ''}
       seats={p.seats}
       byProduct={p.byProduct}
       corner={
         <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
-          {p.badge || 'עוד לא סופי'}
+          {t.tourDetail.notFinal}
         </span>
       }
       customerInfo={p.customerInfo}
@@ -575,6 +597,7 @@ function HeldParticipantCard({ participant: p }) {
 }
 
 function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
+  const { lang, t } = usePortalLanguage();
   const [coordOpen, setCoordOpen] = useState(false);
   const [coordStatus, setCoordStatus] = useState(p.coordinationStatus || null);
 
@@ -608,17 +631,19 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
   // Presentation-only inversion of the DTO's title precedence: the DTO ships
   // title = organization || customer (unchanged contract); the card hierarchy
   // is customer first, organization beneath — identical to the admin card.
-  const customerName = p.customerName || p.title;
+  const customerName = p.customerName || p.title || t.tourDetail.customerFallback;
   const organizationLine =
     p.title && p.title !== p.customerName
       ? [p.title, p.organizationUnit].filter(Boolean).join(' · ')
-      : p.organizationUnit || 'לקוח פרטי';
+      : p.organizationUnit || t.tourDetail.privateCustomer;
 
   return (
     // Shared presentation (one visual source of truth with the admin card).
     // Portal-only choices: no identity link (no Deal access from the portal),
     // no Deal number in the corner (internal CRM identifier, admin-only).
     <ParticipantCardView
+      lang={lang}
+      labels={t.participantCard}
       customerName={customerName}
       organizationLine={organizationLine}
       seats={p.seats}
@@ -630,8 +655,10 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
       corner={
         coordinationEnabled ? (
           <FormActionButton
-            label="טופס שיחת תיאום"
+            label={t.tourDetail.coordinationForm}
             status={coordStatus}
+            statusLabels={t.form.statuses}
+            busyLabel={t.common.opening}
             onClick={() => setCoordOpen(true)}
           />
         ) : null
@@ -641,8 +668,9 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
         <QuestionnaireFillDialog
           open={coordOpen}
           onClose={() => setCoordOpen(false)}
-          title="טופס שיחת תיאום"
+          title={t.tourDetail.coordinationForm}
           transport={coordTransport}
+          strings={t.form}
           adminLinks={false}
           onStatusChange={(s) => setCoordStatus(s || null)}
         />

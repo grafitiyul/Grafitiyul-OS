@@ -30,6 +30,9 @@ export default function GalleryGrid({
   onToggleSelect = null,
   coverMediaId = null,
   emptyText = 'אין עדיין תמונות או סרטונים',
+  // LANGUAGE: shared by the office, guide-portal and customer gallery
+  // surfaces, so its one word arrives as a prop with the Hebrew default.
+  coverLabel = '★ קאבר',
 }) {
   if (!media || media.length === 0) {
     return (
@@ -94,7 +97,7 @@ export default function GalleryGrid({
 
             {coverMediaId === m.id && (
               <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-md bg-amber-400/95 px-1.5 py-0.5 text-[10.5px] font-bold text-amber-950 shadow-sm">
-                ★ קאבר
+                {coverLabel}
               </span>
             )}
 

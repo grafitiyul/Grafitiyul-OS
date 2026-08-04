@@ -849,7 +849,13 @@ async function resolveSubjectOrThrow({ purpose, subjectType, subjectId }) {
 
 // Get-or-create the active submission for a subject+purpose (§14). Resume is
 // the default: an existing draft/submitted submission is returned as-is.
-export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor, linkId, actorScope }) {
+// `actorLanguage` (optional): the language the FILLING STAFF MEMBER reads, when
+// the caller already knows it and the subject adapter cannot derive it. The
+// Guide Portal passes it for the coordination form, whose subject is a booking
+// (the booking knows the CUSTOMER's language — never the guide's) and which
+// carries no actorScope for the adapter to look a person up by. Staff-audience
+// purposes only; a customer-facing form ignores it entirely.
+export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor, linkId, actorScope, actorLanguage }) {
   let template;
   if (templateId) {
     template = await prisma.questionnaireTemplate.findUnique({ where: { id: templateId } });
@@ -914,7 +920,9 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
   const staffAudience = getPurpose(template.purpose)?.audience === 'staff';
   const language =
     (staffAudience
-      ? (actorScope && (await adapter?.resolveActorLanguage?.(actorScope))) || template.defaultLanguage
+      ? actorLanguage ||
+        (actorScope && (await adapter?.resolveActorLanguage?.(actorScope))) ||
+        template.defaultLanguage
       : adapter && (await adapter.resolveLanguage?.(subjectId))) ||
     template.defaultLanguage ||
     'he';

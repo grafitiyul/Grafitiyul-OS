@@ -127,3 +127,72 @@ export function tourParticipantBreakdown(registrationRows) {
   const total = customers.reduce((n, c) => n + (c.total || 0), 0);
   return { aggregate: { total, byProduct: groupBreakdownByProduct(allRows) }, customers };
 }
+
+// ── reading the breakdown in another language ────────────────────────────────
+//
+// A registration's ticketBreakdown is a FROZEN snapshot: cardTitle/ticketLabel
+// were captured in Hebrew at purchase time, and rewriting the snapshot would
+// destroy the historical record. But the snapshot also froze the stable IDs
+// (cardGroupId, ticketTypeId), and the catalog rows behind those IDs DO carry
+// English (Product.nameEn, TicketType.nameEn). So an English reader gets the
+// English CATALOG name resolved live by id — existing bilingual data, never a
+// translation. An id with no English catalog value keeps the frozen label.
+//
+// Async + read-only: relabels a breakdown produced by tourParticipantBreakdown.
+export async function localizeParticipantBreakdown(client, breakdown, lang) {
+  if (!breakdown || lang !== 'en') return breakdown;
+
+  const cardKeys = new Set();
+  const ticketKeys = new Set();
+  const collect = (byProduct) => {
+    for (const card of byProduct || []) {
+      cardKeys.add(card.key);
+      for (const tt of card.ticketTypes || []) ticketKeys.add(tt.key);
+    }
+  };
+  collect(breakdown.aggregate?.byProduct);
+  for (const c of breakdown.customers || []) collect(c.byProduct);
+  if (!cardKeys.size && !ticketKeys.size) return breakdown;
+
+  // The keys are ids when the snapshot carried them, and the frozen label
+  // otherwise — a findMany on a label simply matches nothing, which is exactly
+  // the "no English source" outcome we want.
+  const [rules, ticketTypes] = await Promise.all([
+    client.priceRule.findMany({
+      where: { cardGroupId: { in: [...cardKeys] } },
+      select: { cardGroupId: true, product: { select: { nameEn: true } } },
+    }),
+    client.ticketType.findMany({
+      where: { id: { in: [...ticketKeys] } },
+      select: { id: true, nameEn: true },
+    }),
+  ]);
+  const cardEn = new Map();
+  for (const r of rules) {
+    const en = (r.product?.nameEn || '').trim();
+    if (r.cardGroupId && en && !cardEn.has(r.cardGroupId)) cardEn.set(r.cardGroupId, en);
+  }
+  const ticketEn = new Map();
+  for (const t of ticketTypes) {
+    const en = (t.nameEn || '').trim();
+    if (en) ticketEn.set(t.id, en);
+  }
+  if (!cardEn.size && !ticketEn.size) return breakdown;
+
+  const relabel = (byProduct) =>
+    (byProduct || []).map((card) => ({
+      ...card,
+      label: cardEn.get(card.key) || card.label,
+      ticketTypes: (card.ticketTypes || []).map((tt) => ({
+        ...tt,
+        label: ticketEn.get(tt.key) || tt.label,
+      })),
+    }));
+
+  return {
+    aggregate: breakdown.aggregate
+      ? { ...breakdown.aggregate, byProduct: relabel(breakdown.aggregate.byProduct) }
+      : breakdown.aggregate,
+    customers: (breakdown.customers || []).map((c) => ({ ...c, byProduct: relabel(c.byProduct) })),
+  };
+}

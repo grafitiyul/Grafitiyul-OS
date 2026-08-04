@@ -1,18 +1,21 @@
 import { Link } from 'react-router-dom';
 import {
-  ACTIVITY_LABELS,
-  ROLE_LABELS,
   ROLE_STYLES,
-  fmtDayLineHe,
+  activityLabel,
+  fmtDayLine,
   isToday,
   participantsLabel,
+  roleLabel,
 } from '../format.js';
+import { usePortalLanguage } from '../PortalLanguage.jsx';
 
 // One tour card — shared by the upcoming and past feeds. Pure presentation:
-// everything shown comes from the guide tour-card DTO. Cancelled tours never
+// everything shown comes from the guide tour-card DTO, which the server already
+// resolved into the guide's language (product · city). Cancelled tours never
 // reach the portal (server rule) so there is no cancelled styling here.
 
 export default function TourCard({ token, tour }) {
+  const { lang, t } = usePortalLanguage();
   const today = isToday(tour.date);
 
   return (
@@ -25,10 +28,12 @@ export default function TourCard({ token, tour }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[16px] font-bold leading-snug text-gray-900">
-            {tour.variantName}
+            {/* variantName is DATA (product · city), already language-resolved
+                server-side; the generic word is the only part we own. */}
+            {tour.variantName || t.tours.untitledTour}
           </div>
           <div className="mt-1 text-[13px] text-gray-600">
-            {fmtDayLineHe(tour.date)} ·{' '}
+            {fmtDayLine(tour.date, lang)} ·{' '}
             <span dir="ltr" className="tabular-nums font-semibold">
               {tour.startTime}
             </span>
@@ -37,28 +42,28 @@ export default function TourCard({ token, tour }) {
         <div className="flex shrink-0 flex-col items-end gap-1">
           {today && (
             <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
-              היום
+              {t.tours.today}
             </span>
           )}
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[12px]">
-        {ACTIVITY_LABELS[tour.activityType] && (
+        {activityLabel(tour.activityType, lang) && (
           <span className="rounded-full bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700">
-            {ACTIVITY_LABELS[tour.activityType]}
+            {activityLabel(tour.activityType, lang)}
           </span>
         )}
         <span className="rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-700">
-          {participantsLabel(tour.participantsTotal)}
+          {participantsLabel(tour.participantsTotal, lang)}
         </span>
-        {ROLE_LABELS[tour.role] && (
+        {roleLabel(tour.role, lang) && (
           <span
             className={`rounded-full px-2 py-0.5 font-semibold ${
               ROLE_STYLES[tour.role] || 'bg-gray-100 text-gray-700'
             }`}
           >
-            {ROLE_LABELS[tour.role]}
+            {roleLabel(tour.role, lang)}
           </span>
         )}
       </div>

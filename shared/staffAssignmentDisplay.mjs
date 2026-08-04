@@ -18,10 +18,21 @@
 // human-readable. Internal handles (guide:*, manual:*, legacy:*) are likewise
 // never shown — only an email-shaped externalPersonId is user-presentable.
 
+//
+// LANGUAGE (added for the English Guide Portal): the optional `lang` argument
+// is PURELY ADDITIVE. Hebrew (the default) resolves byte-identically to before.
+// For 'en' the chain gains ONE step in front: the linked person's own English
+// name from PersonProfile (firstNameEn/lastNameEn) when a human actually
+// entered it. It is never machine-translated, and a person with no English
+// name simply falls through to the existing chain — their Hebrew name is shown
+// rather than nothing, which is what the canonical staff-name resolver already
+// does (shared/staffName.mjs).
+
 const AIRTABLE_RECORD_ID = /^rec[a-zA-Z0-9]{14}$/;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const HISTORICAL_STAFF_FALLBACK = 'איש צוות היסטורי';
+export const HISTORICAL_STAFF_FALLBACK_EN = 'Former team member';
 
 export function isAirtableRecordId(value) {
   return typeof value === 'string' && AIRTABLE_RECORD_ID.test(value.trim());
@@ -34,8 +45,19 @@ export function isEmailLike(value) {
 // Input: an assignment/payroll-entry-like row
 //   { personRef?: { displayName }, displayName?, externalPersonId? }
 // Output: the display string to show the user (never a rec id, never a handle).
-export function resolveStaffDisplayName(row) {
-  if (!row) return HISTORICAL_STAFF_FALLBACK;
+export function resolveStaffDisplayName(row, lang = 'he') {
+  const fallback = lang === 'en' ? HISTORICAL_STAFF_FALLBACK_EN : HISTORICAL_STAFF_FALLBACK;
+  if (!row) return fallback;
+
+  // English readers: the person's OWN English name wins when it exists.
+  if (lang === 'en') {
+    const p = row.personRef?.profile;
+    const en = [p?.firstNameEn, p?.lastNameEn]
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean)
+      .join(' ');
+    if (en) return en;
+  }
 
   const canonical = row.personRef?.displayName;
   if (canonical && String(canonical).trim()) return String(canonical).trim();
@@ -48,5 +70,5 @@ export function resolveStaffDisplayName(row) {
   const external = row.externalPersonId;
   if (isEmailLike(external)) return String(external).trim();
 
-  return HISTORICAL_STAFF_FALLBACK;
+  return fallback;
 }

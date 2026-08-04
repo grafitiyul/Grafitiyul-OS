@@ -16,6 +16,7 @@ import {
   MAX_UPLOAD_BYTES,
 } from '../questionnaires/uploads.js';
 import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
+import { staffName } from '../../../shared/staffName.mjs';
 import {
   assignmentIdentityWhere,
   guideVisibleTourWhere,
@@ -29,7 +30,11 @@ import {
   tourEndMs,
 } from '../tours/guidePortal/dto.js';
 import { findParallelTours } from '../tours/parallelTours.js';
-import { fetchTourParticipantRegistrations, tourParticipantBreakdown } from '../tours/participants.js';
+import {
+  fetchTourParticipantRegistrations,
+  tourParticipantBreakdown,
+  localizeParticipantBreakdown,
+} from '../tours/participants.js';
 
 // Guide Portal → Tours. Mounted at /api/portal alongside the task feed and
 // gallery routers; the portal token IS the credential (same V1 model).
@@ -48,6 +53,17 @@ function fail(res, r) {
 // archive browser. Newest-first, so the cap drops only ancient history.
 const PAST_LIMIT = 200;
 
+// The PersonProfile columns the canonical staff-name resolver needs. Shared by
+// the shell bootstrap here and the profile screen (routes/portalProfile.js), so
+// the header and the profile page can never show different names.
+export const PORTAL_NAME_SELECT = {
+  imageUrl: true,
+  firstNameHe: true,
+  lastNameHe: true,
+  firstNameEn: true,
+  lastNameEn: true,
+};
+
 // ---------- portal home (shell bootstrap) ----------
 // The client uses `permissions` to decide which tabs/menu entries to render.
 // That is CONVENIENCE ONLY — every data route below re-resolves and enforces
@@ -62,12 +78,21 @@ router.get(
     if (!access.ok) return fail(res, access);
     const profile = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true },
+      select: PORTAL_NAME_SELECT,
     });
     res.set('Cache-Control', 'no-store');
     res.json({
+      // THE portal language. Resolved once, here, from the canonical staff
+      // language field — every client screen reads this one value and makes no
+      // language decision of its own (no browser sniffing, no per-page guess).
+      language: access.language,
       person: {
-        displayName: access.person.displayName,
+        // The guide's own name through the CANONICAL staff-name resolver
+        // (shared/staffName.mjs): each language uses its own authored name, and
+        // a person with no name in the reading language keeps the one they do
+        // have. Nothing is translated here — this only chooses between values a
+        // human already entered.
+        displayName: staffName({ profile, displayName: access.person.displayName }, access.language),
         imageUrl: profile?.imageUrl || null,
       },
       permissions: access.permissions,
@@ -77,13 +102,16 @@ router.get(
 
 // ---------- tours feed ----------
 
+// Both language columns always ship from the DB — the DTO picks per reader
+// (shared/bilingualText.mjs), so a single query serves Hebrew and English
+// guides and the two can never diverge structurally.
 const CARD_TOUR_INCLUDE = {
-  product: { select: { nameHe: true } },
-  location: { select: { nameHe: true } },
+  product: { select: { nameHe: true, nameEn: true } },
+  location: { select: { nameHe: true, nameEn: true } },
   productVariant: {
     select: {
       durationHours: true,
-      location: { select: { nameHe: true } },
+      location: { select: { nameHe: true, nameEn: true } },
     },
   },
 };
@@ -106,7 +134,7 @@ async function loadAssignedTours(person) {
   });
 }
 
-async function cardsFor(assignments) {
+async function cardsFor(assignments, lang) {
   const ids = assignments.map((a) => a.tourEventId);
   const occ = ids.length ? await occupancyFor(prisma, ids) : {};
   // Guide identity accent — the DERIVED palette key only (canonical resolver
@@ -136,6 +164,7 @@ async function cardsFor(assignments) {
       assignment: a,
       occupancy: occ[a.tourEventId],
       guideColor: resolveTourGuideColor(teamByTour.get(a.tourEventId)),
+      lang,
     }),
   );
 }
@@ -158,11 +187,11 @@ router.get(
       const end = tourEndMs(a.tourEvent);
       return Number.isNaN(end) ? true : end >= now;
     });
-    const tours = (await cardsFor(assignments)).sort((x, y) =>
+    const tours = (await cardsFor(assignments, access.language)).sort((x, y) =>
       sortKey(x).localeCompare(sortKey(y)),
     );
     res.set('Cache-Control', 'no-store');
-    res.json({ tours });
+    res.json({ language: access.language, tours });
   }),
 );
 
@@ -181,11 +210,11 @@ router.get(
       const end = tourEndMs(a.tourEvent);
       return Number.isNaN(end) ? false : end < now;
     });
-    const tours = (await cardsFor(assignments))
+    const tours = (await cardsFor(assignments, access.language))
       .sort((x, y) => sortKey(y).localeCompare(sortKey(x)))
       .slice(0, PAST_LIMIT);
     res.set('Cache-Control', 'no-store');
-    res.json({ tours });
+    res.json({ language: access.language, tours });
   }),
 );
 
@@ -204,18 +233,33 @@ router.get(
     const tour = await prisma.tourEvent.findUnique({
       where: { id: access.tour.id },
       include: {
-        product: { select: { nameHe: true } },
-        location: { select: { nameHe: true } },
+        product: { select: { nameHe: true, nameEn: true } },
+        location: { select: { nameHe: true, nameEn: true } },
         productVariant: {
           select: {
             durationHours: true,
-            location: { select: { nameHe: true } },
+            location: { select: { nameHe: true, nameEn: true } },
           },
         },
         assignments: {
           orderBy: { createdAt: 'asc' },
           include: {
-            personRef: { select: { displayName: true, profile: { select: { imageUrl: true } } } },
+            // Both name pairs — resolveStaffDisplayName picks per language, so
+            // an English guide sees the team in English wherever it exists.
+            personRef: {
+              select: {
+                displayName: true,
+                profile: {
+                  select: {
+                    imageUrl: true,
+                    firstNameHe: true,
+                    lastNameHe: true,
+                    firstNameEn: true,
+                    lastNameEn: true,
+                  },
+                },
+              },
+            },
           },
         },
         activityComponents: {
@@ -293,12 +337,22 @@ router.get(
     // Canonical purchased composition (product → ticket types) from the SAME
     // participants.js builder the admin tour modal uses — aggregate + per-customer.
     const participantRegs = await fetchTourParticipantRegistrations(prisma, [tour.id]);
-    const participantBreakdown = tourParticipantBreakdown(participantRegs);
+    // The frozen snapshot labels stay frozen; for an English reader the CARD /
+    // TICKET-TYPE names are re-resolved live from the catalog by id (existing
+    // English data only — see localizeParticipantBreakdown).
+    const participantBreakdown = await localizeParticipantBreakdown(
+      prisma,
+      tourParticipantBreakdown(participantRegs),
+      access.language,
+    );
     // Parallel tours (±3h) — SAME canonical selector as admin, but shaped by the
     // guide DTO (operational summary only, no customer data). Direct-access rule:
     // a row is clickable ONLY where this guide has an active assignment on that
     // tour; those ids are resolved here and the detail route re-enforces access.
-    const parallelRows = await findParallelTours(prisma, tour);
+    // readerLang: a parallel-tour row is operational context for THIS guide,
+    // so its names follow the guide's language (not the other tour's customer
+    // language, which is what the admin surfaces want).
+    const parallelRows = await findParallelTours(prisma, tour, { readerLang: access.language });
     let viewableIds = new Set();
     if (parallelRows.length) {
       const mine = await prisma.tourAssignment.findMany({
@@ -314,6 +368,7 @@ router.get(
     }
     res.set('Cache-Control', 'no-store');
     res.json({
+      language: access.language,
       ...guideTourDetailDto({
         tour,
         assignment: access.assignment,
@@ -322,6 +377,7 @@ router.get(
         coordinationStatusByBooking,
         heldRegistrations,
         participantBreakdown,
+        lang: access.language,
       }),
       parallelTours: guideParallelToursDto(parallelRows, { viewableIds }),
     });
@@ -400,7 +456,12 @@ router.get(
             purpose: 'coordination',
             subjectType: 'booking',
             subjectId: access.booking.id,
-            actor: guideActor(access.person),
+            actor: guideActor(access.person, access.language),
+            // The coordination form is an INTERNAL form: its subject is a
+            // booking, which knows the CUSTOMER's language, never the guide's.
+            // The portal is the only place that knows who is filling it, so it
+            // supplies the filler's language explicitly.
+            actorLanguage: access.language,
           });
       res.set('Cache-Control', 'no-store');
       res.json(await getSubmission(submission.id));
@@ -435,7 +496,7 @@ router.post(
     try {
       const updated = await submitSubmission(existing.id, {
         answers: req.body?.answers,
-        actor: guideActor(access.person),
+        actor: guideActor(access.person, access.language),
       });
       res.json({ ok: true, status: updated.status });
     } catch (e) {
@@ -480,8 +541,12 @@ router.post(
 // (tour_event, tourId, THIS portal's person) — the client never sends a
 // submission id, so a token can only ever touch its OWN summary.
 
-function guideActor(person) {
-  return { type: 'staff', ref: null, name: `מדריך · ${person.displayName}` };
+// The recorded "who filled this" label. Written in the FILLER's language —
+// they are the one who sees it echoed back in the fill dialog, and the name
+// itself is untouched business data either way.
+function guideActor(person, lang = 'he') {
+  const role = lang === 'en' ? 'Guide' : 'מדריך';
+  return { type: 'staff', ref: null, name: `${role} · ${person.displayName}` };
 }
 
 async function summaryAccess(req, res) {
@@ -530,7 +595,7 @@ router.get(
             purpose: 'tour_summary',
             subjectType: 'tour_event',
             subjectId: access.tour.id,
-            actor: guideActor(access.person),
+            actor: guideActor(access.person, access.language),
             actorScope: access.person.externalPersonId,
           });
       res.set('Cache-Control', 'no-store');
@@ -566,7 +631,7 @@ router.post(
     try {
       const updated = await submitSubmission(existing.id, {
         answers: req.body?.answers,
-        actor: guideActor(access.person),
+        actor: guideActor(access.person, access.language),
       });
       res.json({ ok: true, status: updated.status });
     } catch (e) {

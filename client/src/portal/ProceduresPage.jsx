@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import { usePortalLanguage } from './PortalLanguage.jsx';
 
-// נהלים — the procedures task feed, now a page inside the portal shell
+// נהלים — the procedures task feed, a page inside the portal shell
 // (hamburger → נהלים). The feed logic (5-bucket model, correction-priority
 // gate, silent polling) moved VERBATIM from the old single-page GuidePortal;
-// the shell now owns the header, token persistence and 404/403 gating.
-
-const KIND_NOUN = {
-  procedure: 'נוהל',
-};
+// the shell owns the header, token persistence and 404/403 gating.
+//
+// LANGUAGE: every word on this screen comes from the ONE portal registry. The
+// procedure TITLES and the reviewer's rejection comments are authored content
+// (Flow.title / FlowAnswer.adminComment are single-language columns — there is
+// no English source in the schema) and are shown exactly as written.
 
 export default function ProceduresPage() {
   const { token } = useOutletContext();
+  const { t, rtl } = usePortalLanguage();
   const navigate = useNavigate();
 
   const [state, setState] = useState({ phase: 'loading' });
@@ -39,7 +42,7 @@ export default function ProceduresPage() {
         );
       } catch (e) {
         if (!silent) {
-          setState({ phase: 'error', message: e?.message || 'שגיאה' });
+          setState({ phase: 'error', message: e?.message || 'network_error' });
         }
         // Silent failure on background refresh: keep showing the last
         // good data, the next poll will retry.
@@ -56,7 +59,7 @@ export default function ProceduresPage() {
   // automatically; refresh on focus/visibility too.
   useEffect(() => {
     if (!token) return undefined;
-    const t = setInterval(() => load({ silent: true }), 15000);
+    const timer = setInterval(() => load({ silent: true }), 15000);
     const onVis = () => {
       if (document.visibilityState === 'visible') load({ silent: true });
     };
@@ -64,7 +67,7 @@ export default function ProceduresPage() {
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('focus', onFocus);
     return () => {
-      clearInterval(t);
+      clearInterval(timer);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onFocus);
     };
@@ -94,11 +97,11 @@ export default function ProceduresPage() {
         }
         navigate(`/attempt/${attemptId}?p=${encodeURIComponent(token)}`);
       } catch (e) {
-        setStartError(e?.message || 'שגיאה בפתיחת הנוהל');
+        setStartError(e?.message || t.procedures.openError);
         setStartingId(null);
       }
     },
-    [token, navigate, startingId],
+    [token, navigate, startingId, t],
   );
 
   const handleOpen = useCallback(
@@ -117,12 +120,12 @@ export default function ProceduresPage() {
   );
 
   if (state.phase === 'loading') {
-    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+    return <div className="py-10 text-center text-sm text-gray-500">{t.common.loading}</div>;
   }
   if (state.phase === 'error') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
-        <div className="mb-1 text-base font-semibold text-gray-800">שגיאה בטעינת הנהלים</div>
+        <div className="mb-1 text-base font-semibold text-gray-800">{t.procedures.errorTitle}</div>
         <div className="mb-2 text-[12px] font-mono text-gray-400" dir="ltr">
           {state.message}
         </div>
@@ -131,7 +134,7 @@ export default function ProceduresPage() {
           onClick={() => load()}
           className="mt-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 active:bg-gray-100"
         >
-          נסה שוב
+          {t.common.retry}
         </button>
       </div>
     );
@@ -140,14 +143,14 @@ export default function ProceduresPage() {
   const tasks = Array.isArray(state.data?.tasks) ? state.data.tasks : [];
   return (
     <div>
-      <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">נהלים</h1>
+      <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">{t.procedures.title}</h1>
       {startError && (
         <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
           {startError}
         </div>
       )}
       <PortalSummary tasks={tasks} />
-      <Sections tasks={tasks} startingId={startingId} onOpen={handleOpen} />
+      <Sections tasks={tasks} startingId={startingId} onOpen={handleOpen} rtl={rtl} />
       {correctionPrompt && (
         <CorrectionPrompt
           task={correctionPrompt.task}
@@ -155,14 +158,14 @@ export default function ProceduresPage() {
           starting={startingId === correctionPrompt.task.id}
           onCancel={() => setCorrectionPrompt(null)}
           onConfirm={() => {
-            const t = correctionPrompt.task;
+            const task = correctionPrompt.task;
             setCorrectionPrompt(null);
-            startTask(t, { correctionMode: true });
+            startTask(task, { correctionMode: true });
           }}
           onSkip={() => {
-            const t = correctionPrompt.task;
+            const task = correctionPrompt.task;
             setCorrectionPrompt(null);
-            startTask(t, { correctionMode: false });
+            startTask(task, { correctionMode: false });
           }}
         />
       )}
@@ -173,12 +176,13 @@ export default function ProceduresPage() {
 // ── CorrectionPrompt ──────────────────────────────────────────────
 //
 // Bottom sheet (mobile) / centered modal (desktop) shown when the guide taps
-// המשך on a procedure that has rejected answers.
+// "continue" on a procedure that has rejected answers.
 function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, onSkip }) {
+  const { t, dir, rtl } = usePortalLanguage();
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
-      dir="rtl"
+      dir={dir}
       role="dialog"
       aria-modal="true"
       onClick={onCancel}
@@ -193,13 +197,13 @@ function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, 
               ⚠
             </span>
             <h2 className="text-base font-semibold text-gray-900 flex-1">
-              יש תיקונים ממתינים
+              {t.procedures.promptTitle}
             </h2>
             <button
               type="button"
               onClick={onCancel}
               disabled={starting}
-              aria-label="סגור"
+              aria-label={t.common.close}
               className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded p-1"
             >
               <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden>
@@ -213,14 +217,12 @@ function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, 
             </button>
           </div>
           <div className="text-sm text-gray-700 leading-snug mb-2">
-            לפני שממשיכים ב{task.title || 'נוהל זה'}, כדאי לתקן את{' '}
-            <span className="font-bold text-red-700">{rejectedCount}</span>{' '}
-            {rejectedCount === 1 ? 'התשובה שנדחתה' : 'התשובות שנדחו'}.
+            {t.procedures.promptBody(
+              task.title || t.procedures.promptThisProcedure,
+              rejectedCount,
+            )}
           </div>
-          <div className="text-[12px] text-gray-600">
-            התיקון יתבצע בתוך הנוהל הרגיל — תוכל לחזור אחורה לקרוא תוכן
-            רלוונטי, לתקן את התשובה, ולחזור אחר כך למקום שעצרת.
-          </div>
+          <div className="text-[12px] text-gray-600">{t.procedures.promptNote}</div>
         </div>
         <div className="px-5 py-3 border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:items-center gap-2">
           <button
@@ -229,7 +231,7 @@ function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, 
             disabled={starting}
             className="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md disabled:opacity-40"
           >
-            המשך ללמידה בכל זאת
+            {t.procedures.promptSkip}
           </button>
           <div className="hidden sm:block flex-1" />
           <button
@@ -238,16 +240,8 @@ function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, 
             disabled={starting}
             className="w-full sm:w-auto px-5 py-2.5 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
           >
-            {starting ? 'פותח…' : 'מעבר לתיקונים'}
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
-              <path
-                d="M10 4l-4 4 4 4"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            {starting ? t.common.opening : t.procedures.promptConfirm}
+            {!starting && <ChevronForward rtl={rtl} />}
           </button>
         </div>
       </div>
@@ -256,62 +250,33 @@ function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, 
 }
 
 // ── Section grouping (5-bucket model) ─────────────────────────────
-const SECTIONS = [
-  {
-    key: 'correction',
-    title: 'דורש תיקון',
-    subtitle: 'נהלים שהמאשר ביקש מכם לתקן — דורש פעולה',
-    accent: 'red',
-  },
-  {
-    key: 'todo',
-    title: 'לביצוע',
-    subtitle: 'נהלים שמחכים לכם להתחיל או להמשיך',
-  },
-  {
-    key: 'available',
-    title: 'זמינות לקריאה',
-    subtitle: 'נהלים פתוחים — אפשר לעיין בכל זמן',
-  },
-  {
-    key: 'pending_review',
-    title: 'ממתין לבדיקה',
-    subtitle: 'תשובות שנשלחו וממתינות לאישור המאשר',
-  },
-  {
-    key: 'approved',
-    title: 'אושר',
-    subtitle: 'נהלים שאושרו — תיעוד שהשלמתם',
-  },
-];
+// Order and accent are structure; the words come from the registry.
+const SECTION_KEYS = ['correction', 'todo', 'available', 'pending_review', 'approved'];
+const SECTION_ACCENT = { correction: 'red' };
 
-// Legacy-server-compatibility shim (old 3-bucket model → 5 buckets).
+// Legacy-server-compatibility shim (old 3-bucket model → 5 buckets). The badge
+// is matched on its stable KEY; `label` is legacy wire text and is only used
+// when an older server ships no key.
 function resolveBucket(task) {
   const b = task.bucket;
   if (b === 'todo' && task.badge?.tone === 'warning') return 'correction';
   if (b === 'done') {
-    if (task.badge?.label === 'ממתין לאישור') return 'pending_review';
-    return 'approved';
+    const isPending =
+      task.badge?.key === 'pending_review' || task.badge?.label === 'ממתין לאישור';
+    return isPending ? 'pending_review' : 'approved';
   }
-  if (
-    b === 'correction' ||
-    b === 'todo' ||
-    b === 'available' ||
-    b === 'pending_review' ||
-    b === 'approved'
-  ) {
-    return b;
-  }
+  if (SECTION_KEYS.includes(b)) return b;
   return 'todo';
 }
 
 // Compact 3-pill summary above the task list (procedure-level counts).
 function PortalSummary({ tasks }) {
+  const { t } = usePortalLanguage();
   let pending = 0;
   let approved = 0;
   let correction = 0;
-  for (const t of tasks) {
-    const b = resolveBucket(t);
+  for (const task of tasks) {
+    const b = resolveBucket(task);
     if (b === 'pending_review') pending += 1;
     else if (b === 'approved') approved += 1;
     else if (b === 'correction') correction += 1;
@@ -321,17 +286,19 @@ function PortalSummary({ tasks }) {
     <div
       className="mb-4 flex items-center gap-1.5 text-[12px] font-medium text-gray-700 bg-white border border-gray-200 rounded-md px-2.5 py-2 shadow-sm"
       role="status"
-      aria-label="סיכום סטטוס נהלים"
+      aria-label={t.procedures.summaryAria}
     >
-      <span className="text-[10px] uppercase tracking-wide text-gray-500">סיכום</span>
+      <span className="text-[10px] uppercase tracking-wide text-gray-500">
+        {t.procedures.summaryLabel}
+      </span>
       <span className="flex-1" />
       <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
-        ממתין {pending}
+        {t.procedures.summaryPending} {pending}
       </span>
       <span className="inline-flex items-center gap-1 bg-green-100 text-green-900 rounded-full px-2 py-0.5">
         <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden />
-        אושר {approved}
+        {t.procedures.summaryApproved} {approved}
       </span>
       <span
         className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
@@ -342,13 +309,14 @@ function PortalSummary({ tasks }) {
           className={`w-1.5 h-1.5 rounded-full ${correction > 0 ? 'bg-red-500' : 'bg-gray-400'}`}
           aria-hidden
         />
-        לתיקון {correction}
+        {t.procedures.summaryToFix} {correction}
       </span>
     </div>
   );
 }
 
-function Sections({ tasks, startingId, onOpen }) {
+function Sections({ tasks, startingId, onOpen, rtl }) {
+  const { t } = usePortalLanguage();
   const grouped = useMemo(() => {
     const out = {
       correction: [],
@@ -357,33 +325,32 @@ function Sections({ tasks, startingId, onOpen }) {
       pending_review: [],
       approved: [],
     };
-    for (const t of tasks) {
-      const b = resolveBucket(t);
-      const normalised = t.bucket === b ? t : { ...t, bucket: b };
+    for (const task of tasks) {
+      const b = resolveBucket(task);
+      const normalised = task.bucket === b ? task : { ...task, bucket: b };
       (out[b] || out.todo).push(normalised);
     }
     return out;
   }, [tasks]);
 
-  const totalVisible = SECTIONS.reduce((n, s) => n + (grouped[s.key]?.length || 0), 0);
+  const totalVisible = SECTION_KEYS.reduce((n, key) => n + (grouped[key]?.length || 0), 0);
   if (totalVisible === 0) return <EmptyState />;
 
   return (
     <div className="space-y-6">
-      {SECTIONS.map((s) => {
-        const items = grouped[s.key];
+      {SECTION_KEYS.map((key) => {
+        const items = grouped[key];
         if (!items || items.length === 0) return null;
-        const titleColor = s.accent === 'red' ? 'text-red-800' : 'text-gray-900';
+        const section = t.procedures.sections[key];
+        const titleColor = SECTION_ACCENT[key] === 'red' ? 'text-red-800' : 'text-gray-900';
         return (
-          <section key={s.key}>
+          <section key={key}>
             <div className="px-1 mb-2">
               <h2 className={`text-sm font-bold ${titleColor}`}>
-                {s.title}
-                <span className="ms-2 text-[11px] font-medium text-gray-500">
-                  ({items.length})
-                </span>
+                {section.title}
+                <span className="ms-2 text-[11px] font-medium text-gray-500">({items.length})</span>
               </h2>
-              <div className="text-[11px] text-gray-500">{s.subtitle}</div>
+              <div className="text-[11px] text-gray-500">{section.subtitle}</div>
             </div>
             <ul className="space-y-3">
               {items.map((task) => (
@@ -393,6 +360,7 @@ function Sections({ tasks, startingId, onOpen }) {
                     starting={startingId === task.id}
                     disabled={!!startingId && startingId !== task.id}
                     onOpen={() => onOpen(task)}
+                    rtl={rtl}
                   />
                 </li>
               ))}
@@ -404,43 +372,35 @@ function Sections({ tasks, startingId, onOpen }) {
   );
 }
 
-// Per-bucket card styling.
+// Per-bucket card styling. Colour only — the words live in the registry.
 function bucketStyle(bucket) {
   switch (bucket) {
     case 'correction':
       return {
         border: 'border-red-300 hover:border-red-400 active:bg-red-50/50',
         ring: 'bg-red-50 text-red-700 border-red-200',
-        statusLabel: 'דורש תיקון',
         statusCls: 'bg-red-100 text-red-800',
-        cta: 'תקן תשובה',
         ctaCls: 'text-red-700',
       };
     case 'pending_review':
       return {
         border: 'border-gray-200',
         ring: 'bg-amber-50 text-amber-700 border-amber-200',
-        statusLabel: 'ממתין לבדיקה',
         statusCls: 'bg-amber-100 text-amber-900',
-        cta: 'צפה',
         ctaCls: 'text-gray-600',
       };
     case 'approved':
       return {
         border: 'border-gray-200',
         ring: 'bg-green-50 text-green-700 border-green-200',
-        statusLabel: 'אושר',
         statusCls: 'bg-green-100 text-green-800',
-        cta: 'צפה',
         ctaCls: 'text-gray-600',
       };
     case 'available':
       return {
         border: 'border-gray-200 hover:border-blue-300 active:bg-blue-50/50',
         ring: 'bg-blue-50 text-blue-700 border-blue-200',
-        statusLabel: 'זמין',
         statusCls: 'bg-gray-100 text-gray-700',
-        cta: 'התחל',
         ctaCls: 'text-blue-700',
       };
     case 'todo':
@@ -448,36 +408,34 @@ function bucketStyle(bucket) {
       return {
         border: 'border-gray-200 hover:border-blue-300 active:bg-blue-50/50',
         ring: 'bg-blue-50 text-blue-700 border-blue-200',
-        statusLabel: 'בתהליך',
         statusCls: 'bg-blue-100 text-blue-800',
-        cta: 'המשך',
         ctaCls: 'text-blue-700',
       };
   }
 }
 
-function ctaForTask(task, style) {
-  if (task.bucket === 'todo' && !task.metadata?.attemptId) return 'התחל';
-  return style.cta;
-}
-
-function TaskCard({ task, starting, disabled, onOpen }) {
+function TaskCard({ task, starting, disabled, onOpen, rtl }) {
+  const { t } = usePortalLanguage();
   const bucket = task.bucket || 'todo';
   const style = bucketStyle(bucket);
-  const cta = ctaForTask(task, style);
+  // A never-started procedure says "start", a resumed one "continue".
+  const cta =
+    bucket === 'todo' && !task.metadata?.attemptId
+      ? t.procedures.cta.start
+      : t.procedures.cta[bucket] || t.procedures.cta.todo;
   const isCompleted = bucket === 'approved' || bucket === 'pending_review';
   const isCorrection = bucket === 'correction';
   const rejectionComment = task.metadata?.rejectionComment;
   const rejectedCount = task.metadata?.rejectedCount || 0;
-  const correctionPrefixLabel =
-    rejectedCount === 1 ? 'תיקון אחד נדרש' : `${rejectedCount} תיקונים נדרשים`;
 
   return (
     <button
       type="button"
       onClick={onOpen}
       disabled={disabled}
-      className={`w-full text-right bg-white border rounded-xl p-4 sm:p-5 transition shadow-sm flex gap-3 items-start ${style.border} ${
+      className={`w-full ${
+        rtl ? 'text-right' : 'text-left'
+      } bg-white border rounded-xl p-4 sm:p-5 transition shadow-sm flex gap-3 items-start ${style.border} ${
         isCompleted ? 'opacity-95' : ''
       } ${disabled ? 'opacity-50' : ''}`}
     >
@@ -485,16 +443,17 @@ function TaskCard({ task, starting, disabled, onOpen }) {
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">
-            {KIND_NOUN[task.type] || task.type}
+            {t.procedures.kindNoun[task.type] || task.type}
           </span>
           {task.metadata?.mandatory && !isCompleted && (
             <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
-              חובה
+              {t.procedures.mandatory}
             </span>
           )}
         </div>
+        {/* Authored content — single-language by schema, shown verbatim. */}
         <div className="text-base sm:text-lg font-semibold text-gray-900 leading-snug">
-          {task.title}
+          {task.title || t.procedures.untitled}
         </div>
         {task.description && !isCorrection && (
           <div className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</div>
@@ -507,12 +466,12 @@ function TaskCard({ task, starting, disabled, onOpen }) {
                 !
               </span>
               <span className="text-[13px] font-bold text-red-800">
-                {correctionPrefixLabel}
+                {t.procedures.correctionsRequired(rejectedCount)}
               </span>
             </div>
             {rejectionComment && (
               <div className="text-[12px] text-red-900 line-clamp-3 whitespace-pre-wrap">
-                <span className="font-semibold">הערת מאשר: </span>
+                <span className="font-semibold">{t.procedures.reviewerComment}</span>
                 {rejectionComment}
               </div>
             )}
@@ -520,18 +479,13 @@ function TaskCard({ task, starting, disabled, onOpen }) {
         )}
 
         <div className="mt-3 flex items-center justify-between">
-          <span
-            className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${style.statusCls}`}
-          >
-            {style.statusLabel}
+          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${style.statusCls}`}>
+            {t.procedures.status[bucket] || t.procedures.status.todo}
           </span>
           {cta && (
-            <span
-              className={`text-sm font-semibold inline-flex items-center gap-1 ${style.ctaCls}`}
-            >
-              {starting ? 'פותח…' : cta}
-              {/* In RTL, forward / proceed = LEFT, hence ChevronLeft. */}
-              {!starting && <ChevronLeftCta />}
+            <span className={`text-sm font-semibold inline-flex items-center gap-1 ${style.ctaCls}`}>
+              {starting ? t.common.opening : cta}
+              {!starting && <ChevronForward rtl={rtl} />}
             </span>
           )}
         </div>
@@ -562,25 +516,23 @@ function TaskIcon({ type, ring, bucket }) {
 }
 
 function EmptyState() {
+  const { t } = usePortalLanguage();
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-8 text-center">
       <div className="text-4xl mb-3 opacity-50">📭</div>
-      <div className="text-base font-semibold text-gray-800 mb-1">
-        אין משימות פתוחות כרגע
-      </div>
-      <div className="text-sm text-gray-500">
-        כשיהיו לך נהלים או משימות חדשות הם יופיעו כאן.
-      </div>
+      <div className="text-base font-semibold text-gray-800 mb-1">{t.procedures.emptyTitle}</div>
+      <div className="text-sm text-gray-500">{t.procedures.emptyBody}</div>
     </div>
   );
 }
 
-// Direction-explicit chevron — SVG, never mirrored by the bidi resolver.
-function ChevronLeftCta() {
+// "Proceed" chevron. Direction-explicit SVG — never left to the bidi resolver:
+// forward is LEFT in RTL and RIGHT in LTR.
+function ChevronForward({ rtl }) {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
       <path
-        d="M10 4l-4 4 4 4"
+        d={rtl ? 'M10 4l-4 4 4 4' : 'M6 4l4 4-4 4'}
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"

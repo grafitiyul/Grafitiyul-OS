@@ -1,4 +1,5 @@
 import { getGallerySettings } from '../gallery/service.js';
+import { staffLanguage } from '../../../../shared/staffName.mjs';
 
 // Server-side access + permission resolution for the Guide Portal tour
 // surfaces. Same enforcement philosophy as gallery/access.js: UI hiding is
@@ -53,11 +54,26 @@ export function buildGuidePermissions(settings, gallerySettings) {
   };
 }
 
+// THE Guide Portal language decision. ONE resolver, one source: the canonical
+// staff language field (PersonProfile.preferredLanguage) through the shared
+// staffLanguage() resolver. Deliberately NOT the browser language, NOT the
+// tour's customer language, NOT a per-screen guess — every portal surface
+// (server DTO and client UI alike) reads this single value, which is why the
+// portal can never render half in Hebrew and half in English.
+export async function resolveGuideLanguage(client, personRefId) {
+  const profile = await client.personProfile.findUnique({
+    where: { personRefId },
+    select: { preferredLanguage: true },
+  });
+  return staffLanguage({ profile });
+}
+
 export async function resolveGuidePortalAccess(client, { portalToken }) {
   const token = String(portalToken || '');
   if (!token) return { ok: false, status: 404, error: 'not_found' };
   const person = await client.personRef.findUnique({
     where: { portalToken: token },
+    include: { profile: { select: { preferredLanguage: true } } },
   });
   if (!person) return { ok: false, status: 404, error: 'not_found' };
   if (!person.portalEnabled || person.status === 'blocked') {
@@ -70,6 +86,8 @@ export async function resolveGuidePortalAccess(client, { portalToken }) {
   return {
     ok: true,
     person,
+    // The ONE language every downstream DTO and the client shell read.
+    language: staffLanguage(person),
     permissions: buildGuidePermissions(settings, gallerySettings),
   };
 }

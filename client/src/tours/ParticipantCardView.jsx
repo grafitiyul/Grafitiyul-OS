@@ -18,7 +18,19 @@ import ProductBreakdown from './ProductBreakdown.jsx';
 //
 // Fixed hierarchy: customer/contact name → organization (· unit) →
 // "👥 N משתתפים" → phone/email/field-rep row → "מידע חשוב על הלקוח".
+//
+// LANGUAGE: this component is rendered by BOTH the admin tour modal (always
+// Hebrew) and the Guide Portal (the guide's language). It therefore takes its
+// two words as props with Hebrew defaults, instead of importing the portal's
+// registry — a shared component must not assume it lives in a portal.
+const DEFAULT_LABELS = {
+  importantInfo: 'מידע חשוב על הלקוח',
+  fieldRep: 'נציג בשטח',
+};
+
 export default function ParticipantCardView({
+  lang = 'he',
+  labels = DEFAULT_LABELS,
   customerName,
   organizationLine,
   seats,
@@ -52,7 +64,7 @@ export default function ParticipantCardView({
         </div>
       ) : (
         <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-          👥 {participantsLabel(seats)}
+          👥 {participantsLabel(seats, lang)}
         </div>
       )}
     </>
@@ -99,7 +111,7 @@ export default function ParticipantCardView({
           )}
           {fieldRepName && (
             <span className="text-gray-600">
-              נציג בשטח: <span className="font-medium text-gray-800">{fieldRepName}</span>
+              {labels.fieldRep}: <span className="font-medium text-gray-800">{fieldRepName}</span>
             </span>
           )}
         </div>
@@ -112,7 +124,7 @@ export default function ParticipantCardView({
             onClick={() => setInfoOpen((o) => !o)}
             className="flex w-full items-center justify-between text-[13px] font-semibold text-gray-700 hover:text-gray-900"
           >
-            <span>מידע חשוב על הלקוח</span>
+            <span>{labels.importantInfo}</span>
             <span className="text-xs text-gray-400">{infoOpen ? '▾' : '▸'}</span>
           </button>
           {/* customerInfo is authored in the Deal's COMPACT note editor

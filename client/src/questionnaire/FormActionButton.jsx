@@ -11,10 +11,15 @@ const STATUS_CHIP = {
   reviewed: 'bg-emerald-100 text-emerald-800',
 };
 
+// LANGUAGE: shared with the admin Tour modal, so the two words it owns come in
+// as props with the existing Hebrew defaults. The Guide Portal passes its own
+// registry entries; admin callers pass nothing and are unchanged.
 export default function FormActionButton({
   icon = '📋',
   label,
   status, // null | 'draft' | 'submitted' | 'reviewed'
+  statusLabels = SUBMISSION_STATUS_LABELS,
+  busyLabel = 'פותח…',
   onClick,
   busy = false,
   className = '',
@@ -33,10 +38,10 @@ export default function FormActionButton({
       } ${className}`}
     >
       <span aria-hidden>{icon}</span>
-      <span>{busy ? 'פותח…' : label}</span>
+      <span>{busy ? busyLabel : label}</span>
       {status && (
         <span className={`rounded-full px-1.5 py-0.5 text-[10.5px] ${STATUS_CHIP[status] || ''}`}>
-          {SUBMISSION_STATUS_LABELS[status] || status}
+          {statusLabels[status] || status}
         </span>
       )}
     </button>

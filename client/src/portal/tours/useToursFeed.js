@@ -24,7 +24,10 @@ export default function useToursFeed(token, scope) {
         setState((prev) =>
           silent && prev.tours
             ? prev // keep showing last good data; next poll retries
-            : { phase: 'error', tours: null, message: e?.message || 'שגיאה' },
+            // `message` is a DIAGNOSTIC (rendered LTR, monospace, untranslated).
+            // The human-facing error wording comes from the portal registry in
+            // FeedError — this must never carry product copy in one language.
+            : { phase: 'error', tours: null, message: e?.message || 'network_error' },
         );
       }
     },

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../../db.js';
 import { emitTimelineEvent } from '../../timeline/events.js';
 import { galleryPrefix } from './keys.js';
+import { catalogName, contactFullName } from '../../../../shared/bilingualText.mjs';
 
 // Tour Gallery domain service. Single source of truth rules:
 //   * the gallery belongs to the TourEvent (one lazy row, unique tourEventId);
@@ -91,39 +92,43 @@ export const GALLERY_TITLE_BOOKINGS_INCLUDE = {
   },
 };
 
-// Same He-first full-name rule as communication/context.js contactFullName —
-// kept pure/local so the public gallery path does not pull the comms module.
-function contactDisplayName(contact) {
-  if (!contact) return null;
-  const he = `${contact.firstNameHe || ''} ${contact.lastNameHe || ''}`.trim();
-  const en = `${contact.firstNameEn || ''} ${contact.lastNameEn || ''}`.trim();
-  return he || en || null;
-}
+// (The local He-first full-name helper that used to live here was replaced by
+// the canonical shared/bilingualText.mjs contactFullName — same rule for
+// Hebrew, plus a real English branch, and now only ONE implementation.)
 
 // CANONICAL customer-facing display name for a gallery (privacy rule):
 //   organization name → ordering contact's full name → null (caller shows the
 //   generic fallback). NEVER Deal.title / stage names / internal CRM labels.
 // A group slot with several active bookings shows the neutral "סיור קבוצתי" —
 // one shared gallery must not surface any single customer's name.
-export function galleryCustomerLabel(tour) {
+export function galleryCustomerLabel(tour, lang = 'he') {
   if (!tour) return null;
   const active = (tour.bookings || []).filter((b) => b.status === 'active');
-  if (tour.kind === 'group_slot' && active.length > 1) return 'סיור קבוצתי';
+  if (tour.kind === 'group_slot' && active.length > 1) {
+    return lang === 'en' ? 'Group tour' : 'סיור קבוצתי';
+  }
   const deal = active[0]?.deal || null;
   if (!deal) return null;
-  return deal.organization?.name || contactDisplayName(deal.contacts?.[0]?.contact) || null;
+  return deal.organization?.name || contactFullName(deal.contacts?.[0]?.contact, lang) || null;
 }
 
 // Live display title — "סיור גרפיטי · 14.07.2026 · חברת ABC". Pure function of
 // current TourEvent data; changing product/date/customer updates the title
 // immediately and never touches storage keys.
-export function buildGalleryTitle(tour) {
-  if (!tour) return GENERIC_GALLERY_TITLE_HE;
-  const productName = tour.product?.nameHe || null;
+//
+// `lang` (default Hebrew, i.e. unchanged for every existing caller) selects the
+// reader's language for the parts GOS maintains bilingually: the product name
+// (Product.nameHe/nameEn) and the contact's name. Stored organization names are
+// business data and never translated.
+export function buildGalleryTitle(tour, lang = 'he') {
+  const generic = lang === 'en' ? GENERIC_GALLERY_TITLE_EN : GENERIC_GALLERY_TITLE_HE;
+  if (!tour) return generic;
+  const productName = catalogName(tour.product, lang) || null;
   const date = fmtDate(tour.date);
-  const customer = galleryCustomerLabel(tour);
-  if (!productName && !date && !customer) return GENERIC_GALLERY_TITLE_HE;
-  return [productName || 'סיור', date, customer].filter(Boolean).join(' · ');
+  const customer = galleryCustomerLabel(tour, lang);
+  if (!productName && !date && !customer) return generic;
+  const activity = productName || (lang === 'en' ? 'Tour' : 'סיור');
+  return [activity, date, customer].filter(Boolean).join(' · ');
 }
 
 const MEDIA_LIVE = { deletedAt: null, uploadStatus: 'ready' };

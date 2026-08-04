@@ -2,14 +2,27 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { waitingLabel, formatQuantity, lineCalcLabel, lineDisplayName } from './payText.js';
 import { formatMinor } from '../lib/money.js';
+import { portalStrings } from './i18n.js';
+
+// The wording lives in the ONE portal registry; this module holds only the
+// RULES. Tests therefore read the same registry the app does — a missing or
+// renamed key fails here rather than shipping a blank label to a guide.
+const HE = portalStrings('he').pay;
+const EN = portalStrings('en').pay;
 
 // The waiting summary card shows an ACTIVITY COUNT, never an unapproved
-// amount — with correct Hebrew singular/plural.
+// amount — with correct singular/plural in BOTH languages.
 
 test('waitingLabel: zero / singular / plural Hebrew forms', () => {
-  assert.equal(waitingLabel(0), 'אין פעילויות הממתינות לאישורך');
-  assert.equal(waitingLabel(1), 'פעילות אחת ממתינה לאישורך');
-  assert.equal(waitingLabel(3), '3 פעילויות ממתינות לאישורך');
+  assert.equal(waitingLabel(0, HE), 'אין פעילויות הממתינות לאישורך');
+  assert.equal(waitingLabel(1, HE), 'פעילות אחת ממתינה לאישורך');
+  assert.equal(waitingLabel(3, HE), '3 פעילויות ממתינות לאישורך');
+});
+
+test('waitingLabel: zero / singular / plural English forms', () => {
+  assert.equal(waitingLabel(0, EN), 'Nothing is waiting for your approval');
+  assert.equal(waitingLabel(1, EN), '1 activity is waiting for your approval');
+  assert.equal(waitingLabel(3, EN), '3 activities are waiting for your approval');
 });
 
 test('formatQuantity: decimals kept, trailing zeros dropped', () => {
@@ -95,9 +108,31 @@ test('lineCalcLabel: empty unit labels fall back to the unitless breakdown', () 
 });
 
 test('lineDisplayName: tour deduction ניכוי is shown as קיזוז (display only)', () => {
-  assert.equal(lineDisplayName('ניכוי', 'tour_event'), 'קיזוז');
+  assert.equal(lineDisplayName('ניכוי', 'tour_event', HE), 'קיזוז');
   // Only for tours, only for that exact label; everything else is untouched.
-  assert.equal(lineDisplayName('ניכוי', 'general'), 'ניכוי');
-  assert.equal(lineDisplayName('תשלום בסיס', 'tour_event'), 'תשלום בסיס');
-  assert.equal(lineDisplayName('ניכוי נסיעות', 'tour_event'), 'ניכוי נסיעות');
+  assert.equal(lineDisplayName('ניכוי', 'general', HE), 'ניכוי');
+  assert.equal(lineDisplayName('תשלום בסיס', 'tour_event', HE), 'תשלום בסיס');
+  assert.equal(lineDisplayName('ניכוי נסיעות', 'tour_event', HE), 'ניכוי נסיעות');
+});
+
+// Payroll component names are single-language DATA (PayrollComponent.nameHe has
+// no English twin anywhere in GOS). An English reader therefore sees the stored
+// name — the relabel rule still applies because it is defined over that stored
+// Hebrew name, and nothing is machine-translated.
+test('lineDisplayName: the stored payroll name is never translated for an English reader', () => {
+  assert.equal(lineDisplayName('ניכוי', 'tour_event', EN), 'קיזוז');
+  assert.equal(lineDisplayName('תשלום בסיס', 'tour_event', EN), 'תשלום בסיס');
+});
+
+// The Hebrew rate preposition ("₪40 לשעה") only works glued to a Hebrew noun.
+// For an English reader the bare multiplier is used with the stored noun —
+// honest about the missing data instead of inventing an English unit.
+test('lineCalcLabel: English reader gets the bare multiplier, stored noun intact', () => {
+  assert.equal(
+    lineCalcLabel(
+      { unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' },
+      'en',
+    ),
+    `${formatMinor(4000)} × 1.5 שעות`,
+  );
 });

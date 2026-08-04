@@ -340,8 +340,10 @@ test('tour detail DTO — full shape, cancelled bookings dropped', () => {
   // located-less workshop (c2) and the non-workshop (c3) are excluded.
   assert.equal(dto.workshopLocations.length, 1);
   assert.equal(dto.workshopLocations[0].id, 'c1');
-  assert.equal(dto.workshopLocations[0].nameHe, 'סדנת גרפיטי');
-  assert.equal(dto.workshopLocations[0].location.nameHe, 'גג הסטודיו');
+  // Names ship ALREADY RESOLVED to the reader's language under a neutral key —
+  // the client never chooses between nameHe/nameEn.
+  assert.equal(dto.workshopLocations[0].name, 'סדנת גרפיטי');
+  assert.equal(dto.workshopLocations[0].location.name, 'גג הסטודיו');
   assert.equal(dto.participants.length, 1); // cancelled booking dropped
 });
 
@@ -431,7 +433,10 @@ test('HELD participant DTO exposes ONLY name/count/info/badge — never phone/em
   // Even with ALL permissions on, a held row carries no contact channel.
   const dto = guideHeldParticipantDto(HELD_REG, ALL_ON);
   assert.equal(dto.held, true);
-  assert.equal(dto.badge, 'עוד לא סופי');
+  // The badge travels as a KEY — the portal owns the wording in each language,
+  // so no rendered Hebrew can reach an English guide through the DTO.
+  assert.equal(dto.badgeKey, 'not_final');
+  assert.equal('badge' in dto, false);
   assert.equal(dto.seats, 6);
   assert.equal(dto.customerName, 'דור קורן');
   assert.equal(dto.customerInfo, '<p>מגיעים באוטובוס</p>'); // Important Info shows
@@ -457,7 +462,7 @@ test('tour detail DTO: confirmed bookings in participants, held rows in provisio
   });
   assert.equal(dto.participants.length, 0);
   assert.equal(dto.provisionalParticipants.length, 1);
-  assert.equal(dto.provisionalParticipants[0].badge, 'עוד לא סופי');
+  assert.equal(dto.provisionalParticipants[0].badgeKey, 'not_final');
   assert.equal(dto.provisionalParticipants[0].phone, null);
 });
 
@@ -523,12 +528,95 @@ test('variantDisplayName: product name wins; legacy tours use the notes first-li
     variantDisplayName({ product: null, date: '2026-03-12', notes: 'סיור מיוחד 01/01/25', location: null }),
     'סיור מיוחד 01/01/25',
   );
-  // Truly nameless — the generic label remains the last resort only.
-  assert.equal(variantDisplayName({ product: null, notes: '', location: null }), 'סיור');
+  // Truly nameless → NULL, not a Hebrew word on the wire. The portal renders
+  // the generic label from its own language registry.
+  assert.equal(variantDisplayName({ product: null, notes: '', location: null }), null);
   assert.equal(
     variantDisplayName({ product: null, notes: null, location: { nameHe: 'חיפה' } }),
-    'סיור · חיפה',
+    'חיפה',
   );
+});
+
+// ── language: EXISTING bilingual data is connected, nothing is translated ────
+
+test('variantDisplayName resolves product + city from the authored En pair', async () => {
+  const { variantDisplayName } = await import('./dto.js');
+  const tour = {
+    product: { nameHe: 'סיור גרפיטי', nameEn: 'Graffiti Tour' },
+    location: { nameHe: 'פלורנטין', nameEn: 'Florentin' },
+  };
+  assert.equal(variantDisplayName(tour, 'he'), 'סיור גרפיטי · פלורנטין');
+  assert.equal(variantDisplayName(tour, 'en'), 'Graffiti Tour · Florentin');
+});
+
+test('a missing English catalog value keeps the authored Hebrew one — never blank, never invented', async () => {
+  const { variantDisplayName } = await import('./dto.js');
+  // Real production shape: the product has English, the city does not.
+  const tour = {
+    product: { nameHe: 'סיור גרפיטי', nameEn: 'Graffiti Tour' },
+    location: { nameHe: 'פלורנטין', nameEn: null },
+  };
+  assert.equal(variantDisplayName(tour, 'en'), 'Graffiti Tour · פלורנטין');
+});
+
+test('tour detail DTO renders components + contacts in the reader language', () => {
+  const dto = guideTourDetailDto({
+    tour: {
+      id: 't1',
+      kind: 'business',
+      product: { nameHe: 'סיור גרפיטי', nameEn: 'Graffiti Tour' },
+      location: { nameHe: 'פלורנטין', nameEn: 'Florentin' },
+      assignments: [],
+      activityComponents: [
+        {
+          id: 'c1',
+          activityComponent: {
+            nameHe: 'סדנת גרפיטי',
+            nameEn: 'Graffiti workshop',
+            icon: '🎨',
+            isWorkshop: true,
+          },
+          workshopLocation: { nameHe: 'גג הסטודיו', address: null, instructions: null },
+        },
+      ],
+      bookings: [
+        {
+          id: 'b1',
+          status: 'active',
+          seats: 4,
+          deal: {
+            title: 'IBM',
+            organization: { name: 'IBM' },
+            contacts: [
+              {
+                isPrimary: true,
+                roles: [],
+                contact: {
+                  firstNameHe: 'דור',
+                  lastNameHe: 'קורן',
+                  firstNameEn: 'Dor',
+                  lastNameEn: 'Koren',
+                  phones: [],
+                  emails: [],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    assignment: { role: 'guide' },
+    occupancy: { activeSeats: 4 },
+    permissions: ALL_ON,
+    lang: 'en',
+  });
+  assert.equal(dto.variantName, 'Graffiti Tour · Florentin');
+  assert.equal(dto.locationName, 'Florentin');
+  assert.equal(dto.components[0].name, 'Graffiti workshop');
+  assert.equal(dto.participants[0].customerName, 'Dor Koren');
+  // WorkshopLocation has NO English column anywhere in GOS — it ships verbatim
+  // rather than being translated in code. That is a DATA gap, reported.
+  assert.equal(dto.workshopLocations[0].location.name, 'גג הסטודיו');
 });
 
 test('operationalNotes: a single-line legacy name is the TITLE, not a note', async () => {

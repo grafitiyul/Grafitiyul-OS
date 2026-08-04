@@ -23,6 +23,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { buildExpansion } from '../services/flowExpansion.js';
+import { staffLanguage } from '../../../shared/staffName.mjs';
 
 const router = Router();
 
@@ -42,6 +43,10 @@ export async function resolvePerson(token, db = prisma) {
   if (!token || typeof token !== 'string') return { error: 'not_found' };
   const person = await db.personRef.findUnique({
     where: { portalToken: token },
+    // profile carries the canonical staff language — the ONE portal language
+    // source (shared/staffName.mjs staffLanguage). Selected here so this
+    // resolver's callers never make a second language decision.
+    include: { profile: { select: { preferredLanguage: true } } },
   });
   if (!person) return { error: 'not_found' };
   if (!person.portalEnabled) return { error: 'disabled', person };
@@ -122,11 +127,14 @@ function statusFor(kind) {
   return 'in_progress';
 }
 
+// Badge identity is a KEY, never a rendered string — the portal client owns
+// the wording in both languages (portal/i18n.js). `label` stays on the wire
+// for older clients only; nothing new should read it.
 function badgeFor(kind) {
   if (kind === 'needs_correction')
-    return { tone: 'warning', label: 'דורש תיקון' };
+    return { tone: 'warning', key: 'needs_correction', label: 'דורש תיקון' };
   if (kind === 'pending_review')
-    return { tone: 'info', label: 'ממתין לבדיקה' };
+    return { tone: 'info', key: 'pending_review', label: 'ממתין לבדיקה' };
   return null;
 }
 
@@ -194,7 +202,10 @@ async function collectProcedureTasks(person) {
     return {
       id: `procedure:${f.id}`,
       type: 'procedure',
-      title: f.title || '(ללא שם)',
+      // Flow.title is authored in ONE language (no bilingual column exists) —
+      // it ships verbatim. An untitled flow ships null so the portal client
+      // renders the untitled wording in the guide's language.
+      title: f.title || null,
       description: f.description || null,
       status,
       // Visual grouping in the portal feed. Five buckets so guides
@@ -291,6 +302,9 @@ router.get(
       })),
     });
     res.json({
+      // Same ONE language value the shell bootstrap ships — this endpoint is
+      // also reachable on its own, so it must never leave the caller guessing.
+      language: staffLanguage(r.person),
       person: {
         displayName: r.person.displayName,
         // No id / externalPersonId leaked. The token is the only

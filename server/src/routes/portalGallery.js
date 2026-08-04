@@ -117,8 +117,11 @@ router.get(
       linkToken = link?.token || null;
     }
     res.json({
+      // The gallery renders OUTSIDE the portal shell (full-screen route), so it
+      // carries the same ONE language value itself rather than re-deriving it.
+      language: access.language,
       tourEventId: tour.id,
-      title: buildGalleryTitle(tour),
+      title: buildGalleryTitle(tour, access.language),
       tourStatus: tour.status,
       date: tour.date,
       startTime: tour.startTime,

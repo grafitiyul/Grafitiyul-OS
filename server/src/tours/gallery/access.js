@@ -1,5 +1,6 @@
 import { GALLERY_TITLE_BOOKINGS_INCLUDE, getGallerySettings } from './service.js';
 import { findActiveAssignment, getGuidePortalSettings } from '../guidePortal/access.js';
+import { staffLanguage } from '../../../../shared/staffName.mjs';
 
 // Server-side permission resolution for every gallery surface. UI hiding is
 // never the enforcement layer — each route resolves access here first.
@@ -21,7 +22,10 @@ import { findActiveAssignment, getGuidePortalSettings } from '../guidePortal/acc
 export async function resolveGuideGalleryAccess(client, { portalToken, tourEventId }) {
   const token = String(portalToken || '');
   if (!token) return { ok: false, status: 404, error: 'not_found' };
-  const person = await client.personRef.findUnique({ where: { portalToken: token } });
+  const person = await client.personRef.findUnique({
+    where: { portalToken: token },
+    include: { profile: { select: { preferredLanguage: true } } },
+  });
   if (!person) return { ok: false, status: 404, error: 'not_found' };
   if (!person.portalEnabled || person.status === 'blocked') {
     return { ok: false, status: 403, error: 'portal_disabled' };
@@ -52,6 +56,9 @@ export async function resolveGuideGalleryAccess(client, { portalToken, tourEvent
   return {
     ok: true,
     person,
+    // Same ONE language decision as guidePortal/access.js — the gallery page
+    // renders outside the portal shell, so it must carry the value itself.
+    language: staffLanguage(person),
     assignment,
     tour,
     permissions: {

@@ -168,6 +168,11 @@ router.get(
     const months = [...new Set(monthRows.map((r) => r.activity.payrollMonth))].sort().reverse();
 
     res.json({
+      // Payroll VALUES (activity titles, component names, unit nouns, office
+      // notes) are single-language in the schema — no English column exists for
+      // any of them, so they ship verbatim. The language drives the screen's own
+      // vocabulary (states, totals, actions) in the client registry.
+      language: access.language,
       month,
       months,
       totals: { approvedMinor, pendingCount },

@@ -8,6 +8,7 @@
 // unit-testable without a database.
 
 import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
+import { catalogName, contactFullName } from '../../../../shared/bilingualText.mjs';
 import { tourEndMs as canonicalTourEndMs } from '../tourTime.js';
 import { stripTrailingSameDate } from '../calendar/desiredState.js';
 
@@ -19,11 +20,11 @@ const KIND_TO_ACTIVITY = {
   group_slot: 'group',
 };
 
-function contactNameHe(c) {
-  if (!c) return '';
-  const he = `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim();
-  if (he) return he;
-  return `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim();
+// A customer's name in the READER's language, through the canonical bilingual
+// resolver (a Contact stores both name pairs). Names are business data — this
+// only chooses between what a human already entered.
+function contactName(c, lang) {
+  return contactFullName(c, lang);
 }
 
 // primary link = the customer; fieldRep = the fieldRep-role link ONLY when it
@@ -46,24 +47,41 @@ export function tourEndMs(tour) {
   return ms == null ? Number.NaN : ms;
 }
 
+// The tour's LOCATION name in the reader's language (Location carries the
+// canonical nameHe/nameEn pair). The tour's own location wins over the
+// variant's, exactly as before.
+export function tourLocationName(tour, lang) {
+  return (
+    catalogName(tour.location, lang) ||
+    catalogName(tour.productVariant?.location, lang) ||
+    null
+  );
+}
+
 // The variant's full display name — product + location (a ProductVariant's
-// identity is the product/location pair; it has no name of its own).
+// identity is the product/location pair; it has no name of its own). Both
+// halves resolve through the canonical bilingual picker, so an English guide
+// sees "Graffiti Tour · Florentin" wherever the catalog has English.
 //
 // Legacy-imported tours have NO product (class D by import decision); their
 // operational identity is the legacy tour NAME stored as the first line of
 // notes — the SAME canonical rule the calendar titles use (desiredState.js),
-// including the trailing same-date strip. The generic 'סיור' remains only the
-// true last resort, never the label of a real historical activity.
-export function variantDisplayName(tour) {
-  const location =
-    tour.location?.nameHe || tour.productVariant?.location?.nameHe || null;
-  let name = tour.product?.nameHe || null;
-  if (!name) {
-    name = stripTrailingSameDate(
+// including the trailing same-date strip. That note is free text in ONE
+// language and ships verbatim; it is never translated in code.
+//
+// Returns null when nothing at all identifies the tour — the client renders
+// the generic "tour" wording from its own language registry, so the last
+// resort is not a hard-coded Hebrew word on the wire.
+export function variantDisplayName(tour, lang) {
+  const location = tourLocationName(tour, lang);
+  const name =
+    catalogName(tour.product, lang) ||
+    stripTrailingSameDate(
       String(tour.notes || '').trim().split('\n')[0].slice(0, 80),
       tour.date,
-    ) || 'סיור';
-  }
+    ) ||
+    null;
+  if (!name) return location || null;
   return location ? `${name} · ${location}` : name;
 }
 
@@ -82,7 +100,7 @@ export function operationalNotes(tour) {
 
 // ---------- list card ----------
 
-export function guideTourCardDto({ tour, assignment, occupancy, guideColor = null }) {
+export function guideTourCardDto({ tour, assignment, occupancy, guideColor = null, lang = 'he' }) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
   return {
     // Derived identity accent (canonical resolver, computed by the route) —
@@ -95,20 +113,24 @@ export function guideTourCardDto({ tour, assignment, occupancy, guideColor = nul
     activityType: KIND_TO_ACTIVITY[tour.kind] || tour.kind,
     tourLanguage: tour.tourLanguage,
     role: assignment?.role || null,
-    variantName: variantDisplayName(tour),
-    productName: tour.product?.nameHe || null,
-    locationName: tour.location?.nameHe || tour.productVariant?.location?.nameHe || null,
+    variantName: variantDisplayName(tour, lang),
+    productName: catalogName(tour.product, lang) || null,
+    locationName: tourLocationName(tour, lang),
     participantsTotal: occ.activeSeats || 0,
   };
 }
 
 // ---------- participant (booking) card ----------
 
-export function guideParticipantDto(booking, permissions, { coordinationStatus = null, byProduct = [] } = {}) {
+export function guideParticipantDto(
+  booking,
+  permissions,
+  { coordinationStatus = null, byProduct = [], lang = 'he' } = {},
+) {
   const deal = booking.deal;
   if (!deal) return null;
   const { primary, fieldRep } = resolveCustomerContacts(deal.contacts);
-  const customerName = contactNameHe(primary?.contact) || deal.title || null;
+  const customerName = contactName(primary?.contact, lang) || deal.title || null;
   const showFieldRep =
     permissions.viewFieldRep && fieldRep && fieldRep !== primary && fieldRep.contact;
   return {
@@ -120,8 +142,10 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
     // legacy/website row with no breakdown; the client then shows seats.
     byProduct,
     // Primary title: organization if it exists, otherwise the customer's
-    // full name (spec). customerName still ships for the subtitle.
-    title: deal.organization?.name || customerName || 'לקוח',
+    // full name (spec). customerName still ships for the subtitle. Both are
+    // real business values; when neither exists the DTO ships null and the
+    // client renders the generic "customer" wording in the guide's language.
+    title: deal.organization?.name || customerName || null,
     customerName,
     // "שם הקבוצה" (agent reservations, BINDING #6) — rendered above the
     // participant cards on the portal tour page.
@@ -135,7 +159,7 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
     email: permissions.viewParticipantEmail
       ? primary?.contact?.emails?.[0]?.value || null
       : null,
-    fieldRepName: showFieldRep ? contactNameHe(fieldRep.contact) || null : null,
+    fieldRepName: showFieldRep ? contactName(fieldRep.contact, lang) || null : null,
     // Admin-authored rich HTML (same trusted origin as the admin card).
     customerInfo: permissions.viewCustomerInfo ? deal.customerInfo || null : null,
     // Coordination questionnaire state for THIS booking — null when the
@@ -149,18 +173,21 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
 // but which is NOT a confirmed customer. Server-enforced restriction: phone,
 // email, field rep and coordination NEVER ship for a held row — regardless of
 // permissions. Only name + count + Important Customer Information + the badge.
-export function guideHeldParticipantDto(reg, permissions, { byProduct = [] } = {}) {
+export function guideHeldParticipantDto(reg, permissions, { byProduct = [], lang = 'he' } = {}) {
   const deal = reg.deal;
   const primary = deal ? resolveCustomerContacts(deal.contacts).primary : null;
-  const customerName = contactNameHe(primary?.contact) || deal?.title || reg.customerName || 'לקוח';
+  const customerName =
+    contactName(primary?.contact, lang) || deal?.title || reg.customerName || null;
   return {
     registrationId: reg.id,
     held: true,
-    badge: 'עוד לא סופי',
+    // Badge identity, not wording — the client owns "עוד לא סופי" / "Not
+    // confirmed yet" in its language registry.
+    badgeKey: 'not_final',
     seats: reg.quantity,
     // Same canonical composition as a confirmed row (shared DTO).
     byProduct,
-    title: deal?.organization?.name || customerName || 'לקוח',
+    title: deal?.organization?.name || customerName || null,
     customerName,
     // Important Customer Information — same permission gate as a confirmed row.
     customerInfo: permissions.viewCustomerInfo ? deal?.customerInfo || null : null,
@@ -212,6 +239,7 @@ export function guideTourDetailDto({
   coordinationStatusByBooking = {},
   heldRegistrations = [],
   participantBreakdown = null,
+  lang = 'he',
 }) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
   // Route each customer's canonical composition to its card by stable key
@@ -233,16 +261,16 @@ export function guideTourDetailDto({
     status: tour.status,
     activityType: KIND_TO_ACTIVITY[tour.kind] || tour.kind,
     tourLanguage: tour.tourLanguage,
-    variantName: variantDisplayName(tour),
-    productName: tour.product?.nameHe || null,
-    locationName: tour.location?.nameHe || tour.productVariant?.location?.nameHe || null,
+    variantName: variantDisplayName(tour, lang),
+    productName: catalogName(tour.product, lang) || null,
+    locationName: tourLocationName(tour, lang),
     notes: operationalNotes(tour), // operational tour note, not CRM
     viewerRole: assignment?.role || null,
     participantsTotal: occ.activeSeats || 0,
     team: permissions.viewTeam
       ? (tour.assignments || []).map((a) => ({
           id: a.id,
-          displayName: resolveStaffDisplayName(a),
+          displayName: resolveStaffDisplayName(a, lang),
           role: a.role,
           imageUrl: a.personRef?.profile?.imageUrl || null,
         }))
@@ -252,7 +280,10 @@ export function guideTourDetailDto({
     // dedicated workshopLocations list below.
     components: (tour.activityComponents || []).map((row) => ({
       id: row.id,
-      nameHe: row.activityComponent?.nameHe || '',
+      // ActivityComponent maintains nameHe/nameEn — resolved through the ONE
+      // bilingual picker. The key is `name` (already language-resolved), never
+      // a language-specific key the client would have to choose between.
+      name: catalogName(row.activityComponent, lang) || '',
       icon: row.activityComponent?.icon || null,
       color: row.activityComponent?.color || null,
       isWorkshop: !!row.activityComponent?.isWorkshop,
@@ -266,10 +297,14 @@ export function guideTourDetailDto({
       .filter((row) => row.activityComponent?.isWorkshop && row.workshopLocation)
       .map((row) => ({
         id: row.id,
-        nameHe: row.activityComponent?.nameHe || '',
+        name: catalogName(row.activityComponent, lang) || '',
         icon: row.activityComponent?.icon || null,
+        // WorkshopLocation has NO English columns anywhere in GOS (name,
+        // address and access instructions are single-language). These ship
+        // VERBATIM — never machine-translated — and the gap is reported by
+        // scripts/reportPortalEnglishGaps.js so it can be fixed in the data.
         location: {
-          nameHe: row.workshopLocation.nameHe,
+          name: row.workshopLocation.nameHe,
           address: row.workshopLocation.address || null,
           instructions: row.workshopLocation.instructions || null,
         },
@@ -280,13 +315,14 @@ export function guideTourDetailDto({
         guideParticipantDto(b, permissions, {
           coordinationStatus: coordinationStatusByBooking[b.id] || null,
           byProduct: byProductByBooking.get(b.id) || [],
+          lang,
         }),
       )
       .filter(Boolean),
     // Conditional (HELD) reservations — "probably coming, not yet confirmed".
     // Expired/cancelled holds are never fetched, so they vanish from the portal.
     provisionalParticipants: (heldRegistrations || []).map((r) =>
-      guideHeldParticipantDto(r, permissions, { byProduct: byProductByReg.get(r.id) || [] }),
+      guideHeldParticipantDto(r, permissions, { byProduct: byProductByReg.get(r.id) || [], lang }),
     ),
   };
 }

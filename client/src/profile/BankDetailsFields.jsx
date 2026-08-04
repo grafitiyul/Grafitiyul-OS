@@ -15,7 +15,27 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // catalog is an accelerator, never a gate, and there are no duplicate
 // number/name inputs.
 
-export default function BankDetailsFields({ value, onChange, banks = [], disabled = false }) {
+// LANGUAGE: shared with the ADMIN person card (always Hebrew) and the Guide
+// Portal (the guide's language), so the field labels come in as a prop with the
+// existing Hebrew defaults. Bank and branch NAMES come from the catalog and are
+// business data — never translated.
+const DEFAULT_LABELS = {
+  beneficiary: 'שם המוטב (בעל החשבון)',
+  bank: 'בנק',
+  branch: 'סניף',
+  account: 'מספר חשבון',
+  pickBankFirst: 'בחרו בנק כדי למלא את הסניף.',
+  bankPlaceholder: 'מספר או שם בנק…',
+  branchPlaceholder: 'מספר סניף…',
+};
+
+export default function BankDetailsFields({
+  value,
+  onChange,
+  banks = [],
+  disabled = false,
+  labels = DEFAULT_LABELS,
+}) {
   const v = value || {};
   const bank = useMemo(
     () => banks.find((b) => b.code === v.bankCode) || null,
@@ -23,7 +43,7 @@ export default function BankDetailsFields({ value, onChange, banks = [], disable
   );
   return (
     <div className="space-y-3">
-      <Field label="שם המוטב (בעל החשבון)">
+      <Field label={labels.beneficiary}>
         <input
           type="text"
           value={v.beneficiary || ''}
@@ -33,12 +53,13 @@ export default function BankDetailsFields({ value, onChange, banks = [], disable
         />
       </Field>
 
-      <Field label="בנק">
+      <Field label={labels.bank}>
         <BankCombobox
           banks={banks}
           code={v.bankCode}
           name={v.bankName}
           disabled={disabled}
+          placeholder={labels.bankPlaceholder}
           onPick={(b) => onChange({ bankCode: b?.code || null, bankName: b?.name || null })}
           onManual={(text) =>
             /^\d{1,4}$/.test(text)
@@ -48,12 +69,13 @@ export default function BankDetailsFields({ value, onChange, banks = [], disable
         />
       </Field>
 
-      <Field label="סניף">
+      <Field label={labels.branch}>
         <BranchCombobox
           branches={bank?.branches || []}
           code={v.branchCode}
           name={v.branchName}
           disabled={disabled || !v.bankCode}
+          placeholder={labels.branchPlaceholder}
           onPick={(br) => onChange({ branchCode: br.code, branchName: br.name || null })}
           onManual={(digits) =>
             onChange({ branchCode: digits || null, branchName: null })
@@ -61,10 +83,10 @@ export default function BankDetailsFields({ value, onChange, banks = [], disable
         />
       </Field>
       {!v.bankCode && (
-        <p className="-mt-1.5 text-[11.5px] text-gray-400">בחרו בנק כדי למלא את הסניף.</p>
+        <p className="-mt-1.5 text-[11.5px] text-gray-400">{labels.pickBankFirst}</p>
       )}
 
-      <Field label="מספר חשבון">
+      <Field label={labels.account}>
         <input
           type="text"
           inputMode="numeric"
@@ -97,7 +119,7 @@ function bankLabel(code, name) {
 
 // ── bank combobox ────────────────────────────────────────────────────
 
-function BankCombobox({ banks, code, name, disabled, onPick, onManual }) {
+function BankCombobox({ banks, code, name, disabled, placeholder, onPick, onManual }) {
   const [text, setText] = useState(bankLabel(code, name));
   const [openList, setOpenList] = useState(false);
   const boxRef = useRef(null);
@@ -129,7 +151,7 @@ function BankCombobox({ banks, code, name, disabled, onPick, onManual }) {
         type="text"
         value={text}
         disabled={disabled}
-        placeholder="מספר או שם בנק…"
+        placeholder={placeholder}
         onChange={(e) => {
           setText(e.target.value);
           setOpenList(true);
@@ -159,7 +181,7 @@ function BankCombobox({ banks, code, name, disabled, onPick, onManual }) {
                   setText(bankLabel(b.code, b.name));
                   setOpenList(false);
                 }}
-                className="w-full px-3 py-2 text-right text-[13.5px] text-gray-800 hover:bg-blue-50"
+                className="w-full px-3 py-2 text-start text-[13.5px] text-gray-800 hover:bg-blue-50"
               >
                 <span className="tabular-nums font-semibold">{b.code}</span> — {b.name}
               </button>
@@ -180,7 +202,7 @@ function branchLabel(code, name) {
   return [code, name].filter(Boolean).join(' — ');
 }
 
-function BranchCombobox({ branches, code, name, disabled, onPick, onManual }) {
+function BranchCombobox({ branches, code, name, disabled, placeholder, onPick, onManual }) {
   const [text, setText] = useState(branchLabel(code, name));
   const [openList, setOpenList] = useState(false);
   const boxRef = useRef(null);
@@ -219,7 +241,7 @@ function BranchCombobox({ branches, code, name, disabled, onPick, onManual }) {
         inputMode="numeric"
         value={text}
         disabled={disabled}
-        placeholder="מספר סניף…"
+        placeholder={placeholder}
         onChange={(e) => {
           setText(e.target.value);
           setOpenList(true);
@@ -245,7 +267,7 @@ function BranchCombobox({ branches, code, name, disabled, onPick, onManual }) {
                   setText(branchLabel(br.code, br.name));
                   setOpenList(false);
                 }}
-                className="w-full px-3 py-2 text-right text-[13.5px] text-gray-800 hover:bg-blue-50"
+                className="w-full px-3 py-2 text-start text-[13.5px] text-gray-800 hover:bg-blue-50"
               >
                 <span className="tabular-nums font-semibold">{br.code}</span>
                 {br.name ? ` — ${br.name}` : ''}

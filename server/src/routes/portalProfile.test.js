@@ -50,11 +50,41 @@ test('guide profile DTO keys are exactly the whitelist (no accidental widening)'
     'bank',
     'canEdit',
     'displayName',
+    'editableName',
     'email',
     'imageCrop',
     'imageOriginalUrl',
     'imageUrl',
-    'lifecycleLabel',
+    'lifecycleStage',
     'phone',
   ]);
+});
+
+// Language: the DTO shows the name in the READER's language through the
+// canonical resolver, and ships the lifecycle stage as a KEY (the portal owns
+// both wordings) — no rendered Hebrew crosses the wire.
+test('guide profile DTO is language-aware and enum-safe', () => {
+  const person = { ...PERSON, displayName: 'דנה כהן' };
+  const profile = {
+    ...PROFILE_WITH_PAYROLL,
+    firstNameHe: 'דנה',
+    lastNameHe: 'כהן',
+    firstNameEn: 'Dana',
+    lastNameEn: 'Cohen',
+  };
+  assert.equal(profileDto(person, profile, { editPersonalProfile: true }, 'he').displayName, 'דנה כהן');
+  assert.equal(profileDto(person, profile, { editPersonalProfile: true }, 'en').displayName, 'Dana Cohen');
+  // The EDITABLE field is always the legacy PersonRef string, in both languages
+  // — the portal must never overwrite the management-owned name pair.
+  assert.equal(profileDto(person, profile, { editPersonalProfile: true }, 'en').editableName, 'דנה כהן');
+  assert.equal(profileDto(person, profile, { editPersonalProfile: true }, 'en').lifecycleStage, 'staff');
+});
+
+// No English name on file → the guide still sees a name (the canonical
+// resolver's documented rule), never a blank. This is a DATA gap, reported by
+// scripts/reportPortalEnglishGaps.js, not something code invents a name for.
+test('missing English staff name falls back to the authored Hebrew one', () => {
+  const person = { ...PERSON, displayName: 'דנה כהן' };
+  const profile = { ...PROFILE_WITH_PAYROLL, firstNameHe: 'דנה', lastNameHe: 'כהן' };
+  assert.equal(profileDto(person, profile, { editPersonalProfile: true }, 'en').displayName, 'דנה כהן');
 });

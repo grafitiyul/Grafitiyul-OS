@@ -2,10 +2,9 @@
 // only renders. Values derive from the loaded feed, so the pickers never
 // offer a year/month with zero results.
 
-export const MONTHS_HE = [
-  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
-  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
-];
+// Month NAMES live in the ONE portal registry (i18n.js) and are read through
+// format.js monthName(mm, lang) — this file is pure date arithmetic and holds
+// no words in any language.
 
 const yearOf = (t) => String(t.date || '').slice(0, 4);
 const monthOf = (t) => String(t.date || '').slice(5, 7);
@@ -29,7 +28,3 @@ export function filterPastTours(tours, { year = '', month = '' } = {}) {
   );
 }
 
-export function monthLabel(mm) {
-  const idx = Number(mm) - 1;
-  return MONTHS_HE[idx] || mm;
-}

@@ -51,7 +51,7 @@ router.get(
     const grantedIds = grants.map((g) => g.stationId);
     if (grantedIds.length === 0) {
       res.set('Cache-Control', 'no-store');
-      return res.json({ tours: [] });
+      return res.json({ language: access.language, tours: [] });
     }
     const stations = await prisma.tourStation.findMany({
       where: { id: { in: grantedIds }, active: true, tour: { active: true } },
@@ -88,7 +88,12 @@ router.get(
     const tours = [...byTour.values()].sort((a, b) => a.sortOrder - b.sortOrder);
     for (const t of tours) delete t.sortOrder;
     res.set('Cache-Control', 'no-store');
-    res.json({ tours });
+    // Training CONTENT (Tour/TourStation/TourContentBlock) is single-language in
+    // the schema — there is no English column anywhere in that domain, so the
+    // titles/descriptions/body ship verbatim. `language` still travels so the
+    // page CHROME (headings, empty/error states, back links) is in the guide's
+    // language and the gap is visible rather than silently mixed.
+    res.json({ language: access.language, tours });
   }),
 );
 
@@ -133,6 +138,7 @@ router.get(
 
     res.set('Cache-Control', 'no-store');
     res.json({
+      language: access.language,
       id: station.id,
       titleHe: station.titleHe,
       descriptionHe: station.descriptionHe || null,

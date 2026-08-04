@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { CenteredMessage, DisabledScreen, NotFoundScreen } from './shellScreens.jsx';
 import BrandMark from '../brand/BrandMark.jsx';
+import { PortalLanguageProvider, usePortalLanguage } from './PortalLanguage.jsx';
+import { portalDir, portalStrings } from './i18n.js';
 
 // Guide Portal shell — the app frame every portal page renders inside.
 //
@@ -12,14 +14,16 @@ import BrandMark from '../brand/BrandMark.jsx';
 //     NEVER written to localStorage: portal identity is URL-token scoped,
 //     not device-global (root Landing security invariant, incident
 //     2026-07-13).
-//   * ONE bootstrap call (/api/portal/:token/home) → person + permissions.
-//     Permissions here only decide which tabs/menu entries RENDER — every
-//     data route re-resolves and enforces them server-side.
+//   * ONE bootstrap call (/api/portal/:token/home) → person + permissions +
+//     LANGUAGE. The language comes from the canonical staff field, resolved
+//     server-side; the shell simply distributes it (PortalLanguageProvider)
+//     so no page makes a language decision of its own.
 //   * sticky top header + fixed bottom navigation (mobile app pattern),
 //     with safe-area padding for notched devices
 //   * hamburger sheet for the secondary destinations
 //
-// Pages receive { token, person, permissions } via Outlet context.
+// Pages receive { token, person, permissions } via Outlet context and read the
+// language + strings via usePortalLanguage().
 
 export default function PortalShell() {
   const { token } = useParams();
@@ -54,7 +58,7 @@ export default function PortalShell() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         setState({ phase: 'ready', data: await res.json() });
       } catch (e) {
-        if (!silent) setState({ phase: 'error', message: e?.message || 'שגיאה' });
+        if (!silent) setState({ phase: 'error', message: e?.message || 'network_error' });
       }
     },
     [token],
@@ -68,46 +72,64 @@ export default function PortalShell() {
     load();
   }, [load]);
 
+  // Language is only known after the bootstrap resolves. Before that the shell
+  // renders the pre-auth states in the DEFAULT language — there is no guide yet
+  // to have a preference, and guessing from the browser is exactly what this
+  // architecture rules out.
+  const language = state.phase === 'ready' ? state.data?.language : undefined;
+
   useEffect(() => {
+    const t = portalStrings(language);
     const name = state.phase === 'ready' ? state.data?.person?.displayName : null;
-    document.title = name ? `${name} · גרפיטיול` : 'גרפיטיול';
-  }, [state]);
+    document.title = name ? `${name} · ${t.shell.documentTitle}` : t.shell.documentTitle;
+  }, [state, language]);
 
   // Close the menu sheet on navigation.
   useEffect(() => {
     setMenuOpen(false);
   }, [location.pathname]);
 
-  if (state.phase === 'loading') return <CenteredMessage text="טוען…" />;
+  const boot = portalStrings(language);
+  if (state.phase === 'loading') return <CenteredMessage text={boot.common.loading} />;
   if (state.phase === 'not_found') return <NotFoundScreen />;
   if (state.phase === 'disabled') return <DisabledScreen />;
   if (state.phase === 'error') {
-    return <CenteredMessage text="שגיאה בטעינת הפורטל." sub={state.message} onRetry={load} />;
+    return (
+      <CenteredMessage text={boot.shell.loadError} sub={state.message} onRetry={load} />
+    );
   }
 
   const person = state.data?.person || {};
   const permissions = state.data?.permissions || {};
 
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl" data-page="guide-portal">
-      <Header
-        displayName={person.displayName}
-        imageUrl={person.imageUrl}
-        token={token}
-      />
-      {/* pb clears the fixed bottom nav (h-16 + safe area). */}
-      <main className="mx-auto max-w-2xl px-3 pb-28 pt-4 sm:px-6">
-        <Outlet context={{ token, person, permissions, refreshHome }} />
-      </main>
-      <BottomNav token={token} permissions={permissions} onMenu={() => setMenuOpen(true)} />
-      {menuOpen && (
-        <MenuSheet token={token} permissions={permissions} onClose={() => setMenuOpen(false)} />
-      )}
-    </div>
+    <PortalLanguageProvider language={language}>
+      <div
+        className="min-h-screen bg-gray-50"
+        dir={portalDir(language)}
+        data-page="guide-portal"
+        data-portal-lang={language}
+      >
+        <Header
+          displayName={person.displayName}
+          imageUrl={person.imageUrl}
+          token={token}
+        />
+        {/* pb clears the fixed bottom nav (h-16 + safe area). */}
+        <main className="mx-auto max-w-2xl px-3 pb-28 pt-4 sm:px-6">
+          <Outlet context={{ token, person, permissions, refreshHome }} />
+        </main>
+        <BottomNav token={token} permissions={permissions} onMenu={() => setMenuOpen(true)} />
+        {menuOpen && (
+          <MenuSheet token={token} permissions={permissions} onClose={() => setMenuOpen(false)} />
+        )}
+      </div>
+    </PortalLanguageProvider>
   );
 }
 
 function Header({ displayName, imageUrl, token }) {
+  const { t } = usePortalLanguage();
   return (
     <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
@@ -115,7 +137,7 @@ function Header({ displayName, imageUrl, token }) {
         <NavLink
           to={`/p/${encodeURIComponent(token)}/profile`}
           className="flex min-w-0 flex-1 items-center gap-3"
-          aria-label="פרטים אישיים"
+          aria-label={t.shell.profileAria}
         >
           {imageUrl ? (
             <img
@@ -129,9 +151,9 @@ function Header({ displayName, imageUrl, token }) {
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] leading-tight text-gray-500">שלום</div>
+            <div className="text-[11px] leading-tight text-gray-500">{t.shell.greeting}</div>
             <div className="truncate text-[15px] font-semibold text-gray-900">
-              {displayName || 'אורח'}
+              {displayName || t.shell.guest}
             </div>
           </div>
         </NavLink>
@@ -144,38 +166,39 @@ function Header({ displayName, imageUrl, token }) {
 // ── bottom navigation ────────────────────────────────────────────────
 
 function BottomNav({ token, permissions, onMenu }) {
+  const { t } = usePortalLanguage();
   const base = `/p/${encodeURIComponent(token)}`;
   const tabs = [
-    { to: base, end: true, label: 'סיורים', icon: <CompassIcon /> },
+    { to: base, end: true, label: t.shell.navTours, icon: <CompassIcon /> },
     // סיורי עבר is a permanent tab (product decision 2026-07) — completed
     // tours move here for their assigned guides; never permission-gated.
-    { to: `${base}/past`, label: 'סיורי עבר', icon: <HistoryIcon /> },
-    permissions.viewPay && { to: `${base}/pay`, label: 'שכר', icon: <WalletIcon /> },
+    { to: `${base}/past`, label: t.shell.navPast, icon: <HistoryIcon /> },
+    permissions.viewPay && { to: `${base}/pay`, label: t.shell.navPay, icon: <WalletIcon /> },
   ].filter(Boolean);
 
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      aria-label="ניווט ראשי"
+      aria-label={t.shell.navAria}
     >
       <div
         className="mx-auto grid h-16 max-w-2xl"
         style={{ gridTemplateColumns: `repeat(${tabs.length + 1}, minmax(0, 1fr))` }}
       >
-        {tabs.map((t) => (
+        {tabs.map((tab) => (
           <NavLink
-            key={t.to}
-            to={t.to}
-            end={t.end}
+            key={tab.to}
+            to={tab.to}
+            end={tab.end}
             className={({ isActive }) =>
               `flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${
                 isActive ? 'text-blue-700' : 'text-gray-500'
               }`
             }
           >
-            {t.icon}
-            {t.label}
+            {tab.icon}
+            {tab.label}
           </NavLink>
         ))}
         <button
@@ -184,7 +207,7 @@ function BottomNav({ token, permissions, onMenu }) {
           className="flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium text-gray-500"
         >
           <MenuIcon />
-          תפריט
+          {t.shell.navMenu}
         </button>
       </div>
     </nav>
@@ -195,12 +218,13 @@ function BottomNav({ token, permissions, onMenu }) {
 
 function MenuSheet({ token, permissions, onClose }) {
   const navigate = useNavigate();
+  const { t, dir, rtl } = usePortalLanguage();
   const base = `/p/${encodeURIComponent(token)}`;
   const items = [
-    { to: `${base}/feedback`, label: 'משובים', icon: '💬' },
-    permissions.viewProcedures && { to: `${base}/procedures`, label: 'נהלים', icon: '📋' },
-    permissions.viewTraining && { to: `${base}/training`, label: 'מערכי הדרכה', icon: '🎓' },
-    { to: `${base}/profile`, label: 'פרטים אישיים', icon: '👤' },
+    { to: `${base}/feedback`, label: t.shell.menuFeedback, icon: '💬' },
+    permissions.viewProcedures && { to: `${base}/procedures`, label: t.shell.menuProcedures, icon: '📋' },
+    permissions.viewTraining && { to: `${base}/training`, label: t.shell.menuTraining, icon: '🎓' },
+    { to: `${base}/profile`, label: t.shell.menuProfile, icon: '👤' },
   ].filter(Boolean);
 
   return (
@@ -208,7 +232,7 @@ function MenuSheet({ token, permissions, onClose }) {
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      dir="rtl"
+      dir={dir}
       onClick={onClose}
     >
       <div
@@ -223,7 +247,9 @@ function MenuSheet({ token, permissions, onClose }) {
               key={item.to}
               type="button"
               onClick={() => navigate(item.to)}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-right text-[15px] font-medium text-gray-800 active:bg-gray-100"
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-[15px] font-medium text-gray-800 active:bg-gray-100 ${
+                rtl ? 'text-right' : 'text-left'
+              }`}
             >
               <span className="text-xl" aria-hidden>
                 {item.icon}
@@ -236,7 +262,7 @@ function MenuSheet({ token, permissions, onClose }) {
             onClick={onClose}
             className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-3 text-[14px] font-medium text-gray-500 active:bg-gray-100"
           >
-            סגירה
+            {t.common.close}
           </button>
         </div>
       </div>

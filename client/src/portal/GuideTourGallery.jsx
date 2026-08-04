@@ -4,6 +4,8 @@ import { createGalleryUploader, getGalleryUploader } from '../lib/galleryUpload.
 import GalleryGrid from '../gallery/GalleryGrid.jsx';
 import GalleryLightbox from '../gallery/GalleryLightbox.jsx';
 import UploadQueuePanel from '../gallery/UploadQueuePanel.jsx';
+import { portalDir, portalStrings } from './i18n.js';
+import { fmtDate } from './format.js';
 
 // Guide Portal → one tour's gallery. MOBILE-FIRST: guides shoot on phones and
 // upload big real-world batches over unstable connections — the huge upload
@@ -32,11 +34,10 @@ async function jsonFetch(url, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-function fmtDate(ymd) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
-  return m ? `${m[3]}.${m[2]}.${m[1]}` : ymd;
-}
-
+// This page renders OUTSIDE the portal shell (full-screen by design). It reads
+// the SAME ONE server-resolved language off its own payload rather than
+// deriving one — every child here takes explicit props, so it reads the string
+// registry directly instead of standing up a second provider.
 export default function GuideTourGallery() {
   const { token, tourEventId } = useParams();
   const base = `/api/portal/${encodeURIComponent(token)}/tours/${encodeURIComponent(tourEventId)}/gallery`;
@@ -47,6 +48,12 @@ export default function GuideTourGallery() {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [queueSnap, setQueueSnap] = useState(null);
   const [copied, setCopied] = useState(false);
+  // Server-resolved language; before the payload lands the pre-auth states
+  // render in the portal default (there is no identified guide yet).
+  const lang = data?.language;
+  const t = portalStrings(lang);
+  const dir = portalDir(lang);
+  const rtl = dir === 'rtl';
   const fileInputRef = useRef(null);
 
   const uploader = useMemo(
@@ -117,8 +124,8 @@ export default function GuideTourGallery() {
 
   async function deleteMedia(ids) {
     if (!ids.length) return;
-    const label = ids.length === 1 ? 'פריט אחד' : `${ids.length} פריטים`;
-    if (!window.confirm(`למחוק ${label}? הקבצים יימחקו לצמיתות.`)) return;
+    const label = ids.length === 1 ? t.gallery.deleteOne : t.gallery.deleteMany(ids.length);
+    if (!window.confirm(t.gallery.deleteConfirm(label))) return;
     try {
       await jsonFetch(`${base}/media/delete`, {
         method: 'POST',
@@ -128,7 +135,7 @@ export default function GuideTourGallery() {
       setLightboxIndex(null);
       load();
     } catch (e) {
-      alert('שגיאה במחיקה: ' + e.message);
+      alert(t.gallery.deleteFailed + e.message);
     }
   }
   const deleteSelected = () => deleteMedia([...selected]);
@@ -138,7 +145,7 @@ export default function GuideTourGallery() {
       await jsonFetch(`${base}/cover`, { method: 'PUT', body: JSON.stringify({ mediaId }) });
       load();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      alert(t.gallery.actionFailed + e.message);
     }
   }
 
@@ -154,29 +161,30 @@ export default function GuideTourGallery() {
       setTimeout(() => setCopied(false), 2000);
       if (!data?.linkToken) load();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      alert(t.gallery.actionFailed + e.message);
     }
   }
 
   if (phase === 'loading') {
     return (
-      <div dir="rtl" className="flex min-h-screen items-center justify-center bg-gray-50 text-sm text-gray-400">
-        טוען…
+      <div dir={dir} className="flex min-h-screen items-center justify-center bg-gray-50 text-sm text-gray-400">
+        {t.common.loading}
       </div>
     );
   }
   if (phase !== 'ready') {
     return (
-      <div dir="rtl" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 px-6 text-center">
+      <div dir={dir} className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 px-6 text-center">
         <div className="text-3xl" aria-hidden>🔒</div>
         <p className="text-[14px] text-gray-600">
-          {phase === 'blocked' ? 'הגלריה אינה זמינה — ייתכן שאינך משובץ לסיור זה.' : 'שגיאה בטעינת הגלריה.'}
+          {phase === 'blocked' ? t.gallery.blocked : t.gallery.loadError}
         </p>
         <Link
           to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tourEventId)}`}
           className="text-[13px] font-semibold text-blue-700"
         >
-          ← חזרה לסיור
+          {rtl ? '← ' : '\u2192 '}
+          {t.gallery.backLabel}
         </Link>
       </div>
     );
@@ -186,22 +194,22 @@ export default function GuideTourGallery() {
   const canUpload = data.tourStatus !== 'cancelled';
 
   return (
-    <div dir="rtl" className="min-h-screen bg-gray-50 pb-28">
+    <div dir={dir} className="min-h-screen bg-gray-50 pb-28">
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-3 py-2.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center gap-2.5">
           <Link
             to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tourEventId)}`}
-            aria-label="חזרה לסיור"
+            aria-label={t.gallery.backAria}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg text-gray-500 hover:bg-gray-100"
           >
-            →
+            {rtl ? '→' : '←'}
           </Link>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-[15px] font-bold text-gray-900">{data.title}</h1>
             <div className="text-[11.5px] text-gray-500">
               {fmtDate(data.date)} · <span dir="ltr" className="tabular-nums">{data.startTime}</span>
-              {media.length > 0 && ` · ${media.length} פריטים`}
+              {media.length > 0 && ` · ${t.gallery.itemsCount(media.length)}`}
             </div>
           </div>
           {perms.canShareCustomerLink && canUpload && (
@@ -210,7 +218,7 @@ export default function GuideTourGallery() {
               onClick={copyCustomerLink}
               className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-gray-700 active:bg-gray-100"
             >
-              {copied ? '✓ הועתק' : '🔗 קישור ללקוח'}
+              {copied ? t.gallery.copied : t.gallery.customerLink}
             </button>
           )}
         </div>
@@ -220,7 +228,9 @@ export default function GuideTourGallery() {
         {/* Selection toolbar */}
         {selected.size > 0 && (
           <div className="sticky top-14 z-10 mb-3 flex items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
-            <span className="text-[13px] font-semibold text-blue-800">{selected.size} נבחרו</span>
+            <span className="text-[13px] font-semibold text-blue-800">
+              {t.gallery.selectedCount(selected.size)}
+            </span>
             <div className="flex items-center gap-1.5">
               {perms.canDelete && (
                 <button
@@ -228,7 +238,7 @@ export default function GuideTourGallery() {
                   onClick={deleteSelected}
                   className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-red-600 active:bg-red-50"
                 >
-                  🗑 מחיקה
+                  {t.gallery.delete}
                 </button>
               )}
               <button
@@ -236,7 +246,7 @@ export default function GuideTourGallery() {
                 onClick={() => setSelected(new Set())}
                 className="rounded-lg px-2 py-1 text-[12px] font-semibold text-blue-700"
               >
-                ביטול
+                {t.common.cancel}
               </button>
             </div>
           </div>
@@ -249,13 +259,14 @@ export default function GuideTourGallery() {
           selected={selected}
           onToggleSelect={toggleSelect}
           onOpen={(i) => setLightboxIndex(i)}
-          emptyText={canUpload ? 'עדיין אין מדיה מהסיור — התחילו להעלות!' : 'אין מדיה בגלריה'}
+          emptyText={canUpload ? t.gallery.emptyUploadable : t.gallery.emptyReadOnly}
+          coverLabel={t.media.cover}
         />
 
         {/* Upload queue */}
         {queueSnap?.totals?.total > 0 && (
           <div className="mt-3">
-            <UploadQueuePanel snapshot={queueSnap} uploader={uploader} />
+            <UploadQueuePanel snapshot={queueSnap} uploader={uploader} dir={dir} labels={t.upload} />
           </div>
         )}
       </main>
@@ -269,7 +280,7 @@ export default function GuideTourGallery() {
               onClick={() => fileInputRef.current?.click()}
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-blue-600/25 active:bg-blue-700"
             >
-              📷 העלאת תמונות וסרטונים
+              {t.gallery.uploadCta}
             </button>
           </div>
         </div>
@@ -291,6 +302,8 @@ export default function GuideTourGallery() {
         <GalleryLightbox
           media={media}
           index={lightboxIndex}
+          dir={dir}
+          labels={t.media}
           onClose={() => setLightboxIndex(null)}
           onNavigate={setLightboxIndex}
           actions={

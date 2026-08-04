@@ -17,13 +17,29 @@ import RichText from '../editor/RichText.jsx';
 
 const ASSET_ICONS = { link: '🔗', file: '📄', video: '▶', image: '🖼' };
 
-// Same vocabulary as the admin editor's role chips (tour-content kit).
+// Same vocabulary as the admin editor's role chips (tour-content kit). ORDER
+// and icons are structure; the words come from `labels` so the shared renderer
+// serves the Hebrew admin preview and an English guide from one implementation.
 const ROLE_GROUPS = [
-  { key: 'build_up', label: 'בילד־אפ', icon: '🧱' },
-  { key: 'curiosity_hook', label: 'סקרנות', icon: '✨' },
-  { key: 'content', label: 'תוכן', icon: '📖' },
-  { key: 'punchline', label: 'פואנטה', icon: '🎯' },
+  { key: 'build_up', icon: '🧱' },
+  { key: 'curiosity_hook', icon: '✨' },
+  { key: 'content', icon: '📖' },
+  { key: 'punchline', icon: '🎯' },
 ];
+
+const DEFAULT_LABELS = {
+  noParts: 'אין חלקים בתחנה זו.',
+  partsOne: 'חלק אחד',
+  partsMany: (n) => `${n} חלקים`,
+  noContent: '— ללא תוכן —',
+  mediaAndLinks: 'מדיה וקישורים',
+  groups: {
+    build_up: 'בילד־אפ',
+    curiosity_hook: 'סקרנות',
+    content: 'תוכן',
+    punchline: 'פואנטה',
+  },
+};
 
 function groupKeyFor(roleHint) {
   return ROLE_GROUPS.some((g) => g.key === roleHint) ? roleHint : 'content';
@@ -36,6 +52,10 @@ export default function StationContentView({
   heroImageUrl,
   parts = [],
   media = [],
+  labels = DEFAULT_LABELS,
+  // The collapsed glyph points INTO the reading direction; the default is the
+  // RTL one every existing caller already renders.
+  collapseGlyphs = { open: '▾', closed: '◂' },
 }) {
   const [openGroups, setOpenGroups] = useState(() => new Set()); // all collapsed
 
@@ -67,7 +87,7 @@ export default function StationContentView({
 
       <div className="space-y-3">
         {parts.length === 0 && (
-          <div className="py-8 text-center text-gray-400">אין חלקים בתחנה זו.</div>
+          <div className="py-8 text-center text-gray-400">{labels.noParts}</div>
         )}
         {ROLE_GROUPS.map((g) => {
           const groupParts = grouped.get(g.key);
@@ -82,17 +102,19 @@ export default function StationContentView({
                 type="button"
                 onClick={() => toggle(g.key)}
                 aria-expanded={open}
-                className="flex w-full items-center gap-2.5 px-5 py-3.5 text-right hover:bg-gray-50"
+                className="flex w-full items-center gap-2.5 px-5 py-3.5 text-start hover:bg-gray-50"
               >
                 <span className="text-lg" aria-hidden>
                   {g.icon}
                 </span>
-                <span className="flex-1 text-[15.5px] font-bold text-gray-900">{g.label}</span>
+                <span className="flex-1 text-[15.5px] font-bold text-gray-900">
+                  {labels.groups[g.key]}
+                </span>
                 <span className="text-[11.5px] font-medium text-gray-400">
-                  {groupParts.length === 1 ? 'חלק אחד' : `${groupParts.length} חלקים`}
+                  {groupParts.length === 1 ? labels.partsOne : labels.partsMany(groupParts.length)}
                 </span>
                 <span className="text-gray-400" aria-hidden>
-                  {open ? '▾' : '◂'}
+                  {open ? collapseGlyphs.open : collapseGlyphs.closed}
                 </span>
               </button>
               {open && (
@@ -108,7 +130,7 @@ export default function StationContentView({
                       {p.body ? (
                         <RichText html={p.body} className="text-gray-800" />
                       ) : (
-                        <p className="text-gray-400">— ללא תוכן —</p>
+                        <p className="text-gray-400">{labels.noContent}</p>
                       )}
                     </section>
                   ))}
@@ -121,7 +143,7 @@ export default function StationContentView({
 
       {media.length > 0 && (
         <section className="mt-6">
-          <h2 className="mb-2 text-[15px] font-semibold text-gray-700">מדיה וקישורים</h2>
+          <h2 className="mb-2 text-[15px] font-semibold text-gray-700">{labels.mediaAndLinks}</h2>
           <ul className="space-y-2">
             {media.map((a, i) => (
               <li key={i}>

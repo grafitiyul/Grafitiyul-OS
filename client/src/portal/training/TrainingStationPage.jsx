@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import StationContentView from '../../tourContentView/StationContentView.jsx';
+import { usePortalLanguage } from '../PortalLanguage.jsx';
 
 // One training Station — learner-safe content through the SHARED renderer
 // (tourContentView/StationContentView, same one the admin preview uses).
 // A direct URL without an explicit grant gets 403 from the server and the
 // honest blocked state here.
+//
+// LANGUAGE: the page chrome follows the guide; the station CONTENT is
+// single-language in the schema and renders exactly as authored.
 
 export default function TrainingStationPage() {
   const { token } = useOutletContext();
+  const { t, rtl } = usePortalLanguage();
   const { stationId } = useParams();
   const [state, setState] = useState({ phase: 'loading' });
 
@@ -23,7 +28,7 @@ export default function TrainingStationPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setState({ phase: 'ready', station: await res.json() });
     } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
+      setState({ phase: 'error', message: e?.message || 'network_error' });
     }
   }, [token, stationId]);
 
@@ -35,18 +40,18 @@ export default function TrainingStationPage() {
   const backHref = `/p/${encodeURIComponent(token)}/training`;
 
   if (state.phase === 'loading') {
-    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+    return <div className="py-10 text-center text-sm text-gray-500">{t.common.loading}</div>;
   }
   if (state.phase === 'blocked') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
         <div className="mb-2 text-3xl">🔒</div>
-        <div className="text-sm text-gray-600">התחנה אינה זמינה עבורך.</div>
+        <div className="text-sm text-gray-600">{t.training.stationBlocked}</div>
         <Link
           to={backHref}
           className="mt-3 inline-block rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
         >
-          חזרה למערכי ההדרכה
+          {t.training.backLabel}
         </Link>
       </div>
     );
@@ -54,13 +59,15 @@ export default function TrainingStationPage() {
   if (state.phase === 'error') {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
-        <div className="mb-1 text-base font-semibold text-gray-800">שגיאה בטעינת התחנה</div>
+        <div className="mb-1 text-base font-semibold text-gray-800">
+          {t.training.stationErrorTitle}
+        </div>
         <button
           type="button"
           onClick={load}
           className="mt-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
         >
-          נסה שוב
+          {t.common.retry}
         </button>
       </div>
     );
@@ -72,10 +79,10 @@ export default function TrainingStationPage() {
       <div className="mb-3">
         <Link
           to={backHref}
-          aria-label="חזרה למערכי ההדרכה"
+          aria-label={t.training.backAria}
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-lg text-gray-500 active:bg-gray-100"
         >
-          →
+          {rtl ? '→' : '←'}
         </Link>
       </div>
       <StationContentView
@@ -85,6 +92,8 @@ export default function TrainingStationPage() {
         heroImageUrl={s.heroImageUrl}
         parts={s.parts}
         media={s.media}
+        labels={t.stationContent}
+        collapseGlyphs={{ open: '▾', closed: rtl ? '◂' : '▸' }}
       />
     </div>
   );

@@ -9,6 +9,8 @@ import {
   recordPersonChanges,
 } from '../timeline/personChangelog.js';
 import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
+import { staffName } from '../../../shared/staffName.mjs';
+import { PORTAL_NAME_SELECT } from './portalTours.js';
 
 // Guide Portal → פרטים אישיים. Same portal-token credential; the guide can
 // VIEW their own operational identity and — when the editPersonalProfile
@@ -31,11 +33,9 @@ function fail(res, r) {
   return res.status(r.status).json({ error: r.error });
 }
 
-const LIFECYCLE_LABELS = {
-  trainee: 'מתלמד',
-  staff: 'צוות',
-  evaluator: 'מעריך',
-};
+// Lifecycle stage is an ENUM, and enums never travel as rendered text: the DTO
+// ships the key and the portal's language registry owns both wordings.
+const LIFECYCLE_STAGES = ['trainee', 'staff', 'evaluator'];
 
 function guideOrigin(person) {
   return {
@@ -49,10 +49,18 @@ function guideOrigin(person) {
 // Exported for tests: the guide-profile DTO is an explicit whitelist — the
 // admin-only payroll facts (vatStatus, senioritySupplement) and every other
 // unlisted PersonProfile column can never reach the portal, structurally.
-export function profileDto(person, profile, permissions) {
+export function profileDto(person, profile, permissions, lang = 'he') {
   const bank = normalizeBankDetails(profile?.bankDetails);
   return {
-    displayName: person.displayName,
+    // The name SHOWN in the hero — canonical staff-name resolver, identical to
+    // the shell header (they read the same select + resolver, so they cannot
+    // drift). Never machine-translated.
+    displayName: staffName({ profile, displayName: person.displayName }, lang),
+    // The name the guide EDITS. Deliberately a separate field: it is the
+    // legacy single-string PersonRef.displayName, while the bilingual name
+    // pair on PersonProfile is management-owned and not editable here. Shipping
+    // one field for both would silently overwrite one store from the other.
+    editableName: person.displayName || '',
     email: person.email || null,
     phone: person.phone || null,
     imageUrl: profile?.imageUrl || null,
@@ -60,7 +68,7 @@ export function profileDto(person, profile, permissions) {
     // current avatar (prefills the shared crop tool).
     imageOriginalUrl: profile?.imageOriginalUrl || null,
     imageCrop: profile?.imageCrop || null,
-    lifecycleLabel: LIFECYCLE_LABELS[person.lifecycleHint] || null,
+    lifecycleStage: LIFECYCLE_STAGES.includes(person.lifecycleHint) ? person.lifecycleHint : null,
     bank,
     canEdit: permissions.editPersonalProfile,
   };
@@ -75,10 +83,18 @@ router.get(
     if (!access.ok) return fail(res, access);
     const profile = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true, imageOriginalUrl: true, imageCrop: true, bankDetails: true },
+      select: {
+        ...PORTAL_NAME_SELECT,
+        imageOriginalUrl: true,
+        imageCrop: true,
+        bankDetails: true,
+      },
     });
     res.set('Cache-Control', 'no-store');
-    res.json(profileDto(access.person, profile, access.permissions));
+    res.json({
+      language: access.language,
+      ...profileDto(access.person, profile, access.permissions, access.language),
+    });
   }),
 );
 

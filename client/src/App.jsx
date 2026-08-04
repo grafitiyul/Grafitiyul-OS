@@ -379,11 +379,7 @@ export default function App() {
         <Route
           path="feedback"
           element={
-            <PlaceholderPage
-              icon="💬"
-              title="משובים"
-              description="מודול המשובים עדיין לא זמין בפורטל. כשייבנה, כאן יופיעו משובים על הסיורים שלך."
-            />
+            <PlaceholderPage icon="💬" titleKey="feedbackTitle" bodyKey="feedbackBody" />
           }
         />
         {/* מערכי הדרכה — permitted training content (server double-gated:
