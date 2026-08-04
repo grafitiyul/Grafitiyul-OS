@@ -554,6 +554,8 @@ export const api = {
       tourMutation(request(`/api/deals/${id}/register/send-link`, { method: 'POST', body: JSON.stringify(data) })),
     registerNoPayment: (id, data) =>
       tourMutation(request(`/api/deals/${id}/register/no-payment`, { method: 'POST', body: JSON.stringify(data) })),
+    registerManualPayment: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/register/manual-payment`, { method: 'POST', body: JSON.stringify(data) })),
     settleRegistrationPayment: (id, data = {}) =>
       tourMutation(request(`/api/deals/${id}/register/settle-payment`, { method: 'POST', body: JSON.stringify(data) })),
     cancelRegistrationHold: (id) =>

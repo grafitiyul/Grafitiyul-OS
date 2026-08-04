@@ -34,6 +34,7 @@ import {
   holdRegistrationForDeal,
   recordPaymentLinkOutcome,
   registerWithoutPayment,
+  registerWithManualPayment,
   cancelHold,
   reconcileWaiverAfterSave,
 } from '../deals/registrationCompletion.js';
@@ -1351,6 +1352,47 @@ router.post(
     const after = await prisma.deal.findUnique({ where: { id: deal.id }, select: DEAL_DIFF_SELECT });
     if (before && after) await recordDealChanges(prisma, { dealId: deal.id, before, after, origin });
     res.json(await loadDeal(req.params.id));
+  }),
+);
+
+// Register with a MANUAL payment (paid outside GOS) — two explicit modes:
+// 'record' (structured manual payment via the canonical collection evidence
+// path, real amount) or 'external_approved' (attested paid/approved outside
+// the system, no payment details — never labeled "free"). The commercial total
+// is NEVER zeroed. WON exactly once via the canonical transition.
+router.post(
+  '/:id/register/manual-payment',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    const b = req.body || {};
+    if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    try {
+      const result = await registerWithManualPayment(prisma, {
+        dealId: deal.id,
+        tourEventId: String(b.tourEventId),
+        mode: b.mode,
+        method: b.method || null,
+        amountIls: b.amountIls,
+        paidAt: b.paidAt || null,
+        reference: b.reference || null,
+        note: b.note || null,
+        allowOverbook: b.allowOverbook === true,
+        userId: req.adminAuth?.userId || null,
+        origin,
+      });
+      res.json({ alreadyWon: !!result.alreadyWon, deal: await loadDeal(req.params.id) });
+    } catch (e) {
+      if (['invalid_manual_mode', 'amount_invalid', 'invalid_method', 'date_invalid'].includes(e.code)) {
+        return res.status(422).json({ error: e.code });
+      }
+      if (e.code === 'tour_full') return res.status(409).json({ error: 'tour_full', ...e.details });
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      throw e;
+    }
   }),
 );
 

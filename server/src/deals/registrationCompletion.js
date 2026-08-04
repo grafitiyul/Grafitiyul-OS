@@ -2,7 +2,8 @@ import { createHeldRegistration } from '../tours/registrationLifecycle.js';
 import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
 import { recomputeTourOperationalProduct } from '../tours/operationalProduct.js';
 import { markTourWooPending } from '../tours/woo/service.js';
-import { settleDealWonNoPayment } from './paymentWon.js';
+import { settleDealWon, settleDealWonNoPayment } from './paymentWon.js';
+import { recordEvidence } from '../collectionEvidenceService.js';
 import { resolveDealGroupOffering } from './groupOffering.js';
 import {
   loadGroupTicketLines,
@@ -182,6 +183,101 @@ export async function registerWithoutPayment(client, { dealId, tourEventId, reas
   // Pin AFTER the WON settlement so it never leaves a note on a deal that failed
   // to settle (e.g. tour_full throws above and we never reach here).
   await upsertWaiverNote(client, { dealId, body: describeWaiver(waiver, lines), reason: trimmed, origin });
+  return result;
+}
+
+// Register with a MANUAL payment — the customer paid OUTSIDE GOS (Bit, PayBox,
+// external credit card, cash, bank transfer…). Two explicit business modes,
+// NEITHER of which is "free" — the commercial total is NEVER zeroed and no
+// waiver is recorded:
+//
+//   mode 'record'            — the operator knows the amount: a canonical
+//     manual-payment evidence row (collectionEvidenceService.recordEvidence,
+//     the SAME write path as the גבייה panel) + WON. Collection balance
+//     reflects the recorded money; the document is issued separately through
+//     the existing הפק מסמך modal (the UI chains it).
+//
+//   mode 'external_approved' — the operator attests the deal was paid/approved
+//     outside the system WITHOUT payment details: NO payment row is fabricated.
+//     The canonical 'settlement' evidence (an explicit audited "balance closed
+//     by decision" record with the operator's name — collection's own concept,
+//     never dressed as a payment or document) closes the balance, and a
+//     dedicated timeline event says exactly why the deal is WON with no
+//     recorded payment.
+//
+// Both transition through the ONE canonical WON path (settleDealWon →
+// transitionDealToWon) exactly once. Duplicate clicks: the atomic WON guard
+// decides — an alreadyWon result SKIPS the evidence write, so no second
+// evidence row and no second WON.
+export async function registerWithManualPayment(
+  client,
+  { dealId, tourEventId, mode, method = null, amountIls = null, paidAt = null, reference = null, note = null, allowOverbook = false, userId = null, origin },
+) {
+  if (mode !== 'record' && mode !== 'external_approved') {
+    const e = new Error('invalid_manual_mode');
+    e.code = 'invalid_manual_mode';
+    throw e;
+  }
+  if (mode === 'record' && !(Number(amountIls) > 0)) {
+    const e = new Error('amount_invalid');
+    e.code = 'amount_invalid';
+    throw e;
+  }
+  const deal = await client.deal.findUnique({
+    where: { id: dealId },
+    select: { id: true, currency: true, valueMinor: true, collectionReview: true },
+  });
+  if (!deal) {
+    const e = new Error('deal_not_found');
+    e.code = 'deal_not_found';
+    throw e;
+  }
+
+  // 1) The ONE canonical WON transition + registration confirmation. The atomic
+  //    guard makes this exactly-once; a duplicate click lands on alreadyWon and
+  //    writes NOTHING further.
+  const result = await settleDealWon(client, {
+    dealId,
+    targetTourEventId: tourEventId,
+    allowOverbook,
+    origin,
+    paymentStatus: 'paid',
+    paymentAmountMinor: mode === 'record' ? Math.round(Number(amountIls) * 100) : null,
+    cause: mode === 'record' ? 'manual_payment' : 'external_payment',
+  });
+  if (result.alreadyWon) return result;
+
+  // 2) The structured money record — canonical collection evidence.
+  if (mode === 'record') {
+    await recordEvidence(client, deal, {
+      kind: 'manual_payment',
+      amountIls: Number(amountIls),
+      paidAt,
+      method,
+      reference,
+      note,
+    }, userId);
+  } else {
+    // 'settlement' computes the outstanding balance itself; on a deal that
+    // somehow has none it throws nothing_outstanding — the WON stands and the
+    // attestation event below still explains the state.
+    await recordEvidence(client, deal, {
+      kind: 'settlement',
+      paidAt,
+      method,
+      note: String(note || '').trim() || 'שולם/אושר מחוץ למערכת — ללא פרטי תשלום',
+    }, userId).catch((e) => {
+      if (e?.code !== 'nothing_outstanding') throw e;
+    });
+    await emitTimelineEvent(client, {
+      subjectType: 'deal',
+      subjectId: dealId,
+      kind: 'tour',
+      body: '💳 הדיל אושר כשולם מחוץ למערכת — ללא פרטי תשלום ומבלי שהופק מסמך',
+      data: { event: 'external_payment_won', tourEventId: tourEventId || null, method: method || null, note: String(note || '').trim() || null },
+      origin: origin || systemOrigin(),
+    });
+  }
   return result;
 }
 

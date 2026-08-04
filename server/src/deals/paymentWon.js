@@ -65,6 +65,7 @@ export async function settleDealWon(
     noPaymentReason = null,
     paymentAmountMinor = null,
     recordChangelog = true,
+    cause = null,
   } = {},
 ) {
   const runOrigin = origin || systemOrigin();
@@ -176,7 +177,7 @@ export async function settleDealWon(
     emitWonTransitionEffects({
       dealId,
       wonAt: result.wonAt,
-      cause: paymentStatus === 'waived' ? 'no_payment' : 'card_payment',
+      cause: cause || (paymentStatus === 'waived' ? 'no_payment' : 'card_payment'),
       closedByUserId: runOrigin?.createdBy || null,
       paymentAmountMinor,
     });

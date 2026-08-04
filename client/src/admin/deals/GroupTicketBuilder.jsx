@@ -31,8 +31,12 @@ function savedKeyOf(line) {
   return rowIdFor(line.sourceCardGroupId, line.ticketTypeId);
 }
 
+// `freeMode` — the registration modal's "הרשמה ללא תשלום" checkbox: DISPLAY
+// every price/total as ₪0 for this registration while the underlying commercial
+// prices (and save()) stay untouched — the server's waiver model keeps the
+// builder commercial and zeroes only the payable total at registration.
 const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
-  { deal, context = {}, compact = false, onSavedData, onSelectionChange },
+  { deal, context = {}, compact = false, freeMode = false, onSavedData, onSelectionChange },
   ref,
 ) {
   const [loading, setLoading] = useState(true);
@@ -222,19 +226,26 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
         ) : (
           <div className={compact ? 'space-y-3' : 'space-y-5'}>
             {cards.map((card) => (
-              <CardSection key={card.cardGroupId} card={card} byRow={byRow} onQty={setQty} onPrice={setPrice} onRevert={revertPrice} compact={compact} />
+              <CardSection key={card.cardGroupId} card={card} byRow={byRow} onQty={setQty} onPrice={setPrice} onRevert={revertPrice} compact={compact} freeMode={freeMode} />
             ))}
           </div>
         )}
 
         {!compact && <div className="flex-1" />}
 
-        <div className={'flex justify-end ' + (compact ? 'pt-3 border-t border-gray-100' : 'pt-4 border-t border-gray-100')}>
+        <div className={'flex items-end justify-between gap-4 ' + (compact ? 'pt-3 border-t border-gray-100' : 'pt-4 border-t border-gray-100')}>
+          {freeMode ? (
+            <p className="max-w-[16rem] text-[11.5px] leading-snug text-emerald-700">
+              הרשמה ללא תשלום — הרישום ייסגר על ₪0. המחירים המסחריים נשמרים ברקע.
+            </p>
+          ) : (
+            <span />
+          )}
           <div className="min-w-[16rem] space-y-2 text-[15px] pt-1">
-            <TotalRow label="סכום ביניים" minor={totals?.netMinor} />
-            <TotalRow label={`מע״מ${vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={totals?.vatMinor} />
+            <TotalRow label="סכום ביניים" minor={freeMode ? 0 : totals?.netMinor} />
+            <TotalRow label={`מע״מ${!freeMode && vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={freeMode ? 0 : totals?.vatMinor} />
             <div className="border-t border-gray-100 pt-2">
-              <TotalRow label='סה"כ' minor={totals?.grossMinor} strong />
+              <TotalRow label='סה"כ' minor={freeMode ? 0 : totals?.grossMinor} strong free={freeMode} />
             </div>
           </div>
         </div>
@@ -245,7 +256,7 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
 
 export default GroupTicketBuilder;
 
-function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
+function CardSection({ card, byRow, onQty, onPrice, onRevert, compact, freeMode }) {
   return (
     <div className="rounded-xl border border-gray-200">
       <div className={'bg-gray-50 border-b border-gray-200 rounded-t-xl ' + (compact ? 'px-3 py-2' : 'px-4 py-2.5')}>
@@ -262,25 +273,33 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
           {card.rows.map((row) => {
             const id = rowIdFor(card.cardGroupId, row.ticketTypeId);
             const st = byRow[id] || { quantity: 0, unitPriceMinor: row.unitPriceMinor, overridden: false };
-            const lineTotal = (Number(st.unitPriceMinor) || 0) * (st.quantity || 0);
+            const lineTotal = freeMode ? 0 : (Number(st.unitPriceMinor) || 0) * (st.quantity || 0);
             return (
               <div key={id} className="flex items-center gap-2 py-2">
                 <span className="min-w-0 flex-1 truncate text-sm text-gray-800">{row.label}</span>
                 <div className="w-24 shrink-0 flex items-center justify-center gap-1">
-                  <div className="w-20">
-                    <InlineField
-                      id={`gt-price-${id}`}
-                      type="text"
-                      dir="ltr"
-                      value={minorToInput(st.unitPriceMinor)}
-                      display={(v) => `₪${v || 0}`}
-                      onSave={(v) => { onPrice(id, toMinor(v) ?? 0); return Promise.resolve(); }}
-                    />
-                  </div>
-                  {st.overridden && (
-                    <button type="button" onClick={() => onRevert(id, row.unitPriceMinor)} title="חזרה למחיר מהכרטיס" className="shrink-0 text-[12px] text-gray-400 hover:text-gray-700">
-                      ↺
-                    </button>
+                  {freeMode ? (
+                    // Free registration: this ticket costs ₪0 here — the price is
+                    // display-only (the commercial price is kept underneath).
+                    <span className="text-sm tabular-nums text-emerald-700" dir="ltr" title="הרשמה ללא תשלום">₪0</span>
+                  ) : (
+                    <>
+                      <div className="w-20">
+                        <InlineField
+                          id={`gt-price-${id}`}
+                          type="text"
+                          dir="ltr"
+                          value={minorToInput(st.unitPriceMinor)}
+                          display={(v) => `₪${v || 0}`}
+                          onSave={(v) => { onPrice(id, toMinor(v) ?? 0); return Promise.resolve(); }}
+                        />
+                      </div>
+                      {st.overridden && (
+                        <button type="button" onClick={() => onRevert(id, row.unitPriceMinor)} title="חזרה למחיר מהכרטיס" className="shrink-0 text-[12px] text-gray-400 hover:text-gray-700">
+                          ↺
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="w-28 shrink-0 flex items-center justify-center gap-1">
@@ -310,11 +329,11 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
   );
 }
 
-function TotalRow({ label, minor, strong }) {
+function TotalRow({ label, minor, strong, free }) {
   return (
     <div className="flex items-center justify-between gap-8">
       <span className={strong ? 'font-semibold text-gray-900' : 'text-gray-500'}>{label}</span>
-      <span className={`tabular-nums ${strong ? 'text-[20px] font-bold text-blue-700' : 'text-gray-700'}`} dir="ltr">
+      <span className={`tabular-nums ${strong ? `text-[20px] font-bold ${free ? 'text-emerald-600' : 'text-blue-700'}` : 'text-gray-700'}`} dir="ltr">
         {minor == null ? '—' : formatMinor(minor)}
       </span>
     </div>

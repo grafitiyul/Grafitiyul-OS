@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { formatMinor } from '../../lib/money.js';
 import {
   DURATION_UNITS,
   DEFAULT_HOLD,
@@ -9,19 +10,47 @@ import {
 import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
 import { useConnectedAccounts, resolveAccountId } from '../whatsapp/senderAccount.js';
 
-// The three registration-completion modes (pay-now / send-link / no-payment) as a
-// SELF-CONTAINED body (no Dialog wrapper) so it embeds in both the standalone
-// modal and the progressive registration section. All actions hit the tested,
+// Registration-completion modes as a SELF-CONTAINED body (no Dialog wrapper),
+// embedded in the progressive registration modal. All actions hit the tested,
 // idempotent server endpoints. `context` carries the sellable offering
-// (productVariantId / priceRuleId / cardGroupId / quantity) so the hold keeps the
-// deal's chosen product.
+// (productVariantId / priceRuleId / cardGroupId / quantity) so the hold keeps
+// the deal's chosen product.
+//
+// TWO STRUCTURALLY SEPARATE business meanings (never one flag):
+//   • freeMode (the Builder's "הרשמה ללא תשלום" checkbox) — a genuinely free
+//     registration: ONE green WON action, no payment actions at all. The
+//     server records the canonical waiver (payable ₪0, commercial prices kept).
+//   • paid flow — real prices always: pay-now / send-link / MANUAL payment
+//     (paid outside GOS). Manual payment never zeroes anything: either a
+//     structured payment record (+ document via the existing הפק מסמך modal)
+//     or an attested "approved without payment details" — explicitly NOT free.
 
 const INPUT =
   'h-10 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 const UNIT_LABELS = { minutes: 'דקות', hours: 'שעות', days: 'ימים' };
 const errText = (e) => 'שגיאה: ' + (e.payload?.error || e.message);
 
-export default function CompletionModes({ deal, tourEventId, phone = '', context = {}, onDone }) {
+// Static fallback only — the live list comes from the canonical server catalog
+// (collection summary's paymentMethods).
+const FALLBACK_METHODS = [
+  { key: 'bit', label: 'ביט / פייבוקס / אפליקציית תשלום' },
+  { key: 'cc', label: 'כרטיס אשראי' },
+  { key: 'cash', label: 'מזומן' },
+  { key: 'banktransfer', label: 'העברה בנקאית' },
+  { key: 'cheque', label: 'המחאה' },
+  { key: 'other', label: 'אחר' },
+];
+
+export default function CompletionModes({
+  deal,
+  tourEventId,
+  phone = '',
+  context = {},
+  freeMode = false,
+  totalMinor = null,
+  onDone,
+  onRecordedPayment,
+}) {
   // Which WhatsApp number sends the link — the canonical model: this browser's
   // remembered number, overridable per send. Always resolved to something
   // explicit before the request, so the server never has to guess.
@@ -49,6 +78,12 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
   );
   const [reason, setReason] = useState('');
 
+  // Manual-payment state (paid outside GOS).
+  const [methods, setMethods] = useState(null);
+  const [method, setMethod] = useState('bit');
+  const [amountIls, setAmountIls] = useState('');
+  const [reference, setReference] = useState('');
+
   const ctx = { tourEventId, ...context };
 
   // Ensure the deal's stable payment URL as soon as a payment mode is chosen.
@@ -65,16 +100,38 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
     };
   }, [mode, deal.id, paymentUrl]);
 
+  // Canonical payment-method catalog (same source the גבייה panel uses).
+  useEffect(() => {
+    if (mode !== 'manual' || methods) return;
+    let alive = true;
+    api.deals
+      .collection(deal.id)
+      .then((r) => alive && setMethods(r?.paymentMethods?.length ? r.paymentMethods : FALLBACK_METHODS))
+      .catch(() => alive && setMethods(FALLBACK_METHODS));
+    return () => {
+      alive = false;
+    };
+  }, [mode, deal.id, methods]);
+
+  // Prefill the manual amount with the real commercial total once known.
+  useEffect(() => {
+    if (mode !== 'manual' || amountIls !== '') return;
+    if (totalMinor != null && Number(totalMinor) > 0) setAmountIls(String(Number(totalMinor) / 100));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, totalMinor]);
+
   async function run(fn, validate) {
     if (validate && !validate()) return;
+    if (busy) return;
     setBusy(true);
     try {
       await fn();
-      onDone?.();
     } catch (e) {
       if (e.payload?.error === 'no_payment_reason_required') alert('יש להזין סיבת רישום ללא תשלום');
       else if (e.payload?.error === 'tour_full') alert('הסיור מלא — ניתן לאשר חריגה מקיבולת מהמסך הראשי');
+      else if (e.payload?.error === 'amount_invalid') alert('סכום התשלום אינו תקין');
       else alert(errText(e));
+      return;
     } finally {
       setBusy(false);
     }
@@ -89,11 +146,13 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
       const url = res?.paymentUrl || paymentUrl;
       if (url) window.open(url, '_blank', 'noopener');
       else alert('השריון נוצר, אך לא ניתן היה להפיק קישור תשלום. בדקו הגדרות תשלום.');
+      onDone?.();
     });
   // Send link: the server holds the seat, guarantees the URL is in the text,
   // sends via the real WhatsApp bridge, and reports the true outcome. A failed
   // send throws (502) — we surface it and still refresh (the hold was created).
   const sendLink = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await api.deals.registerSendLink(deal.id, { ...ctx, value: Number(value), unit, message: liveMessage, phone, accountId: senderAccountId });
@@ -109,11 +168,43 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
       setBusy(false);
     }
   };
-  // Comp decision: confirm the zero-total consequence BEFORE registering.
-  const noPayment = () => {
+  // Genuinely-free registration (only reachable through the Builder checkbox).
+  const registerFree = () => {
     if (!reason.trim()) return;
-    if (!window.confirm('פעולה זו תאפס את סכום העסקה ל-₪0 ותרשום את הלקוח ללא תשלום.')) return;
-    return run(() => api.deals.registerNoPayment(deal.id, { ...ctx, reason: reason.trim() }));
+    if (!window.confirm('הרשמה לסיור ללא תשלום: סך העסקה לרישום זה יהיה ₪0. להמשיך?')) return;
+    return run(async () => {
+      await api.deals.registerNoPayment(deal.id, { ...ctx, reason: reason.trim() });
+      onDone?.();
+    });
+  };
+  // Manual payment A — structured payment record, then the existing הפק מסמך
+  // modal (chained by the parent through onRecordedPayment).
+  const recordManual = () =>
+    run(
+      async () => {
+        await api.deals.registerManualPayment(deal.id, {
+          ...ctx,
+          mode: 'record',
+          method,
+          amountIls: Number(amountIls),
+          reference: reference.trim() || undefined,
+        });
+        (onRecordedPayment || onDone)?.();
+      },
+      () => Number(amountIls) > 0,
+    );
+  // Manual payment B — attested "paid/approved outside the system, no details".
+  const approveExternal = () => {
+    if (
+      !window.confirm(
+        'אישור סגירה ללא פרטי תשלום:\nהעסקה תיסגר (WON) במחיר המסחרי המלא, בלי רישום תשלום מובנה ובלי הפקת מסמך. ההחלטה תתועד על שמך. להמשיך?',
+      )
+    )
+      return;
+    return run(async () => {
+      await api.deals.registerManualPayment(deal.id, { ...ctx, mode: 'external_approved', method });
+      onDone?.();
+    });
   };
 
   const modeBtn = (key, label) => (
@@ -129,12 +220,38 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
     </button>
   );
 
+  // ── FREE MODE — one green WON action, no payment actions at all ────────────
+  if (freeMode) {
+    return (
+      <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
+        <p className="text-[13px] text-emerald-900">
+          הרשמה ללא תשלום: הלקוח יירשם לסיור והדיל ייסגר עם סכום ₪0 לרישום זה. המחירים המסחריים בבילדר נשמרים.
+        </p>
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-medium text-gray-600">סיבת ההרשמה ללא תשלום *</span>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="למשל: אישור מנהל, שובר, לקוח VIP…" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+        </label>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={busy || !reason.trim()}
+            onClick={registerFree}
+            className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {busy ? 'רושם…' : 'הרשמה לסיור ללא תשלום'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PAID FLOW — real prices, three ways the money can arrive ───────────────
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
         {modeBtn('pay', 'תשלום כעת')}
         {modeBtn('link', 'שלח קישור לתשלום')}
-        {modeBtn('none', 'רשום ללא תשלום')}
+        {modeBtn('manual', 'תשלום ידני')}
       </div>
 
       {mode === 'pay' && (
@@ -200,17 +317,58 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
         </div>
       )}
 
-      {mode === 'none' && (
+      {mode === 'manual' && (
         <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+          <p className="text-[12.5px] text-gray-600">
+            הלקוח שילם מחוץ למערכת (ביט, פייבוקס, אשראי חיצוני, מזומן, העברה בנקאית…). המחיר המסחרי של העסקה נשמר במלואו.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-[12px] font-medium text-gray-600">אמצעי תשלום</span>
+              <select value={method} onChange={(e) => setMethod(e.target.value)} className={INPUT + ' w-full bg-white'}>
+                {(methods || FALLBACK_METHODS).map((m) => (
+                  <option key={m.key} value={m.key}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[12px] font-medium text-gray-600">סכום שהתקבל (₪)</span>
+              <input type="number" min="0" step="0.01" dir="ltr" value={amountIls} onChange={(e) => setAmountIls(e.target.value)} className={INPUT + ' w-full'} />
+            </label>
+          </div>
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-gray-600">סיבת רישום ללא תשלום *</span>
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="למשל: אישור מנהל, שובר, לקוח VIP…" className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            <span className="mb-1 block text-[12px] font-medium text-gray-600">אסמכתא (אופציונלי)</span>
+            <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="מספר העברה / אישור עסקה" className={INPUT + ' w-full'} />
           </label>
           <div className="flex justify-end">
-            <button type="button" disabled={busy || !reason.trim()} onClick={noPayment} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-              {busy ? 'רושם…' : 'רשום וסגור דיל'}
+            <button
+              type="button"
+              disabled={busy || !(Number(amountIls) > 0)}
+              onClick={recordManual}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {busy ? 'רושם…' : 'רשום תשלום והפק מסמך'}
             </button>
           </div>
+          <div className="border-t border-gray-100 pt-3">
+            <p className="mb-2 text-[12px] leading-relaxed text-gray-500">
+              לחלופין: העסקה שולמה/אושרה מחוץ למערכת <span className="font-medium text-gray-700">ללא פרטי תשלום</span> —
+              לא יירשם תשלום מובנה ולא יופק מסמך חשבונאי. הסכום המסחרי נשמר והסגירה מתועדת כהחלטה על שם המאשר. זו אינה הרשמה חינם.
+            </p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={approveExternal}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {busy ? 'מאשר…' : 'אישור סגירה ללא פרטי תשלום'}
+              </button>
+            </div>
+          </div>
+          {totalMinor != null && Number(totalMinor) > 0 && (
+            <p className="text-[11.5px] text-gray-400">סך העסקה: <span dir="ltr" className="tabular-nums">{formatMinor(totalMinor)}</span></p>
+          )}
         </div>
       )}
     </div>

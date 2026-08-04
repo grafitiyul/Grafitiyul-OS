@@ -7,6 +7,7 @@ import GroupTicketBuilder from './GroupTicketBuilder.jsx';
 import WaiverDecisionDialog from './WaiverDecisionDialog.jsx';
 import TourSlotModal from '../tours/TourSlotModal.jsx';
 import CompletionModes from './CompletionModes.jsx';
+import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
 
 // ONE persistent progressive modal for the whole group registration flow:
 //   1) פרטי העסקה (reuses the Group Ticket Builder)
@@ -69,6 +70,12 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
   const [hasSelection, setHasSelection] = useState(builderDone);
   const [saving, setSaving] = useState(false);
   const [waiverPrompt, setWaiverPrompt] = useState(null); // { added, advance } | null
+  // "הרשמה ללא תשלום" — the EXPLICIT free-registration entry mode. Default off:
+  // the paid/manual-payment flow. When on, prices display as ₪0 and the ONLY
+  // completion action is the green free-registration button.
+  const [freeReg, setFreeReg] = useState(false);
+  // After a structured manual payment, chain the EXISTING הפק מסמך modal.
+  const [docOpen, setDocOpen] = useState(false);
   const builderRef = useRef(null);
 
   useEffect(() => {
@@ -132,9 +139,22 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
           onOpen={() => setSection(1)}
         >
           <div className="space-y-3">
+            {/* Entry mode — free registration is an EXPLICIT choice, never the
+                default. Sits at the builder's top-left (RTL: flex-end = left). */}
+            <div className="flex justify-end">
+              <label className="flex cursor-pointer select-none items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  checked={freeReg}
+                  onChange={(e) => setFreeReg(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-300"
+                />
+                הרשמה ללא תשלום
+              </label>
+            </div>
             {/* The Group Ticket Builder, INLINE (no separate dialog) — narrow +
                 compact for group-ticket sales, reusing the shared builder body. */}
-            <GroupTicketBuilder ref={builderRef} deal={deal} context={{}} compact onSelectionChange={setHasSelection} />
+            <GroupTicketBuilder ref={builderRef} deal={deal} context={{}} compact freeMode={freeReg} onSelectionChange={setHasSelection} />
             <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
               <button
                 type="button"
@@ -213,7 +233,10 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
               tourEventId={selectedTour.id}
               phone={dealPhone(deal)}
               context={ctx}
+              freeMode={freeReg}
+              totalMinor={savedOffering?.valueMinor ?? deal.valueMinor ?? null}
               onDone={() => { onChanged?.(); onClose?.(); }}
+              onRecordedPayment={() => { onChanged?.(); setDocOpen(true); }}
             />
           ) : (
             <div className="py-3 text-center text-[13px] text-gray-400">בחרו סיור תחילה.</div>
@@ -234,6 +257,15 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
               setSection(3);
             }
           }}
+        />
+      )}
+      {/* Manual payment recorded → the EXISTING canonical document workspace.
+          Closing it finishes the whole registration flow. */}
+      {docOpen && (
+        <ProduceDocumentModal
+          dealId={deal.id}
+          open
+          onClose={() => { setDocOpen(false); onChanged?.(); onClose?.(); }}
         />
       )}
       {waiverPrompt && (
