@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import AlertDialog from '../common/AlertDialog.jsx';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import {
   ASSIGNMENT_ROLES,
   ASSIGNMENT_ROLE_LABELS,
@@ -14,6 +15,15 @@ import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDispl
 // role vocabulary, colors and the person picker can never diverge. Self-
 // contained: it owns the people list and the add/change/remove calls against the
 // tour assignment API, and calls onChanged() after each write.
+//
+// FLOATING UI: this editor is embedded inside HOST SURFACES THAT CLIP — the
+// Deal → Tour Details popover and the Deal tour-planning popover are both
+// AnchoredMenu panels with a capped height and `overflow-y: auto`, and the
+// team section sits in a `max-h-[60vh] overflow-y-auto` box on top of that.
+// So every menu here (role picker, staff picker) renders through AnchoredMenu,
+// which portals to <body> with fixed coordinates. An `absolute` panel would be
+// clipped by those ancestors no matter how high its z-index — overflow
+// clipping is not a stacking-order concern. Never reintroduce one.
 
 // Round staff avatar — real photo when the profile has one, initial otherwise.
 // Shared by the assignment chips and the picker rows.
@@ -35,14 +45,16 @@ export function StaffAvatar({ src, name, className = 'h-6 w-6' }) {
 // Clicking the name opens the role picker; the ✕ removes the assignment.
 function GuideChip({ a, onRoleChange, onRemove, busy }) {
   const [menu, setMenu] = useState(false);
+  const roleBtnRef = useRef(null);
   const gone = !a.personRef;
   const name = resolveStaffDisplayName(a);
   return (
-    <div className="relative">
+    <div>
       <div
         className={`inline-flex items-center gap-1.5 rounded-full py-1 ps-1 pe-1 text-[12px] font-semibold ${ASSIGNMENT_ROLE_STYLES[a.role]}`}
       >
         <button
+          ref={roleBtnRef}
           type="button"
           onClick={() => setMenu((m) => !m)}
           disabled={busy}
@@ -64,29 +76,31 @@ function GuideChip({ a, onRoleChange, onRemove, busy }) {
           ✕
         </button>
       </div>
-      {menu && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
-          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
-            {ASSIGNMENT_ROLES.map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  onRoleChange(a, r);
-                  setMenu(false);
-                }}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-gray-50 ${
-                  r === a.role ? 'font-bold text-gray-900' : 'text-gray-700'
-                }`}
-              >
-                <span className={`h-2.5 w-2.5 rounded-full ${ASSIGNMENT_ROLE_DOTS[r]}`} />
-                {ASSIGNMENT_ROLE_LABELS[r]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <AnchoredMenu
+        anchorRef={roleBtnRef}
+        open={menu}
+        onClose={() => setMenu(false)}
+        width={160}
+        align="start"
+        panelClassName="rounded-lg p-1"
+      >
+        {ASSIGNMENT_ROLES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => {
+              onRoleChange(a, r);
+              setMenu(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-gray-50 ${
+              r === a.role ? 'font-bold text-gray-900' : 'text-gray-700'
+            }`}
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${ASSIGNMENT_ROLE_DOTS[r]}`} />
+            {ASSIGNMENT_ROLE_LABELS[r]}
+          </button>
+        ))}
+      </AnchoredMenu>
     </div>
   );
 }
@@ -96,6 +110,7 @@ function GuideChip({ a, onRoleChange, onRemove, busy }) {
 // button assigns everyone at once. Much faster than one-popover-per-person.
 function AddGuidesButton({ people, onPickMany, busy }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const filtered = people.filter((p) =>
@@ -122,8 +137,9 @@ function AddGuidesButton({ people, onPickMany, busy }) {
   }
 
   return (
-    <div className="relative">
+    <div>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
@@ -132,62 +148,64 @@ function AddGuidesButton({ people, onPickMany, busy }) {
       >
         +
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={closeReset} />
-          <div className="absolute z-20 mt-1 w-64 rounded-xl border border-gray-200 bg-white shadow-xl">
-            <div className="p-2 pb-1">
+      <AnchoredMenu
+        anchorRef={btnRef}
+        open={open}
+        onClose={closeReset}
+        width={256}
+        align="start"
+        panelClassName="rounded-xl"
+      >
+        <div className="p-2 pb-1">
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="חיפוש אנשי צוות…"
+            className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto px-1.5">
+          {filtered.length === 0 && (
+            <p className="px-2 py-3 text-center text-[12px] text-gray-400">אין אנשי צוות זמינים</p>
+          )}
+          {filtered.map((p) => (
+            <label
+              key={p.id}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-blue-50"
+            >
               <input
-                autoFocus
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="חיפוש אנשי צוות…"
-                className="h-8 w-full rounded-lg border border-gray-200 px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+                type="checkbox"
+                checked={selected.has(p.id)}
+                onChange={() => toggle(p.id)}
+                className="rounded border-gray-300"
               />
-            </div>
-            <div className="max-h-56 overflow-y-auto px-1.5">
-              {filtered.length === 0 && (
-                <p className="px-2 py-3 text-center text-[12px] text-gray-400">אין אנשי צוות זמינים</p>
-              )}
-              {filtered.map((p) => (
-                <label
-                  key={p.id}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-blue-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(p.id)}
-                    onChange={() => toggle(p.id)}
-                    className="rounded border-gray-300"
-                  />
-                  <StaffAvatar src={p.profile?.imageUrl} name={p.displayName} />
-                  <span className="min-w-0 flex-1 truncate">
-                    {p.displayName}
-                    {p.lifecycleHint === 'trainee' ? ' · מתלמד' : ''}
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-2 border-t border-gray-100 p-2">
-              <button
-                type="button"
-                onClick={closeReset}
-                className="rounded-lg px-2.5 py-1.5 text-[12px] text-gray-500 hover:bg-gray-100"
-              >
-                ביטול
-              </button>
-              <button
-                type="button"
-                onClick={applySelection}
-                disabled={selected.size === 0}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
-              >
-                הוספת {selected.size || ''} נבחרים
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+              <StaffAvatar src={p.profile?.imageUrl} name={p.displayName} />
+              <span className="min-w-0 flex-1 truncate">
+                {p.displayName}
+                {p.lifecycleHint === 'trainee' ? ' · מתלמד' : ''}
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="flex items-center justify-between gap-2 border-t border-gray-100 p-2">
+          <button
+            type="button"
+            onClick={closeReset}
+            className="rounded-lg px-2.5 py-1.5 text-[12px] text-gray-500 hover:bg-gray-100"
+          >
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={applySelection}
+            disabled={selected.size === 0}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            הוספת {selected.size || ''} נבחרים
+          </button>
+        </div>
+      </AnchoredMenu>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import Dialog from '../common/Dialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
@@ -971,18 +972,16 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
   );
 }
 
+// The VAT-mode menu renders through the shared AnchoredMenu portal: the Builder
+// is a Dialog whose content area scrolls (`overflow-y-auto`), so an in-flow
+// `absolute` panel on a line near the bottom was cut off by it.
 function VatButton({ mode, rate, onPick }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
   return (
-    <div className="relative" ref={ref}>
+    <div>
       <button
+        ref={ref}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="h-10 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3.5 text-sm text-gray-700 hover:bg-gray-50"
@@ -990,20 +989,24 @@ function VatButton({ mode, rate, onPick }) {
         {vatLabel(mode)}{rate && mode !== 'exempt' ? <span className="text-gray-400">({rate}%)</span> : null}
         <span className="text-[9px] text-gray-400">▼</span>
       </button>
-      {open && (
-        <div className="absolute z-20 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-          {VAT_OPTIONS.map((o) => (
-            <button
-              key={o.mode}
-              type="button"
-              onClick={() => { onPick(o.mode); setOpen(false); }}
-              className={`w-full text-right px-3 py-2 text-sm hover:bg-gray-50 ${mode === o.mode ? 'text-blue-700 font-medium' : 'text-gray-700'}`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <AnchoredMenu
+        anchorRef={ref}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={224}
+        align="start"
+      >
+        {VAT_OPTIONS.map((o) => (
+          <button
+            key={o.mode}
+            type="button"
+            onClick={() => { onPick(o.mode); setOpen(false); }}
+            className={`w-full text-right px-3 py-2 text-sm hover:bg-gray-50 ${mode === o.mode ? 'text-blue-700 font-medium' : 'text-gray-700'}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </AnchoredMenu>
     </div>
   );
 }

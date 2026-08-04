@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 
 // Searchable contact picker. Reuses the contacts list payload (which already
 // includes the primary org / email / phone) so each result shows enough to tell
 // similar people apart. Matches the query against name, organization, email and
 // phone. Controlled: `value` = selected contact id; `onChange(id)`.
+//
+// The result list renders through the shared AnchoredMenu portal: this picker
+// lives inside Dialogs (DealContactsDialog and friends), whose content area is
+// a `overflow-y-auto` box — an in-flow `absolute` list was cut off by it.
+// `overlay={false}` because the input owns dismissal (outside mousedown +
+// select); a full-screen catcher would swallow clicks meant for the field.
 function cName(c) { return c?.fullNameHe || c?.fullNameEn || c?.id || ''; }
 function cOrg(c) { return c?.orgLinks?.[0]?.organization?.name || ''; }
 function cEmail(c) { return c?.emails?.[0]?.value || ''; }
@@ -13,11 +20,19 @@ export default function ContactPicker({ contacts, value, onChange, placeholder =
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const listRef = useRef(null);
   const selected = contacts.find((c) => c.id === value);
 
   useEffect(() => {
     if (!open) return undefined;
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    // The list is PORTALED, so it is no longer a DOM descendant of `ref` — it
+    // must be excluded explicitly, or mousedown on an option would close the
+    // list before the click that selects it ever lands.
+    function onDoc(e) {
+      if (ref.current?.contains(e.target)) return;
+      if (listRef.current?.contains(e.target)) return;
+      setOpen(false);
+    }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
@@ -51,8 +66,17 @@ export default function ContactPicker({ contacts, value, onChange, placeholder =
         placeholder={placeholder}
         className="w-full h-9 rounded-md border border-gray-300 bg-white px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
       />
-      {open && (
-        <div className="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+      <AnchoredMenu
+        anchorRef={ref}
+        open={open}
+        onClose={() => setOpen(false)}
+        matchAnchorWidth
+        minWidth={260}
+        align="start"
+        overlay={false}
+        panelClassName="rounded-md"
+      >
+        <div ref={listRef} className="max-h-72 overflow-y-auto">
           {results.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-gray-400">לא נמצאו אנשי קשר</div>
           ) : (
@@ -73,7 +97,7 @@ export default function ContactPicker({ contacts, value, onChange, placeholder =
             ))
           )}
         </div>
-      )}
+      </AnchoredMenu>
     </div>
   );
 }

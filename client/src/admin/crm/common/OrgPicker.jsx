@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 
 const OP_INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -41,6 +42,12 @@ export function OrgPicker({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [createOpen, setCreateOpen] = useState(false);
   const debounceRef = useRef(null);
+  // Anchor for the portaled suggestion list. This picker is used inside Dialogs
+  // (contact create/edit, new deal), whose content area is an `overflow-y-auto`
+  // box that clipped the old in-flow `absolute` list. Dismissal still belongs to
+  // the input's blur handler — hence `overlay={false}`; the option rows already
+  // preventDefault on mousedown to hold focus, which works through a portal too.
+  const fieldRef = useRef(null);
 
   const typedOrg = orgName.trim();
   const pool = serverSearch ? remote : orgs;
@@ -161,7 +168,7 @@ export function OrgPicker({
 
   return (
     <div className="space-y-3">
-      <div className="relative">
+      <div ref={fieldRef}>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-gray-500">ארגון</span>
           <span className="relative block">
@@ -187,8 +194,16 @@ export function OrgPicker({
             )}
           </span>
         </label>
-        {listOpen && (
-          <ul className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-y-auto">
+        <AnchoredMenu
+          anchorRef={fieldRef}
+          open={listOpen}
+          onClose={() => setOrgFocused(false)}
+          matchAnchorWidth
+          align="start"
+          overlay={false}
+          panelClassName="rounded-lg"
+        >
+          <ul className="max-h-56 overflow-y-auto">
             {orgSuggestions.map((o, i) => (
               <li key={o.id}>
                 <button
@@ -224,7 +239,7 @@ export function OrgPicker({
               </li>
             )}
           </ul>
-        )}
+        </AnchoredMenu>
       </div>
 
       {isExisting ? (

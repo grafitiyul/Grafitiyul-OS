@@ -522,12 +522,50 @@ test('team add popover offers multi-select staff with a single confirm button', 
   await act(async () => {
     plus.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   });
-  const html = container.innerHTML;
+  // The picker renders through the AnchoredMenu PORTAL on document.body. This
+  // editor is embedded in host popovers that cap their height and scroll
+  // (Deal → Tour Details, Deal tour-planning), so an in-flow `absolute` panel
+  // was clipped by them — assert against the body, and assert it is NOT inline.
+  const html = document.body.innerHTML;
   assert.match(html, /אבי כהן/, 'staff render in the popover');
   assert.match(html, /דור לוי/, 'all staff are listed at once');
-  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  const checkboxes = document.body.querySelectorAll('input[type="checkbox"]');
   assert.equal(checkboxes.length, 2, 'one checkbox per staff member');
   assert.match(html, /הוספת/, 'a single confirm button adds the selection');
+  assert.doesNotMatch(
+    container.innerHTML,
+    /אבי כהן/,
+    'the staff picker must NOT render inline — a clipping ancestor would cut it off',
+  );
+  await unmount();
+});
+
+// The role menu on an assigned chip is the SECOND floating surface in this
+// editor, and it had the same clipping bug. It must portal too.
+test('guide chip role menu renders through the portal, never inline', async () => {
+  const assignments = [
+    { id: 'a1', role: 'guide', personRefId: 'p1', personRef: { id: 'p1', displayName: 'אבי כהן', profile: null } },
+  ];
+  const { container, unmount } = await render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(TourTeamEditor, { tourId: 'tour1', assignments, onChanged: () => {} }),
+    ),
+  );
+  const chipBtn = [...container.querySelectorAll('button')].find((b) =>
+    b.getAttribute('title') === 'שינוי תפקיד',
+  );
+  assert.ok(chipBtn, 'the chip opens the role picker');
+  await act(async () => {
+    chipBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  assert.match(document.body.innerHTML, /מדריך ראשי/, 'role options render in the portal');
+  assert.doesNotMatch(
+    container.innerHTML,
+    /מדריך ראשי/,
+    'the role menu must NOT render inline inside the (clipping) host',
+  );
   await unmount();
 });
 

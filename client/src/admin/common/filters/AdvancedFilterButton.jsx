@@ -375,8 +375,22 @@ function ComboSelect({ value, options, onChange, placeholder }) {
         placeholder={value || placeholder}
         className="h-9 w-44 rounded-lg border border-gray-300 bg-white px-2 text-[13px] focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
       />
-      {open && (
-        <div className="absolute right-0 top-10 z-20 max-h-52 w-52 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+      {/* This combobox lives INSIDE the filter's own AnchoredMenu popover,
+          which caps its height and scrolls — an in-flow `absolute` list was
+          clipped by it. Portaled, and one level up in the floating stack.
+          `overlay={false}`: the input's onBlur owns dismissal, and the option
+          rows preventDefault on mousedown to hold focus, which still works
+          through a portal. */}
+      <AnchoredMenu
+        anchorRef={wrapRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        matchAnchorWidth
+        minWidth={208}
+        align="start"
+        overlay={false}
+      >
+        <div className="max-h-52 overflow-y-auto">
           {visible.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-gray-400">אין תוצאות</div>
           ) : (
@@ -396,7 +410,7 @@ function ComboSelect({ value, options, onChange, placeholder }) {
             ))
           )}
         </div>
-      )}
+      </AnchoredMenu>
     </div>
   );
 }

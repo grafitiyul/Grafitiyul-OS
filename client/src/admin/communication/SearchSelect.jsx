@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { floatingZ, useFloatingDepth } from '../common/floatingLayer.jsx';
 
 // Premium searchable dropdown for the Communication Center selectors —
 // the GOS OrgPicker/TargetCombobox pattern, upgraded: portal-rendered list
@@ -38,6 +39,9 @@ export default function SearchSelect({
   const listRef = useRef(null);
   const inputRef = useRef(null);
   const [pos, setPos] = useState(null);
+  // Same floating band as AnchoredMenu — so this list stacks correctly when it
+  // is opened from inside a popover or a dialog, instead of guessing a z.
+  const depth = useFloatingDepth();
 
   useEffect(() => {
     if (!open) return undefined;
@@ -186,8 +190,14 @@ export default function SearchSelect({
           ref={listRef}
           dir="rtl"
           role="listbox"
-          className="fixed z-[95] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl"
-          style={{ left: pos.left, width: Math.max(pos.width, 260), top: pos.top ?? 'auto', bottom: pos.bottom ?? 'auto' }}
+          className="fixed overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl"
+          style={{
+            left: pos.left,
+            width: Math.max(pos.width, 260),
+            top: pos.top ?? 'auto',
+            bottom: pos.bottom ?? 'auto',
+            zIndex: floatingZ(depth).panel,
+          }}
         >
           <div className="border-b border-gray-100 p-2">
             <input
