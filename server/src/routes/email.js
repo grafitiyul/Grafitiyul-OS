@@ -31,6 +31,7 @@ import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.
 import { resolvePublicOrigin } from '../dealPayment.js';
 import { isConfigured as r2Configured, buildKey, putObject, presignGet, bucket } from '../r2.js';
 import { registerDealOrderNoParam } from './dealParam.js';
+import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 
 // Email module — Gmail integration (admin router, cookie-gated at mount).
 //
@@ -877,6 +878,8 @@ router.post(
     });
     // Communication Center — "ליד חדש נוצר" (deal opened from an email thread).
     fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
+    // New sales lead → exactly one "שיחה ראשונית" task (idempotent).
+    ensureInitialCallTask({ dealId: deal.id });
     res.status(201).json({ dealId: deal.id, contactId });
   }),
 );

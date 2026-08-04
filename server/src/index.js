@@ -125,6 +125,7 @@ import staffFormRouter from './routes/staffForm.js';
 import publicReservationsRouter from './routes/publicReservations.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
+import { startAutoTaskWorker } from './tasks/autoTaskWorker.js';
 import './control/detectors/index.js';
 // Automation Registry — importing the definitions registers every automation.
 // validateRegistry() then runs at startup (see below): a bad definition must
@@ -766,6 +767,10 @@ app.listen(port, () => {
   // בקרה detectors — re-derive operational issues from live domain state
   // (raise missing, auto-resolve fixed); 60s tick.
   startControlSweepWorker(console);
+  // Automatic Deal tasks — midnight (Israel) missing-task recovery: every open
+  // deal with no active task gets one פולואפ task for the new day. 5m tick;
+  // idempotent per (deal, day), so restarts/reruns never duplicate.
+  startAutoTaskWorker(console);
   // Communication Center deliveries — claim-based 60s tick: windows,
   // dependency waits, rendering, channel sends, retries.
   startCommunicationWorker(console);

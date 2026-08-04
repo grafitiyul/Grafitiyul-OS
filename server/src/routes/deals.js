@@ -55,6 +55,7 @@ import { actorForReport } from '../adminReports/actor.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 import { resolveForOperator } from '../whatsapp/senderAccount.js';
 import { registerDealOrderNoParam } from './dealParam.js';
+import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -627,6 +628,9 @@ router.post(
     // Communication Center — "ליד חדש נוצר": fires ONCE per deal (idempotent
     // triggerKey deal_created:<id>); later edits never re-fire.
     fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
+    // Every new sales lead opens with exactly one "שיחה ראשונית" task
+    // (idempotent; fire-and-forget by contract).
+    ensureInitialCallTask({ dealId: deal.id });
     res.status(201).json(deal);
   }),
 );

@@ -37,6 +37,7 @@ import {
 import { IngressError, toIngressError, STAGES } from './errors.js';
 import { platformConfig } from './config.js';
 import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
+import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 import { statusMeaning } from './adapters/woocommerce.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import { publicOrigin } from '../communication/context.js';
@@ -339,6 +340,10 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
     // external intake source, so a future channel is included automatically.
     if (result.outcome === 'created_deal' && normalized.kind === 'lead') {
       fireNewLeadReport({ dealId: result.dealId, origin: `ingress:${row.source}`, eventRef: eventId });
+      // Every new sales lead opens with exactly one "שיחה ראשונית" task.
+      // Deliberately LEADS ONLY: an order deal (Woo) is a purchase, not a
+      // sales call — its lifecycle is owned by the order flow.
+      ensureInitialCallTask({ dealId: result.dealId });
     }
 
     // Post-commit effects of a genuine WON transition — Communication Center

@@ -23,6 +23,7 @@ import { tourStatusOf } from '../migration/import/tourImport.js';
 import { normalizeCoordRow } from '../migration/import/tourNormalize.js';
 import { CHILD_TABLES } from './sources/airtableTourChildren.js';
 import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
+import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 
 const t = (v) => { const s = String(v ?? '').trim(); return s === '' ? null : s; };
 const pid = (v) => (v && typeof v === 'object' ? v.value ?? v.id : v) ?? null;
@@ -290,6 +291,9 @@ export async function createDeal(db, normalized, row) {
       origin: 'pipedrive:lead_bridge',
       eventRef: `pipedrive:deal:${row.externalId}`,
     });
+    // The Pipedrive bridge is a live external lead source (while active):
+    // the new lead gets its "שיחה ראשונית" task like every other lead.
+    ensureInitialCallTask({ dealId: made.entityId });
   }
   return made;
 }

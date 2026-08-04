@@ -16,6 +16,7 @@ import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
 import { ACCOUNT_ORDER_BY, listSelectableAccounts } from '../whatsapp/senderAccount.js';
 import { stampManualSend } from '../whatsapp/sendPace.js';
 import { phoneToJid } from '../whatsapp/send.js';
+import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 
 // MANUAL sends (this router's composer endpoints) are never paced — an operator
 // in a live conversation waits for nobody. They do STAMP the account's pacing
@@ -1034,6 +1035,8 @@ router.post(
     });
     // Communication Center — "ליד חדש נוצר" (deal opened from a WhatsApp chat).
     fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
+    // New sales lead → exactly one "שיחה ראשונית" task (idempotent).
+    ensureInitialCallTask({ dealId: deal.id });
     res.status(201).json({ dealId: deal.id, contactId });
     } catch (err) {
       console.error('[whatsapp] open-deal failed:', err);
