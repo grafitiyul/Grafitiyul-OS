@@ -16,6 +16,7 @@
 
 import { significantDigits, isExactPhoneMatch } from '../search/phoneQuery.js';
 import { lookupPhoneContacts } from '../search/lookups.js';
+import { routeLeadName } from '../../../shared/nameLanguage.mjs';
 
 // Ambiguity policy. A number owned by exactly one contact resolves to that
 // contact. When several contacts share it (a shared office line), we do NOT
@@ -75,14 +76,23 @@ export async function resolveContact(db, normalized) {
 
 // Create a Contact from a normalized event. Phone/email are written in the form
 // a human would have typed (local 0-prefix for Israeli numbers).
+// Names route by SCRIPT through the canonical classifier (shared/nameLanguage):
+// Latin names land in the English fields (Meta leads submit English names all
+// the time — they must never be saved into the Hebrew columns), Hebrew names in
+// the Hebrew fields, and a mixed name stays whole in the default fields.
+// The raw payload is preserved on the IngressEvent regardless.
 export async function createContactFrom(db, normalized) {
   const { firstName, lastName, phoneDisplay, email, language } = normalized.person;
+  const routed = routeLeadName({
+    firstName: firstName || normalized.person.displayName || '',
+    lastName: lastName || '',
+  });
   return db.contact.create({
     data: {
-      firstNameHe: firstName || normalized.person.displayName || 'ליד',
-      lastNameHe: lastName || '',
-      firstNameEn: '',
-      lastNameEn: '',
+      firstNameHe: routed.script === 'en' ? '' : routed.firstNameHe || 'ליד',
+      lastNameHe: routed.lastNameHe,
+      firstNameEn: routed.firstNameEn,
+      lastNameEn: routed.lastNameEn,
       communicationLanguage: language || null,
       phones: phoneDisplay ? { create: [{ value: phoneDisplay, isPrimary: true }] } : undefined,
       emails: email ? { create: [{ value: email, isPrimary: true }] } : undefined,

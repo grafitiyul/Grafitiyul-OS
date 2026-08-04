@@ -6,6 +6,7 @@ import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 import { api } from '../../lib/api.js';
 import { COMM_LANGS } from './config.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
+import { classifyNameScript } from '../../../../shared/nameLanguage.mjs';
 
 // Edit an existing contact from the Deal header — reuses the SAME building blocks
 // as the full Contact page (shared ChannelSection for phones/emails; the same
@@ -149,6 +150,20 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
                 <input value={form.lastNameEn} onChange={(e) => set('lastNameEn', e.target.value)} dir="ltr" className={FIELD} />
               </Field>
             </div>
+            {/* Helpful (non-blocking) language-routing hint — the API applies
+                the same canonical reroute on save (shared/nameLanguage). */}
+            {classifyNameScript(`${form.firstNameHe} ${form.lastNameHe}`.trim()) === 'en'
+              && !`${form.firstNameEn}${form.lastNameEn}`.trim() && (
+              <p className="mt-1.5 text-[12px] text-amber-700">
+                השם שהוזן בשדות העברית הוא באנגלית — בשמירה הוא יעבור אוטומטית לשדות האנגלית.
+              </p>
+            )}
+            {classifyNameScript(`${form.firstNameEn} ${form.lastNameEn}`.trim()) === 'he'
+              && !`${form.firstNameHe}${form.lastNameHe}`.trim() && (
+              <p className="mt-1.5 text-[12px] text-amber-700">
+                השם שהוזן בשדות האנגלית הוא בעברית — בשמירה הוא יעבור אוטומטית לשדות העברית.
+              </p>
+            )}
             <div className="mt-3">
               <Field label="שפת תקשורת">
                 <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${FIELD} bg-white`}>

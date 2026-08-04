@@ -6,6 +6,7 @@ import { parseListQuery } from './listPagination.js';
 import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
 import { sendReservationDocument } from '../reservations/document.js';
+import { classifyNameScript } from '../../../shared/nameLanguage.mjs';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
 // the future Deals/Activities workflow.
@@ -103,17 +104,35 @@ router.get(
   }),
 );
 
+// Helpful name-language reroute (shared/nameLanguage — THE canonical
+// classifier): a FULLY-Latin name typed into the Hebrew pair moves to the
+// English pair, and a fully-Hebrew name typed into the English pair moves to
+// the Hebrew pair — but ONLY when the destination pair is empty (never
+// destructive, mixed/neutral names are never touched). This guards every
+// admin form through the one API, matching the ingress routing rule.
+function rerouteNamePairs(names) {
+  const heJoined = `${names.firstNameHe || ''} ${names.lastNameHe || ''}`.trim();
+  const enJoined = `${names.firstNameEn || ''} ${names.lastNameEn || ''}`.trim();
+  if (heJoined && !enJoined && classifyNameScript(heJoined) === 'en') {
+    return { ...names, firstNameEn: names.firstNameHe, lastNameEn: names.lastNameHe, firstNameHe: '', lastNameHe: '' };
+  }
+  if (enJoined && !heJoined && classifyNameScript(enJoined) === 'he') {
+    return { ...names, firstNameHe: names.firstNameEn, lastNameHe: names.lastNameEn, firstNameEn: '', lastNameEn: '' };
+  }
+  return names;
+}
+
 router.post(
   '/',
   handle(async (req, res) => {
     const { firstNameHe, lastNameHe, firstNameEn, lastNameEn, notes } =
       req.body || {};
-    const names = {
+    const names = rerouteNamePairs({
       firstNameHe: String(firstNameHe || '').trim(),
       lastNameHe: String(lastNameHe || '').trim(),
       firstNameEn: String(firstNameEn || '').trim(),
       lastNameEn: String(lastNameEn || '').trim(),
-    };
+    });
     // A contact needs at least ONE first name, in EITHER language (Hebrew or
     // English). Last names and the other-language names are all optional; stored
     // columns stay non-null (empty ''). This keeps quick capture (name + phone)
@@ -135,13 +154,27 @@ router.put(
     const body = req.body || {};
     const existing = await prisma.contact.findUnique({
       where: { id: req.params.id },
-      select: { firstNameHe: true, firstNameEn: true },
+      select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
     const data = {};
     for (const f of ['firstNameHe', 'lastNameHe', 'firstNameEn', 'lastNameEn']) {
       if (body[f] !== undefined) data[f] = String(body[f]).trim();
+    }
+    // Reroute misplaced-language names on edit too — evaluated over the
+    // EFFECTIVE post-patch values, applied only when a name field was patched.
+    if (['firstNameHe', 'lastNameHe', 'firstNameEn', 'lastNameEn'].some((f) => data[f] !== undefined)) {
+      const eff = {
+        firstNameHe: data.firstNameHe ?? existing.firstNameHe ?? '',
+        lastNameHe: data.lastNameHe ?? existing.lastNameHe ?? '',
+        firstNameEn: data.firstNameEn ?? existing.firstNameEn ?? '',
+        lastNameEn: data.lastNameEn ?? existing.lastNameEn ?? '',
+      };
+      const routed = rerouteNamePairs(eff);
+      if (routed !== eff) {
+        for (const f of ['firstNameHe', 'lastNameHe', 'firstNameEn', 'lastNameEn']) data[f] = routed[f];
+      }
     }
     // A contact needs at least ONE first name, in EITHER language. Last names and
     // the other-language name are optional (may be ''). Same rule as create — the
