@@ -27,6 +27,19 @@ import { CONFIRMATION_EMAIL_REVIEW_KIND } from '../reviewItems/kinds/confirmatio
 import { hasActiveFillers } from './fillers.js';
 import { sendConfirmationEmail } from './sendService.js';
 import { GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
+import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
+
+// Operator-facing Hebrew for auto-send failures (the review card's summary).
+const AUTO_FAIL_LABELS = {
+  send_blocked: 'חסר תוכן או משתנה בשפת השליחה',
+  no_recipient_email: 'לאיש הקשר אין כתובת מייל',
+  missing_subject: 'חסר נושא לשפת השליחה בתבנית',
+  no_confirmation_template: 'לא הוגדרה תבנית מייל אישור',
+  ambiguous_confirmation_template: 'תבניות חופפות בהגדרות מייל אישור',
+  no_connected_account: 'אין חשבון Gmail מחובר',
+  duplicate_send: 'מייל אישור נשלח ממש עכשיו',
+  empty_body: 'גוף המייל ריק',
+};
 
 // Canonical customer wording for the card: organization → contact → generic.
 // NEVER Deal.title (internal CRM wording — the gallery-incident invariant).
@@ -44,7 +57,7 @@ function customerLabelFor(deal) {
  * double-clicked button produces at most one card and one send workflow.
  */
 export async function runConfirmationOnWon(
-  { dealId, transitionKey, closedByUserId = null },
+  { dealId, transitionKey, closedByUserId = null, suppressed = false },
   { db = defaultPrisma, log = console } = {},
 ) {
   try {
@@ -71,6 +84,28 @@ export async function runConfirmationOnWon(
     const fillers = hasActiveFillers(deal.confirmation?.fillers);
     const operatorDriven = !!closedByUserId;
 
+    // The preview's "הפוך ל־WON ושלח" transition: the operator's explicit send
+    // owns the email — but the deal must never be silently left WON with no
+    // email if that send fails or the preview is closed. A review card stands
+    // guard; the successful send resolves it within seconds
+    // (resolveConfirmationReview runs on every real send).
+    if (suppressed) {
+      const { created } = await createReviewItem(
+        {
+          kind: CONFIRMATION_EMAIL_REVIEW_KIND,
+          dedupeKey: `${CONFIRMATION_EMAIL_REVIEW_KIND}:${transitionKey}`,
+          title: `מייל אישור ממתין לשליחה — ${customerLabel}${deal.orderNo ? ` (#${deal.orderNo})` : ''}`,
+          summary:
+            'העסקה הפכה ל-WON מתוך התצוגה המקדימה של מייל האישור. שליחה מהתצוגה סוגרת כרטיס זה אוטומטית; אם הוא נשאר פתוח — מייל האישור עדיין לא נשלח.',
+          data: { orderNo: deal.orderNo, operatorDriven, suppressedPreviewSend: true },
+          entityRefs: [{ type: 'deal', id: deal.id, orderNo: deal.orderNo, label: customerLabel }],
+          dealId: deal.id,
+        },
+        { db },
+      );
+      return { pendingReview: true, cardCreated: created, suppressed: true };
+    }
+
     if (!fillers) {
       const out = await sendConfirmationEmail(
         {
@@ -82,7 +117,36 @@ export async function runConfirmationOnWon(
         },
         { db },
       );
-      if (out.error) log?.warn?.(`[confirmation] WON auto-send skipped (${dealId}): ${out.error}`);
+      if (out.error) {
+        // NEVER a silent skip (production #26107: WON with no email, no card,
+        // no trace). The failure becomes a review card + a deal-feed event.
+        log?.warn?.(`[confirmation] WON auto-send skipped (${dealId}): ${out.error}`);
+        const reasonHe = AUTO_FAIL_LABELS[out.error] || out.error;
+        await createReviewItem(
+          {
+            kind: CONFIRMATION_EMAIL_REVIEW_KIND,
+            dedupeKey: `${CONFIRMATION_EMAIL_REVIEW_KIND}:${transitionKey}`,
+            title: `מייל אישור לא נשלח אוטומטית — ${customerLabel}${deal.orderNo ? ` (#${deal.orderNo})` : ''}`,
+            summary: `השליחה האוטומטית נעצרה: ${reasonHe}. פתחו תצוגה מקדימה, השלימו ושלחו.`,
+            data: { orderNo: deal.orderNo, operatorDriven, autoSendError: out.error },
+            entityRefs: [{ type: 'deal', id: deal.id, orderNo: deal.orderNo, label: customerLabel }],
+            dealId: deal.id,
+          },
+          { db },
+        ).catch(() => {});
+        await emitTimelineEvent(db, {
+          subjectId: deal.id,
+          kind: 'communication',
+          origin: systemOrigin(),
+          data: {
+            event: 'confirmation_email_auto_failed',
+            channel: 'email',
+            error: out.error,
+            errorHe: reasonHe,
+            eventName: 'מייל אישור — שליחה אוטומטית נעצרה',
+          },
+        }).catch(() => {});
+      }
       return { sent: !!out.ok, error: out.error || null };
     }
 

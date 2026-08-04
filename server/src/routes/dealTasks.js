@@ -6,6 +6,7 @@ import { stampManualSend } from '../whatsapp/sendPace.js';
 import { userOrigin, TASK_PRIORITIES, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
 import { combineDateTime, SCHEDULE_MIN_LEAD_MS, CANCELLABLE_SCHED } from '../tasks/taskEdit.js';
 import { emitTasksChanged } from '../tasks/events.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Deal Tasks (משימות) — mounted at /api/deals, serves /:dealId/tasks*. A task is
 // a FUTURE action on a deal. Open tasks live in the deal focus area; terminal
@@ -20,6 +21,9 @@ import { emitTasksChanged } from '../tasks/events.js';
 // sends immediately via the bridge with its own idempotency key.
 
 const router = Router();
+
+// Deal-scoped routes accept orderNo OR cuid — the shared resolver.
+registerDealOrderNoParam(router, 'dealId');
 
 // Scheduling constants + combineDateTime moved to tasks/taskEdit.js (the pure
 // half of the canonical write path) so bulk actions share them — imported above.

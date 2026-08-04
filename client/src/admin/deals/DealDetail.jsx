@@ -194,8 +194,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         setConfirmEmailOpen(true);
         return;
       }
-      await api.confirmationEmail.send(id, {});
-      showToast('מייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
+      const sent = await api.confirmationEmail.send(id, {});
+      // Honest queue expectation: distinguish "sends within the next worker
+      // tick" from "held for the customer sending window until X".
+      if (sent?.windowHold) {
+        const at = sent.windowHold.nextAt ? new Date(sent.windowHold.nextAt) : null;
+        showToast(
+          'מייל האישור נכנס לתור — מחוץ לחלון השליחה',
+          at ? `יישלח בפתיחת החלון: ${at.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'יישלח בפתיחת חלון השליחה',
+        );
+      } else {
+        showToast('מייל האישור נכנס לתור השליחה', 'יישלח תוך כדקה');
+      }
       refresh();
     } catch (e) {
       const code = e.payload?.error;

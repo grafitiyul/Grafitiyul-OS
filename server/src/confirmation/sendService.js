@@ -16,6 +16,7 @@ import { composeConfirmationEmail } from './composer.js';
 import { countRealSends, buildSendSubject } from './sendHistory.js';
 import { resolveSendAccount, cleanRecipientList } from '../email/composedSend.js';
 import { emitTimelineEvent, userOrigin, systemOrigin } from '../timeline/events.js';
+import { checkSendAllowed } from '../communication/sendingPolicy.js';
 
 // Warnings an operator may knowingly send past (the preview shows them);
 // anything else is a hard stop.
@@ -171,8 +172,20 @@ export async function sendConfirmationEmail(opts = {}, { db = defaultPrisma } = 
     return { scheduled: scheduledRow, snapshot: snapshotRow };
   });
 
+  // Honest queue expectation for the operator's toast: the row is scheduled
+  // for NOW, but the worker honours the customer sending window at claim time
+  // (the SAME evaluator) — if the window is closed, say so and when, instead
+  // of a generic "will send soon".
+  let windowHold = null;
+  try {
+    const gate = await checkSendAllowed({ audienceKind: 'customer', channel: 'email', atMs: Date.now() }, { db });
+    if (!gate.allowed) windowHold = { reason: gate.reason || 'window', nextAt: gate.nextAt || null };
+  } catch {
+    /* advisory only — never fail a queued send over it */
+  }
+
   return {
     ok: true, sendId: snapshot.id, scheduledEmailId: scheduled.id,
-    subject, sendKind, language: composed.language,
+    subject, sendKind, language: composed.language, windowHold,
   };
 }

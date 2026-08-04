@@ -104,6 +104,42 @@ test('a hook failure is swallowed — WON never breaks because of email', async 
   assert.equal(out.error, 'hook_failed');
 });
 
+test('suppressed (preview-driven WON) → GUARD card instead of a silent skip', async () => {
+  const h = harness();
+  const out = await runConfirmationOnWon(
+    { dealId: 'd1', transitionKey: KEY, closedByUserId: 'user_1', suppressed: true },
+    { db: h.db, log: h.log },
+  );
+  assert.equal(out.suppressed, true);
+  assert.equal(out.pendingReview, true);
+  assert.equal(h.scheduled.length, 0, 'the preview owns the send — nothing queued');
+  assert.equal(h.cards.length, 1);
+  assert.equal(h.cards[0].data.suppressedPreviewSend, true);
+  assert.match(h.cards[0].summary, /התצוגה המקדימה/);
+  // The preview's real send resolves the guard seconds later.
+  const r = await resolveConfirmationReview('s1', 'd1', { userId: 'user_1' }, { db: h.db });
+  assert.equal(r.resolved, true);
+});
+
+test('auto-send failure → review card + deal-feed event, never invisible (#26107)', async () => {
+  const h = harness(); // no fillers → the hook TRIES to auto-send
+  const timeline = [];
+  // No templates configured → composeConfirmationEmail returns a clean error.
+  h.db.confirmationEmailTemplate = { findMany: async () => [] };
+  h.db.openTourTemplate = { findUnique: async () => null };
+  h.db.timelineEntry = { create: async ({ data }) => { const r = { id: `tl${timeline.length + 1}`, createdAt: new Date(), ...data }; timeline.push(r); return r; } };
+  h.db.$executeRaw = async () => 0;
+  const out = await runConfirmationOnWon(
+    { dealId: 'd1', transitionKey: KEY, closedByUserId: 'user_1' },
+    { db: h.db, log: h.log },
+  );
+  assert.equal(out.sent, false);
+  assert.ok(out.error, 'the auto-send failed');
+  assert.equal(h.cards.length, 1, 'the failure raised a review card');
+  assert.match(h.cards[0].title, /לא נשלח אוטומטית/);
+  assert.ok(timeline.some((t) => t.data?.event === 'confirmation_email_auto_failed'), 'and a visible deal-feed event');
+});
+
 test('a real send resolves the open review card (no stuck state)', async () => {
   const h = harness({ fillers: [{ kind: 'other_note', noteHe: 'x' }] });
   await runConfirmationOnWon({ dealId: 'd1', transitionKey: KEY }, { db: h.db, log: h.log });

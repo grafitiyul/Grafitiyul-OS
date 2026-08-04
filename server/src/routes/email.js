@@ -30,6 +30,7 @@ import { syncAccount } from '../email/syncWorker.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { resolvePublicOrigin } from '../dealPayment.js';
 import { isConfigured as r2Configured, buildKey, putObject, presignGet, bucket } from '../r2.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Email module — Gmail integration (admin router, cookie-gated at mount).
 //
@@ -39,6 +40,9 @@ import { isConfigured as r2Configured, buildKey, putObject, presignGet, bucket }
 // Read/unread inside GOS is GOS-side state on EmailThread.
 
 const router = Router();
+
+// /by-deal/:dealId accepts orderNo OR cuid — the shared resolver.
+registerDealOrderNoParam(router, 'dealId');
 
 const CONTACT_LITE_SELECT = {
   id: true,

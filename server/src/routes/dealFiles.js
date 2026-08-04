@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import * as r2 from '../r2.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { sendReservationDocument } from '../reservations/document.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Deal Files — mounted at /api/deals, serves /:dealId/files*. PRIVATE by
 // contract: unlike MediaFile there is NO public URL. Objects live under
@@ -13,6 +14,9 @@ import { sendReservationDocument } from '../reservations/document.js';
 // straight to R2 → persist the DealFile row.
 
 const router = Router();
+
+// Deal-scoped routes accept orderNo OR cuid — the shared resolver.
+registerDealOrderNoParam(router, 'dealId');
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50MB per file
 

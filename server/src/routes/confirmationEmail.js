@@ -38,6 +38,7 @@ import {
 import { tourDurationHours, effectiveDurationHours } from '../tours/tourTime.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // CRM settings → מייל אישור — confirmation-email template management.
 // Selection semantics (specificity → priority → REFUSE ambiguity) live in
@@ -50,6 +51,12 @@ import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.j
 //     overlapping templates are flagged at SAVE time, before send can refuse.
 
 const router = Router();
+
+// Deal-scoped routes accept orderNo OR cuid — the shared resolver. The Deal
+// page's route param IS the orderNo; before this, the direct "שליחת מייל
+// אישור" action failed with deal_not_found on every deal (#26340) while the
+// preview modal (which passes the cuid) worked.
+registerDealOrderNoParam(router, 'dealId');
 
 const MAX_RICH = 200_000;
 const cleanRich = (v) => (v === undefined ? undefined : v ? String(v).slice(0, MAX_RICH) : null);
@@ -392,7 +399,7 @@ router.post(
       to: req.body?.to,
       subject: req.body?.subject,
       test: !!req.body?.test,
-      acknowledgeWarnings: !!req.body?.acknowledgeWarnings,
+      acknowledgeWarnings: !!req.body?.acknowledgeWarnings,
       trigger: req.body?.test ? 'test' : 'manual',
       actorUserId: req.adminAuth?.userId || null,
       languageOverridden: !!req.body?.languageOverridden,
@@ -405,7 +412,7 @@ router.post(
     }
     // A real send closes any open "review this confirmation email" card.
     if (!req.body?.test) await resolveConfirmationReview(out.sendId, req.params.dealId, req.adminAuth);
-    res.json({ ok: true, sendId: out.sendId, scheduledEmailId: out.scheduledEmailId, queued: true, subject: out.subject, sendKind: out.sendKind });
+    res.json({ ok: true, sendId: out.sendId, scheduledEmailId: out.scheduledEmailId, queued: true, subject: out.subject, sendKind: out.sendKind, windowHold: out.windowHold || null });
   }),
 );
 

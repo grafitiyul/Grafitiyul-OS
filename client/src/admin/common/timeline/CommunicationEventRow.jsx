@@ -10,6 +10,31 @@ export default function CommunicationEventRow({ entry }) {
   // Operator-sent confirmation email rides the same row shape but is NOT
   // automated communication — label it for what it is.
   const manual = d.event === 'confirmation_email_queued';
+  // The WON hook's auto-send stopped — visible in the feed, never invisible.
+  const autoFailed = d.event === 'confirmation_email_auto_failed';
+
+  if (autoFailed) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2" dir="rtl">
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-[14px] leading-none" aria-hidden>⚠️</span>
+          <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 ring-1 ring-amber-200">
+            מייל אישור
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13px] text-amber-900">
+            <span className="font-medium">השליחה האוטומטית נעצרה</span>
+            <span className="text-amber-700"> · {d.errorHe || d.error || ''}</span>
+            <span className="text-amber-700"> · פתחו תצוגה מקדימה ושלחו ידנית</span>
+          </span>
+          <span className="shrink-0 text-[11px] text-amber-700/70">
+            {when
+              ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+              : ''}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">

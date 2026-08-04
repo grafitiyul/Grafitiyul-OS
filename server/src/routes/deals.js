@@ -54,6 +54,7 @@ import { fireAdminReport } from '../adminReports/dispatch.js';
 import { actorForReport } from '../adminReports/actor.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 import { resolveForOperator } from '../whatsapp/senderAccount.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -336,23 +337,8 @@ function withTourUpdatePending(deal) {
   return { ...deal, tourUpdatePending: pendingTourUpdate(deal, booking) };
 }
 
-// "מספר הזמנה" URL support — every /:id route on this router accepts EITHER the
-// internal cuid OR the business-facing sequential order number (all digits;
-// cuids never are). The one resolver below swaps a numeric id for the cuid
-// before any handler runs, so no handler needs to know which form arrived.
-// Unknown numbers fall through unchanged → the handler's own lookup 404s.
-router.param('id', (req, _res, next, value) => {
-  if (!/^\d+$/.test(value)) return next();
-  const orderNo = Number(value);
-  if (!Number.isSafeInteger(orderNo) || orderNo > 2147483647) return next();
-  prisma.deal
-    .findUnique({ where: { orderNo }, select: { id: true } })
-    .then((found) => {
-      if (found) req.params.id = found.id;
-      next();
-    })
-    .catch(next);
-});
+// "מספר הזמנה" URL support — the shared resolver (routes/dealParam.js).
+registerDealOrderNoParam(router, 'id');
 
 // ---------- Deals ----------
 

@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { activeBookingFor } from '../tours/tourFromDeal.js';
+import { registerDealOrderNoParam } from './dealParam.js';
 
 // Deal Tour PLANNING (pre-WON) — mounted at /api/deals, serves /:dealId/tour-plan*.
 // The plan is STRICTLY internal: no TourEvent, no Google Calendar, no guide
@@ -43,19 +44,8 @@ const PLAN_INCLUDE = {
   },
 };
 
-// Same orderNo→cuid URL support as the deals router (docs on router.param there).
-router.param('dealId', (req, _res, next, value) => {
-  if (!/^\d+$/.test(value)) return next();
-  const orderNo = Number(value);
-  if (!Number.isSafeInteger(orderNo) || orderNo > 2147483647) return next();
-  prisma.deal
-    .findUnique({ where: { orderNo }, select: { id: true } })
-    .then((found) => {
-      if (found) req.params.dealId = found.id;
-      next();
-    })
-    .catch(next);
-});
+// Same orderNo→cuid URL support as the deals router — the shared resolver.
+registerDealOrderNoParam(router, 'dealId');
 
 function dealSelect() {
   return { id: true, activityType: true, status: true, productVariantId: true };

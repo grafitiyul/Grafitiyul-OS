@@ -146,13 +146,18 @@ export function emitWonTransitionEffects(
   // card payment, IPN, Cardcom — behaves identically and no provider needs to
   // know about email. Deals with special terms produce a review card instead
   // of a blind send; see confirmation/wonHook.js. Fire-and-forget.
-  // Suppressed when the operator is sending from the preview RIGHT NOW:
-  // the explicit send owns the email, so the hook must not queue a second
-  // one (nor raise a review card that the send would immediately resolve).
-  if (!skipConfirmationEmail) {
-    runConfirmationOnWon(
-    { dealId, transitionKey: wonTransitionKey(dealId, wonAt), closedByUserId },
+  // skipConfirmationEmail (the preview's "הפוך ל־WON ושלח") no longer skips the
+  // hook entirely: the hook raises a guard review card instead of an auto-send,
+  // and the operator's explicit send resolves it seconds later. A preview that
+  // is closed after the transition can no longer leave a WON deal with no
+  // email and no trace.
+  runConfirmationOnWon(
+    {
+      dealId,
+      transitionKey: wonTransitionKey(dealId, wonAt),
+      closedByUserId,
+      suppressed: !!skipConfirmationEmail,
+    },
     { log },
-    ).catch(() => {});
-  }
+  ).catch(() => {});
 }
