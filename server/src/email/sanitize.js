@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html';
+import { normalizeEmailColors } from './emailColors.js';
 
 // Server-side HTML sanitization AT INGEST (defence layer 1; the client also
 // renders inside a sandboxed iframe with scripts disabled — layer 2). Email
@@ -42,5 +43,10 @@ const OPTIONS = {
 export function sanitizeEmailHtml(html) {
   if (!html) return null;
   const clean = sanitizeHtml(String(html), OPTIONS).trim();
-  return clean || null;
+  if (!clean) return null;
+  // Theme-hostile colour normalization runs HERE, after tag/attribute
+  // sanitization, so it covers already-stored content as well as new pastes:
+  // a near-black foreground copied from Word assumes a white page and turns
+  // unreadable on a dark client. See emailColors.js for the exact rule.
+  return normalizeEmailColors(clean) || null;
 }

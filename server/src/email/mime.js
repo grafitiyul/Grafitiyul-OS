@@ -177,62 +177,29 @@ export function parsePayload(payload) {
 // mobile. Outlook desktop (Word engine) ignores it — but it also does not
 // force-invert, so unstyled text remains readable there. No client-specific
 // CSS hacks are used.
-// Canonical outgoing-HTML document. ONE wrapper for every send path.
+// THEME CONTRACT — the wrapper declares scheme support and NOTHING ELSE.
 //
-// DARK-MODE CONTRACT (why this looks the way it does):
-// The previous version declared `color-scheme: light dark` and then set no
-// colors. That combination is the worst of both worlds: the declaration tells
-// Gmail/Apple Mail "this email handles dark mode itself, do not invert it", so
-// the client paints its dark surface behind our content — while any text that
-// carries an explicit dark colour stays dark. Authored rich text routinely
-// carries explicit colours (the editor's colour picker, and pasted Word/Docs
-// content whose colours pasteSanitizer deliberately preserves), so those runs
-// rendered dark-on-dark and became unreadable on phones.
+// It must not set a background or a text colour. That was tried (2026-08-03)
+// to rescue dark-on-dark text and produced a WORSE regression: Gmail inverts
+// explicit colour PAIRS, so an explicit white background with explicit dark
+// text became black rectangles with white text hugging every paragraph — in
+// LIGHT mode too. Forcing colours here fights the client and loses; only the
+// client knows its own theme.
 //
-// We cannot recolour customer-authored content — rewriting an operator's
-// chosen colours would be its own bug, and we must never hardcode colours into
-// customer content. So the email carries its own SELF-CONSISTENT light
-// surface: an explicit white background with an explicit dark default text
-// colour, declared `light` so supporting clients leave it alone. In dark mode
-// the message renders as a light card on the client's dark chrome — readable
-// everywhere, and identical to what the preview shows. That is a deliberate
-// trade: guaranteed legibility over a dark-themed email.
-//
-// Defences are layered because clients disagree: the meta/`:root` declarations
-// (Apple Mail, iOS, Outlook.com), an explicit bgcolor attribute + inline
-// background on the surface (Gmail's inverter preserves explicit backgrounds
-// far more reliably than declarations), and a prefers-color-scheme block that
-// re-asserts the same palette for clients that honour <style> but would
-// otherwise recolour text.
-const EMAIL_BG = '#ffffff';
-const EMAIL_FG = '#111827';
-const EMAIL_LINK = '#1d4ed8';
-
+// The real cause of dark-on-dark was never the wrapper: it is CONTENT that
+// carries an explicit near-black foreground (or near-white background) pasted
+// from Word/Docs, which assumes a white page. That is fixed where it belongs,
+// in the sanitization contract — see emailColors.js.
 export function wrapEmailDocument(bodyHtml) {
   if (!bodyHtml) return bodyHtml;
-  const surface =
-    `background-color:${EMAIL_BG};color:${EMAIL_FG};` +
-    '-webkit-text-size-adjust:100%;text-size-adjust:100%;';
   return (
     '<!DOCTYPE html><html><head>' +
     '<meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<meta name="color-scheme" content="light">' +
-    '<meta name="supported-color-schemes" content="light">' +
-    '<style>' +
-    ':root{color-scheme:light;supported-color-schemes:light}' +
-    `body,.gos-email-surface{background-color:${EMAIL_BG} !important;color:${EMAIL_FG} !important}` +
-    `.gos-email-surface a{color:${EMAIL_LINK} !important}` +
-    // Same palette in dark mode ON PURPOSE: the surface stays light so
-    // author-coloured text keeps its contrast instead of inverting into it.
-    '@media (prefers-color-scheme: dark){' +
-    `body,.gos-email-surface{background-color:${EMAIL_BG} !important;color:${EMAIL_FG} !important}` +
-    `.gos-email-surface a{color:${EMAIL_LINK} !important}` +
-    '}' +
-    '</style>' +
-    `</head><body bgcolor="${EMAIL_BG}" style="margin:0;padding:0;${surface}">` +
-    `<div class="gos-email-surface" style="${surface}">${bodyHtml}</div>` +
-    '</body></html>'
+    '<meta name="color-scheme" content="light dark">' +
+    '<meta name="supported-color-schemes" content="light dark">' +
+    '<style>:root{color-scheme:light dark;supported-color-schemes:light dark}</style>' +
+    `</head><body>${bodyHtml}</body></html>`
   );
 }
 

@@ -4,6 +4,7 @@ import NavRail from './NavRail.jsx';
 import TopBar from './TopBar.jsx';
 import MobileTabBar from './MobileTabBar.jsx';
 import VersionGate from './VersionGate.jsx';
+import ToastHost from './ToastHost.jsx';
 import { moduleForPath } from './moduleRoutes.js';
 import { applyModuleFavicon, resetModuleFavicon } from './moduleFavicon.js';
 
@@ -26,6 +27,7 @@ export default function AppShell() {
           "גרסה חדשה זמינה" banner + safe auto-reload run for admins/staff and
           never on public/external pages. */}
       <VersionGate />
+      <ToastHost />
       <TopBar />
       <div className="flex-1 flex min-h-0">
         <NavRail />

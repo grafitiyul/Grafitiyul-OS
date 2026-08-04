@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useRealtime } from '../../lib/realtime.js';
+import { showToast } from '../../lib/toast.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import CardKebabMenu from '../common/CardKebabMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -194,7 +195,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         return;
       }
       await api.confirmationEmail.send(id, {});
-      alert('מייל האישור נכנס לתור השליחה ✓');
+      showToast('מייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
       refresh();
     } catch (e) {
       const code = e.payload?.error;
@@ -623,7 +624,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       // Special terms → the operator reviews before the customer gets it.
       const ce = res?.confirmationEmail;
       if (ce?.action === 'preview') setConfirmEmailOpen(true);
-      else if (ce?.action === 'sent') alert('הסיור עודכן ומייל מעודכן נכנס לתור השליחה ✓');
+      else if (ce?.action === 'sent') showToast('הסיור עודכן ומייל מעודכן נכנס לתור השליחה', 'המייל יישלח בקרוב');
       else if (ce?.action === 'failed') {
         alert('הסיור עודכן, אך מייל האישור לא נשלח: ' + (ce.error || '') + '\nאפשר לשלוח מהתפריט.');
       }
@@ -1061,7 +1062,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             deal={deal}
             onClose={() => setConfirmEmailOpen(false)}
             onSent={() => {
-              alert('מייל האישור נכנס לתור השליחה ✓');
+              showToast('מייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
               refresh();
             }}
           />
