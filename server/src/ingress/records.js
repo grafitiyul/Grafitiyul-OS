@@ -12,7 +12,7 @@
 // Stage and source are resolved from configuration/catalogue, never hardcoded
 // to an id, so a CRM rename cannot silently break ingestion.
 
-import { ISRAEL_TZ } from '../lib/israelDate.js';
+import { ISRAEL_TZ, israelDateOf } from '../lib/israelDate.js';
 import { normalizeClassification } from '../deals/classification.js';
 import { writeDealMarketing } from '../deals/marketing.js';
 import { emitTimelineEvent, touchDealActivity } from '../timeline/events.js';
@@ -85,24 +85,17 @@ function dealTitleFor(normalized) {
  * real classification from the default. Unclassified is the honest state — the
  * office classifies when it knows.
  *
- * A PAID Woo order is 'group': a completed purchase on the store is canonically
- * a group activity, and that IS known from the order, not inferred. Payment is
- * read from the canonical `order.paid` flag the Woo adapter already computes
- * (PAID_STATUSES = processing | completed | on-hold), never re-derived here.
- *
- * An UNPAID order stays unclassified for the same reason a lead does — nothing
- * about it is yet known. This branch IS live: POST /ingress/woocommerce/:store
- * ingests every order webhook regardless of status (pending, cancelled and
- * refunded orders all create a Deal today). Whether they should is a separate
- * product question — flagged, deliberately not changed here.
+ * An ORDER is 'group', paid or not. A store order is a tour order, and that is
+ * known from WHAT it is, not from whether the money arrived: an abandoned
+ * checkout for a tour is still a tour enquiry, not a generic lead. Payment
+ * status drives the deal's business status (WON), never its classification.
  *
  * A linked organization still wins over all of this — normalizeClassification
  * forces 'business', which is the project's classification SSOT and the only
  * place 'business' may come from.
  */
 export function activityTypeForIngress(normalized) {
-  if (normalized?.kind !== 'order') return null;
-  return normalized.order?.paid ? 'group' : null;
+  return normalized?.kind === 'order' ? 'group' : null;
 }
 
 // Money: Deal.valueMinor is BigInt minor units (agorot).
@@ -164,7 +157,7 @@ export async function createLeadDeal(tx, { normalized, stageKey = null }) {
       notes: normalized.context.message || null,
       participants: normalized.context.participants ?? null,
       tourDate: normalized.context.preferredDate
-        ? normalized.context.preferredDate.toISOString().slice(0, 10)
+        ? israelDateOf(normalized.context.preferredDate)
         : null,
       communicationLanguage: normalized.person.language || null,
       valueMinor: toMinor(normalized.order?.total),
@@ -337,6 +330,199 @@ export async function writeIntakeNote(tx, { dealId, normalized, ambiguous = fals
     },
   });
   await touchDealActivity(tx, dealId, createdAt || new Date());
+}
+
+// ── External order lifecycle ────────────────────────────────────────────────
+//
+// A Woo order reaches GOS at every stage of its life, not only when it is paid.
+// Each delivery becomes a PINNED internal note on the one deal that order owns,
+// so an operator opening it sees immediately what actually happened — an
+// abandoned checkout, a failed payment, a cancellation, a refund.
+//
+// Two rules the note text obeys absolutely:
+//   1. Only what Woo actually sent. A field the payload does not carry is shown
+//      as "—", never guessed and never back-filled from elsewhere.
+//   2. It is stamped as an automatic internal note that is NEVER sent to the
+//      customer, because it is pinned and highly visible and an operator must
+//      not have to wonder whether the customer saw it.
+
+const MONEY = (v, currency) =>
+  v === null || v === undefined || v === '' ? null : `${v}${currency ? ` ${currency}` : ''}`;
+
+const dt = (v) => {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('he-IL', { timeZone: ISRAEL_TZ, dateStyle: 'short', timeStyle: 'short' }).format(d);
+};
+
+/**
+ * THE pinned order-status note. Pure — no database, no side effects — so the
+ * dry-run preview and the real write render byte-identical text.
+ *
+ * `meaning` comes from the adapter's ONE status catalogue; this function never
+ * decides what a status means.
+ */
+export function buildOrderStatusNoteBody(normalized, meaning, { previousStatus = null } = {}) {
+  const e = normalized.extra || {};
+  const o = normalized.order || {};
+  const p = normalized.person || {};
+  const a = normalized.attribution || {};
+  const cur = o.currency || null;
+  const lines = [];
+
+  lines.push(`<b>${escapeHtml(meaning.icon)} ${escapeHtml(meaning.title)}</b>`);
+  if (meaning.detail) lines.push(escapeHtml(meaning.detail));
+  if (previousStatus && previousStatus !== meaning.status) {
+    lines.push(`שינוי סטטוס: <b>${escapeHtml(previousStatus)}</b> ← <b>${escapeHtml(meaning.status)}</b>`);
+  }
+
+  // ── The order ─────────────────────────────────────────────────────────────
+  const order = [
+    ['מספר הזמנה', e.orderNumber || normalized.externalId],
+    ['סטטוס בוו', meaning.status],
+    ['סכום', MONEY(o.total, cur)],
+    ['הנחה', MONEY(e.discountTotal, cur)],
+    ['משלוח', MONEY(e.shippingTotal, cur)],
+    ['מע״מ', MONEY(e.totalTax, cur)],
+    ['אמצעי תשלום', e.paymentMethod],
+    ['מזהה עסקה', e.transactionId],
+    ['קופון', (e.couponLines || []).join(', ') || null],
+    ['תאריך סיור', normalized.context?.preferredDate
+      ? israelDateOf(normalized.context.preferredDate) : null],
+    ['משתתפים', normalized.context?.participants],
+    ['חנות', e.storeKey],
+    ['נוצר דרך', e.createdVia],
+  ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+  if (order.length) {
+    lines.push('');
+    lines.push('<b>פרטי ההזמנה</b>');
+    for (const [k, v] of order) lines.push(`${k}: ${escapeHtml(v)}`);
+  }
+
+  // ── What was ordered ──────────────────────────────────────────────────────
+  const items = e.lineItems || o.items || [];
+  if (items.length) {
+    lines.push('');
+    lines.push('<b>פריטים</b>');
+    for (const it of items) {
+      const bits = [`• ${escapeHtml(it.name || it.sku || it.externalId || '—')} ×${escapeHtml(it.quantity ?? 1)}`];
+      if (it.total !== null && it.total !== undefined && it.total !== '') bits.push(`— ${escapeHtml(MONEY(it.total, cur))}`);
+      lines.push(bits.join(' '));
+      for (const m of it.meta || []) {
+        if (m?.key && m?.value !== null && m?.value !== undefined && String(m.value).trim() !== '') {
+          lines.push(`&nbsp;&nbsp;&nbsp;${escapeHtml(m.key)}: ${escapeHtml(m.value)}`);
+        }
+      }
+    }
+  }
+  for (const f of e.feeLines || []) {
+    if (f?.name) lines.push(`• ${escapeHtml(f.name)} — ${escapeHtml(MONEY(f.total, cur))}`);
+  }
+
+  // ── Who ordered ───────────────────────────────────────────────────────────
+  const who = [
+    ['שם', p.displayName || [p.firstName, p.lastName].filter(Boolean).join(' ') || null],
+    ['טלפון', p.phoneIntl || p.phone],
+    ['אימייל', p.email],
+    ['חברה', normalized.organization?.name],
+  ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+  if (who.length) {
+    lines.push('');
+    lines.push('<b>פרטי הלקוח</b>');
+    for (const [k, v] of who) lines.push(`${k}: ${escapeHtml(v)}`);
+  }
+  if (normalized.context?.message) {
+    lines.push('');
+    lines.push('<b>הערת הלקוח</b>');
+    lines.push(escapeHtml(normalized.context.message));
+  }
+
+  // ── Provenance ────────────────────────────────────────────────────────────
+  const meta = [
+    ['נוצר בווקומרס', dt(e.dateCreated)],
+    ['עודכן בווקומרס', dt(e.dateModified)],
+    ['שולם', dt(e.datePaid)],
+    ['הושלם', dt(e.dateCompleted)],
+    ['מקור', a.channel],
+    ['קמפיין', a.utmCampaign],
+    ['מדיום', a.utmMedium],
+    ['דף נחיתה', a.landingUrl],
+  ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+  if (meta.length) {
+    lines.push('');
+    lines.push('<b>מקור וזמנים</b>');
+    for (const [k, v] of meta) lines.push(`${k}: ${escapeHtml(v)}`);
+  }
+
+  // Unmissable, and last: an operator must never wonder whether this reached
+  // the customer.
+  lines.push('');
+  lines.push('<i>הערה אוטומטית של המערכת — נוצרה מעדכון של ווקומרס. לא נשלחת ללקוח.</i>');
+
+  return `<p>${lines.join('<br>')}</p>`;
+}
+
+/**
+ * Write the pinned order-status note. Pinned deliberately (unlike the lead
+ * intake note): an abandoned checkout or a refund is exactly the thing that
+ * must be the first thing an operator sees on the deal.
+ */
+export async function writeOrderStatusNote(tx, { dealId, normalized, meaning, previousStatus = null, createdAt = null }) {
+  await tx.timelineEntry.create({
+    data: {
+      subjectType: 'deal',
+      subjectId: dealId,
+      kind: 'note',
+      body: buildOrderStatusNoteBody(normalized, meaning, { previousStatus }),
+      isPinned: true,
+      isSystem: true,
+      actorType: 'system',
+      actorLabel: sourceLabelFor(normalized),
+      data: {
+        event: 'ingress_order_status',
+        source: normalized.source,
+        sourceKey: normalized.sourceKey,
+        externalId: normalized.externalId,
+        wooStatus: meaning.status,
+        previousStatus,
+        paid: !!normalized.order?.paid,
+      },
+      ...(createdAt ? { createdAt } : {}),
+    },
+  });
+  await touchDealActivity(tx, dealId, createdAt || new Date());
+}
+
+/**
+ * The SAME external order arriving again — a status transition or an edit.
+ *
+ * Updates the one deal that order owns; never creates a second one. Mutable
+ * business fields are refreshed from the order (it is the source of truth for
+ * its own contents), and the change is recorded as a pinned note plus history.
+ *
+ * Deliberately does NOT touch: the deal's stage, owner, status (the WON
+ * transition is the pipeline's job through the canonical service), or any field
+ * an operator may have edited by hand that Woo has no opinion about.
+ */
+export async function updateOrderDeal(tx, { dealId, normalized, meaning, previousStatus = null, createdAt = null }) {
+  const data = {
+    valueMinor: toMinor(normalized.order?.total),
+    activityType: 'group',
+  };
+  if (normalized.context?.preferredDate) {
+    data.tourDate = israelDateOf(normalized.context.preferredDate);
+  }
+  if (normalized.context?.participants !== null && normalized.context?.participants !== undefined) {
+    data.participants = normalized.context.participants;
+  }
+  // A linked organization is the classification SSOT — never contradict it.
+  const deal = await tx.deal.findUnique({ where: { id: dealId }, select: { organizationId: true } });
+  if (deal?.organizationId) delete data.activityType;
+
+  await tx.deal.update({ where: { id: dealId }, data });
+  await writeOrderStatusNote(tx, { dealId, normalized, meaning, previousStatus, createdAt });
+  return { dealId };
 }
 
 // Repeat contact inside the dedupe window: annotate, never duplicate.

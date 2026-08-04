@@ -58,10 +58,25 @@ export function dedupeWindowStart(now = new Date(), days = DEDUPE_WINDOW_DAYS) {
 // Decision record produced by the pipeline's dedupe stage. Pure — the caller
 // supplies what it found in the database, this decides what it means.
 //
-// Orders are NEVER suppressed: a second purchase by the same person is a second
-// piece of revenue, not a duplicate lead. Only `lead` events dedupe.
-export function decideDedupe({ kind, priorEvent, priorDealId }) {
-  if (kind === 'order') return { action: 'create', reason: 'orders_never_dedupe' };
+// THREE outcomes, one per kind of sameness:
+//
+//   update_order — the SAME external order arriving again (a status transition
+//                  or an edit). Resolved by the order's own stable identity
+//                  (store + provider order id), never by the person. This is
+//                  what keeps pending → processing → completed as ONE deal.
+//   annotate     — the same PERSON as a recent lead, inside the dedupe window.
+//   create       — everything else.
+//
+// Orders are never suppressed by PERSON: a second purchase by the same customer
+// is a second piece of revenue, not a duplicate lead. Only `lead` events dedupe
+// on identity, and only orders dedupe on order id.
+export function decideDedupe({ kind, priorEvent, priorDealId, priorOrderDealId = null }) {
+  if (kind === 'order') {
+    if (priorOrderDealId) {
+      return { action: 'update_order', reason: 'same_external_order', dealId: priorOrderDealId };
+    }
+    return { action: 'create', reason: 'new_external_order' };
+  }
   if (priorDealId) return { action: 'annotate', reason: 'recent_open_deal', dealId: priorDealId };
   if (priorEvent) return { action: 'annotate', reason: 'recent_lead', dealId: priorEvent.dealId || null };
   return { action: 'create', reason: 'no_recent_activity' };

@@ -147,6 +147,43 @@ export async function resolveOrganization(db, normalized) {
 // already have an OPEN deal? Replaces the legacy implementation's
 // create-filter → list → delete-filter dance against Pipedrive with a direct
 // indexed query.
+/**
+ * THE stable order identity → Deal resolution.
+ *
+ * An external ORDER has a durable identity of its own — (store, provider order
+ * id) — that is completely independent of its status and of anything mutable on
+ * it. Every later delivery for that order must reach the SAME Deal: pending →
+ * processing → completed is one purchase, not three.
+ *
+ * The crosswalk is the IngressEvent ledger itself rather than a new table: it
+ * already records (source, sourceKey, externalId) → dealId for every processed
+ * event, it is written in the same transaction as the deal, and it survives as
+ * the audit trail regardless. Indexed by (source, sourceKey, externalId).
+ *
+ * Deliberately NOT contact-based: two separate purchases by the same person are
+ * two orders, and person-level dedupe (which leads use) must never merge them.
+ */
+export async function findDealForExternalOrder(db, { source, sourceKey = null, externalId }) {
+  if (!source || !externalId) return null;
+  const prior = await db.ingressEvent.findFirst({
+    where: {
+      source,
+      sourceKey: sourceKey ?? null,
+      externalId: String(externalId),
+      status: 'processed',
+      dealId: { not: null },
+    },
+    orderBy: { processedAt: 'desc' },
+    select: { id: true, dealId: true, normalized: true, processedAt: true },
+  });
+  if (!prior) return null;
+  // The deal may have been deleted since; a dangling crosswalk must not
+  // resurrect it or crash the update path.
+  const deal = await db.deal.findUnique({ where: { id: prior.dealId }, select: { id: true, status: true } });
+  if (!deal) return null;
+  return { dealId: deal.id, dealStatus: deal.status, priorEventId: prior.id, priorNormalized: prior.normalized };
+}
+
 export async function findOpenDealForContact(db, contactId, since) {
   if (!contactId) return null;
   const link = await db.dealContact.findFirst({

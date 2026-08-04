@@ -40,6 +40,21 @@ export function israelToday(nowMs = Date.now()) {
 }
 
 /**
+ * THE calendar date of an instant, in Israel, as "YYYY-MM-DD".
+ *
+ * Use this for every "which day is this Date on" conversion. The tempting
+ * `d.toISOString().slice(0,10)` is WRONG east of UTC: a Date built as local
+ * midnight on 15/09 is 2026-09-14T21:00:00Z, so the naive slice silently
+ * records the tour a day early. That defect shipped in the ingress record
+ * writer and was caught by the Woo lifecycle tests.
+ */
+export function israelDateOf(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : tzDate.format(d);
+}
+
+/**
  * Strict validity: correct shape AND a real calendar date.
  * Rejects '2026-02-30', which JS would otherwise roll over to March 2.
  */

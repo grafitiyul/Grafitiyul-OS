@@ -208,19 +208,23 @@ model QuestionItem {
 // split in the learner portal — a non-mandatory visible flow sits in זמינים
 // until the learner chooses to take it.
 model Flow {
-  id           String             @id @default(cuid())
-  title        String
-  description  String?
-  status       String             @default("draft")
-  sortOrder    Int                @default(0)
-  openToAll    Boolean            @default(false)
-  mandatory    Boolean            @default(true)
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  nodes        FlowNode[]
-  attempts     Attempt[]
-  targetTeams  FlowTargetTeam[]
-  targetPeople FlowTargetPerson[]
+  id            String             @id @default(cuid())
+  title         String
+  description   String?
+  // English twins for the Guide Portal procedures feed. `title`/`description`
+  // above are the Hebrew side (unrenamed — additive migrations only).
+  titleEn       String?
+  descriptionEn String?
+  status        String             @default("draft")
+  sortOrder     Int                @default(0)
+  openToAll     Boolean            @default(false)
+  mandatory     Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  nodes         FlowNode[]
+  attempts      Attempt[]
+  targetTeams   FlowTargetTeam[]
+  targetPeople  FlowTargetPerson[]
 }
 
 // Recursive tree: a node is a content ref, question ref, group container,
@@ -657,7 +661,7 @@ model PersonProfile {
   firstNameEn         String?
   lastNameEn          String?
   // he | en — which language this person receives forms and messages in.
-  preferredLanguage   String   @default("he")
+  preferredLanguage   String    @default("he")
   // Admin-only payroll facts (NEVER exposed to the guide portal — the portal
   // profile DTO whitelists its fields explicitly):
   //   vatStatus            'exempt' | 'vat_18' (validated scalar, Hebrew in UI)
@@ -1037,135 +1041,135 @@ model DealStage {
 // Organization, a specific Unit, and the deal's Subtype (subtype belongs to the
 // Deal, not the Organization).
 model Deal {
-  id                    String                  @id @default(cuid())
+  id                           String                     @id @default(cuid())
   // "מספר הזמנה" — the business-facing sequential deal number. Assigned by a
   // dedicated Postgres sequence that starts at 27000 and only ever grows (gaps
   // from deleted deals are fine, numbers are never reused). Shown in the Deal
   // header and used as the Deal URL; the cuid `id` stays the internal PK/FK key.
-  orderNo               Int                     @unique @default(dbgenerated("nextval('deal_order_no_seq')"))
-  title                 String
+  orderNo                      Int                        @unique @default(dbgenerated("nextval('deal_order_no_seq')"))
+  title                        String
   // "שם הקבוצה" — dedicated business field (agent reservations, BINDING #6).
   // Seeded from the reservation group's name (which also seeds the title),
   // then independently editable — deliberately NOT an internal copy of title.
   // Displayed on the Deal page below the fixed deal info and in the guide
   // portal above the participant cards.
-  groupName             String?
-  organization          Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  organizationId        String?
-  organizationUnit      OrganizationUnit?       @relation(fields: [organizationUnitId], references: [id], onDelete: SetNull)
-  organizationUnitId    String?
-  organizationSubtype   OrganizationSubtype?    @relation(fields: [organizationSubtypeId], references: [id], onDelete: SetNull)
-  organizationSubtypeId String?
+  groupName                    String?
+  organization                 Organization?              @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId               String?
+  organizationUnit             OrganizationUnit?          @relation(fields: [organizationUnitId], references: [id], onDelete: SetNull)
+  organizationUnitId           String?
+  organizationSubtype          OrganizationSubtype?       @relation(fields: [organizationSubtypeId], references: [id], onDelete: SetNull)
+  organizationSubtypeId        String?
   // Activity classification (group | private | business). Applies to the Deal
   // now and later to the actual tour/activity. Nullable for backward compat;
   // no Postgres enum (project convention is string enums validated at the API).
-  activityType          String?
+  activityType                 String?
   // The deal's organization type — authoritative ONLY while no Organization is
   // linked (manual classification). Once an Organization is attached the deal is
   // forced to activityType='business' and this field is force-cleared by the API
   // (see src/deals/classification.js): the ORGANIZATION's own type is the single
   // effective type, so a contradicting copy can never be persisted on the deal.
   // Readers resolve: org's type when linked, else this field.
-  organizationType      OrganizationType?       @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
-  organizationTypeId    String?
+  organizationType             OrganizationType?          @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
+  organizationTypeId           String?
   // Operational tour selection: the chosen Product and its Product×Location
   // variant ("city"). Pricing reads these as engine context; nullable so a deal
   // can exist before a product is picked. SetNull so catalog edits never delete deals.
-  product               Product?                @relation(fields: [productId], references: [id], onDelete: SetNull)
-  productId             String?
-  productVariant        ProductVariant?         @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
-  productVariantId      String?
+  product                      Product?                   @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId                    String?
+  productVariant               ProductVariant?            @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId             String?
   // Operational tour CITY. Usually the location of the chosen productVariant, but
   // may be ANY CRM location (manual override) even if no variant exists for it —
   // pricing still resolves via productVariantId (null → manual). SetNull on delete.
-  location              Location?               @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  locationId            String?
-  dealStage             DealStage               @relation(fields: [dealStageId], references: [id])
-  dealStageId           String
-  status                String                  @default("open") // 'open' | 'won' | 'lost'
-  valueMinor            BigInt                  @default(0)
-  currency              String                  @default("ILS")
-  discountMinor         BigInt?
+  location                     Location?                  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId                   String?
+  dealStage                    DealStage                  @relation(fields: [dealStageId], references: [id])
+  dealStageId                  String
+  status                       String                     @default("open") // 'open' | 'won' | 'lost'
+  valueMinor                   BigInt                     @default(0)
+  currency                     String                     @default("ILS")
+  discountMinor                BigInt?
   // No-payment WAIVER (canonical) — an independent commercial decision layered on
   // top of the fully-commercial builder. QuoteLines keep real prices; this records
   // which ticket quantities were waived. valueMinor (the payable total) = gross −
   // waived. Shape: { reason, waivedAt, lines: [{ cardGroupId, ticketTypeId,
   // quantityWaived }] }. null = no waiver. See src/deals/waiver.js.
-  noPaymentWaiver       Json?
+  noPaymentWaiver              Json?
   // Payment — FK to the CRM catalog (the source of truth). The Deal stores only
   // IDs, never names, so renaming a term/method in settings never affects deals.
-  paymentTerm           PaymentTerm?            @relation(fields: [paymentTermId], references: [id], onDelete: SetNull)
-  paymentTermId         String?
-  paymentMethodRef      PaymentMethod?          @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
-  paymentMethodId       String?
+  paymentTerm                  PaymentTerm?               @relation(fields: [paymentTermId], references: [id], onDelete: SetNull)
+  paymentTermId                String?
+  paymentMethodRef             PaymentMethod?             @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  paymentMethodId              String?
   // DEPRECATED back-compat only — no longer written. Superseded by the FK fields.
-  paymentTerms          String?
+  paymentTerms                 String?
   // Lead source. `dealSource` references the admin-managed DealSource catalog
   // (the structured "how did this lead arrive"). `source` is kept as the OPTIONAL
   // free-text detail (specific campaign / referrer name / conference, …).
-  dealSource            DealSource?             @relation(fields: [dealSourceId], references: [id], onDelete: SetNull)
-  dealSourceId          String?
-  source                String?
-  ownerUserId           String? // loose actor id (no User model yet)
-  expectedCloseDate     DateTime?
-  wonAt                 DateTime?
+  dealSource                   DealSource?                @relation(fields: [dealSourceId], references: [id], onDelete: SetNull)
+  dealSourceId                 String?
+  source                       String?
+  ownerUserId                  String? // loose actor id (no User model yet)
+  expectedCloseDate            DateTime?
+  wonAt                        DateTime?
   // Audit snapshot of the PRIMARY quote at the moment the deal was marked WON:
   // { offerId, offerNo, versionNo, quoteDocumentId, publicToken, publicUrl,
   //   producedAt, stampedAt }. Written only on the open/lost → won transition
   // (never retroactively); preserved on reopen like wonAt. Null when the deal
   // had no generated primary quote when it was won.
-  wonQuoteRef           Json?
-  lostAt                DateTime?
+  wonQuoteRef                  Json?
+  lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free
   // optional detail. `lostReason` (legacy free text) is RETAINED only as a
   // backward-compat display fallback for old rows — new saves leave it null and
   // write the structured fields instead.
-  lostReasonRef         LostReason?             @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
-  lostReasonId          String?
-  lostNotes             String?
-  lostReason            String?
-  notes                 String?
+  lostReasonRef                LostReason?                @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
+  lostReasonId                 String?
+  lostNotes                    String?
+  lostReason                   String?
+  notes                        String?
   // "פרטי הסיור" — working fields for the sales-call workspace. Simple Deal
   // scalars (single source of truth = the Deal). String enums validated at the
   // API (no Postgres enum). Product/City/pricing remain in the deferred quote
   // slice and are NOT stored here yet.
-  tourDate              String? // "YYYY-MM-DD"
-  tourTime              String? // "HH:MM"
-  participants          Int?
+  tourDate                     String? // "YYYY-MM-DD"
+  tourTime                     String? // "HH:MM"
+  participants                 Int?
   // Operational number of GROUPS the tour runs in (2 groups = the participants
   // split into two guided groups). Canonical here beside the other operational
   // scalars; pricing CONSUMES it (group-aware base calculation) — there is no
   // pricing-specific copy. NULL = 1 group.
-  groups                Int?
+  groups                       Int?
   // Operator-confirmed activity-duration override (hours), written via the
   // confirmation-email "משך הפעילות" filler. NULL = canonical operational chain
   // (open-tour slot override → variant → platform default). ONE reader:
   // effectiveDurationHours() in src/tours/tourTime.js — never re-derive.
   // Changelog-tracked. Historical quote documents are frozen snapshots and are
   // NOT affected by this field.
-  durationHours         Float?
+  durationHours                Float?
   // Confirmation Email module — per-deal fillers + preview overrides.
-  confirmation          DealConfirmation?
+  confirmation                 DealConfirmation?
   // DEPRECATED back-compat only — no longer written. Superseded by paymentMethodId.
-  paymentMethod         String?
-  communicationLanguage String? // he | en
-  tourLanguage          String? // he | en | es | fr | ru
-  customerInfo          String? // internal working note (lightweight rich HTML)
+  paymentMethod                String?
+  communicationLanguage        String? // he | en
+  tourLanguage                 String? // he | en | es | fr | ru
+  customerInfo                 String? // internal working note (lightweight rich HTML)
   // "פתיח אישי למייל" — commercial (Quote) card. Temporary home on Deal until the
   // QuoteVersion model lands (then it becomes per-quote, this stays as a default).
-  quoteEmailIntro       String?
+  quoteEmailIntro              String?
   // Legacy flag from the inline base-price input (now unused — per-line override
   // lives on QuoteLine.overridden). Kept to avoid a destructive drop; removable later.
-  basePriceOverridden   Boolean                 @default(false)
+  basePriceOverridden          Boolean                    @default(false)
   // PERMANENT customer-facing payment token: the customer always gets
   // ${PUBLIC_ORIGIN}/pay/<token>, which redirects to the CURRENT iCount link
   // (regenerated behind the scenes when payment data changes). Only the token
   // is stored — the display URL is built from PUBLIC_ORIGIN at request time,
   // so a future domain change needs no DB migration. Created lazily.
-  paymentToken          String?                 @unique
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
+  paymentToken                 String?                    @unique
+  createdAt                    DateTime                   @default(now())
+  updatedAt                    DateTime                   @updatedAt
   // Canonical "when did a human-visible thing last happen here" — the Deals
   // list orders by THIS, never by updatedAt (mirrors/reconcilers/workers touch
   // rows without business meaning). Written ONLY by touchDealActivity
@@ -1174,24 +1178,24 @@ model Deal {
   // move a deal forward. DB default = now() for NEW deals (creation is
   // meaningful); existing rows were backfilled from their real latest
   // timeline entry / wonAt / lostAt / createdAt.
-  lastMeaningfulActivityAt DateTime?            @default(now())
+  lastMeaningfulActivityAt     DateTime?                  @default(now())
   // Who last OPENED the deal, and when. Deliberately separate from
   // lastMeaningfulActivityAt: reading a deal is useful operational context but
   // it is NOT business activity, and must never reorder the CRM (otherwise the
   // list would rank by whoever browsed last). Written by a raw UPDATE on the
   // detail read so it cannot bump `updatedAt`. Loose actor key (no FK), the
   // same convention as EmailMessage.createdByUserId.
-  lastViewedAt          DateTime?
-  lastViewedById        String?
-  lastViewedByName      String?
-  contacts              DealContact[]
-  quoteVersions         QuoteVersion[]
-  quoteDocuments        QuoteDocument[]
-  quoteOffers           QuoteOffer[]
-  paymentLinks          DealPaymentLink[]
-  icountDocuments       IcountDocument[]
-  collectionEvidence    DealCollectionEvidence[]
-  collectionCandidates  CollectionMatchCandidate[]
+  lastViewedAt                 DateTime?
+  lastViewedById               String?
+  lastViewedByName             String?
+  contacts                     DealContact[]
+  quoteVersions                QuoteVersion[]
+  quoteDocuments               QuoteDocument[]
+  quoteOffers                  QuoteOffer[]
+  paymentLinks                 DealPaymentLink[]
+  icountDocuments              IcountDocument[]
+  collectionEvidence           DealCollectionEvidence[]
+  collectionCandidates         CollectionMatchCandidate[]
   // Collection needs a HUMAN, not an algorithm. Set when the accounting
   // evidence for this deal is contradictory or ambiguous (the same document
   // claimed by several deals, a currency mismatch, an unresolved credit chain,
@@ -1200,7 +1204,7 @@ model Deal {
   // NULL = nothing to review. The collection resolver reports status 'review'
   // while it is set, INSTEAD of pretending it knows the answer — the numbers it
   // computed are still returned alongside so the operator can see them.
-  collectionReview      Json?
+  collectionReview             Json?
   // ── Operational collection WORK QUEUE (not accounting) ──────────────────
   // Whether this deal still needs collection WORK today. It exists because the
   // Collection screen was listing every historical unpaid migration — 3,250
@@ -1241,26 +1245,26 @@ model Deal {
   paymentReviewEvidence        Json?
   paymentReviewAt              DateTime?
   paymentReviewBy              String?
-  customPaymentLinks    DealCustomPaymentLink[]
-  paymentRequests       PaymentRequest[]
-  tasks                 Task[]
-  files                 DealFile[]
-  emailThreads          EmailThread[]
+  customPaymentLinks           DealCustomPaymentLink[]
+  paymentRequests              PaymentRequest[]
+  tasks                        Task[]
+  files                        DealFile[]
+  emailThreads                 EmailThread[]
   // Tours: the ONLY Deal↔TourEvent relationship (see Booking). Never add a
   // direct tourEventId here.
-  bookings              Booking[]
+  bookings                     Booking[]
   // Canonical ticket registrations linked to this deal (CRM context only; seat
   // truth is the TicketRegistration itself, not the Booking).
-  ticketRegistrations   TicketRegistration[]
+  ticketRegistrations          TicketRegistration[]
   // Pre-WON tour PLANNING (team/components/notes) — see DealTourPlan.
-  tourPlan              DealTourPlan?
+  tourPlan                     DealTourPlan?
   // Back-relation only: the reservation group this deal was created from
   // (provenance lives on the reservation side — the deal is independent).
-  reservationGroup      ReservationGroup?
+  reservationGroup             ReservationGroup?
   // THE canonical marketing/attribution record for this deal (permanent, not a
   // migration artefact). Written from Pipedrive today, by the ingress platform
   // after cutover — same fields either way.
-  marketing             DealMarketing?
+  marketing                    DealMarketing?
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -1533,16 +1537,16 @@ model IcountDocument {
 // link or a DealCollectionEvidence row through the canonical services, and the
 // candidate is only marked resolved.
 model CollectionMatchCandidate {
-  id             String   @id @default(cuid())
-  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id             String    @id @default(cuid())
+  deal           Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
   dealId         String
   doctype        String
   docnum         String
   // 'B' — the only tier that reaches a human. Tier A links itself, Tier C is
   // left untouched and never queued (a queue full of hopeless items is noise).
-  tier           String   @default("B")
+  tier           String    @default("B")
   // 0-100. Deterministic, computed from the evidence — never a model's guess.
-  score          Int      @default(0)
+  score          Int       @default(0)
   // [{ code, detail }] — every signal that fired, so the suggestion can be
   // argued with rather than trusted.
   basis          Json?
@@ -1550,13 +1554,13 @@ model CollectionMatchCandidate {
   question       String
   competingDeals Json? // other deals that could claim this document
   competingDocs  Json? // other documents that could settle this deal
-  status         String   @default("open") // open | linked | rejected | shared | unresolved
+  status         String    @default("open") // open | linked | rejected | shared | unresolved
   resolvedAt     DateTime?
   resolvedBy     String?
   resolvedByName String?
   resolutionNote String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([dealId, doctype, docnum])
   @@index([status, score])
@@ -1618,27 +1622,27 @@ model IcountLedgerDoc {
 // variable registry. Changing this row affects FUTURE documents only — issued
 // iCount documents are immutable.
 model AccountingDocSettings {
-  id                String   @id @default("singleton")
+  id                         String   @id @default("singleton")
   // Structured bank fields — the SSOT the bank_* template tokens resolve from.
-  bankAccountHolder String   @default("")
-  bankName          String   @default("")
-  bankNumber        String   @default("")
-  bankBranchName    String   @default("")
-  bankBranchNumber  String   @default("")
-  bankAccountNumber String   @default("")
+  bankAccountHolder          String   @default("")
+  bankName                   String   @default("")
+  bankNumber                 String   @default("")
+  bankBranchName             String   @default("")
+  bankBranchNumber           String   @default("")
+  bankAccountNumber          String   @default("")
   // Template blocks (plain text + {{tokens}}; iCount hwc is plain text).
-  dealInfoTemplate     String @default("")
-  bankTemplate         String @default("")
-  cancellationTemplate String @default("")
+  dealInfoTemplate           String   @default("")
+  bankTemplate               String   @default("")
+  cancellationTemplate       String   @default("")
   // Independent default-inclusion flags per document type.
-  dealInfoIncludeDeal        Boolean @default(true)
-  dealInfoIncludeInvoice     Boolean @default(false)
-  bankIncludeDeal            Boolean @default(true)
-  bankIncludeInvoice         Boolean @default(false)
-  cancellationIncludeDeal    Boolean @default(true)
-  cancellationIncludeInvoice Boolean @default(false)
-  updatedAt DateTime @updatedAt
-  updatedBy String?
+  dealInfoIncludeDeal        Boolean  @default(true)
+  dealInfoIncludeInvoice     Boolean  @default(false)
+  bankIncludeDeal            Boolean  @default(true)
+  bankIncludeInvoice         Boolean  @default(false)
+  cancellationIncludeDeal    Boolean  @default(true)
+  cancellationIncludeInvoice Boolean  @default(false)
+  updatedAt                  DateTime @updatedAt
+  updatedBy                  String?
 }
 
 // ── Manual collection evidence ("תשלום ידני") ────────────────────────────────
@@ -1653,8 +1657,8 @@ model AccountingDocSettings {
 // row (status 'reversed', with a reason) and writing a new one. The collection
 // resolver counts only status='active' rows.
 model DealCollectionEvidence {
-  id             String   @id @default(cuid())
-  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  id             String    @id @default(cuid())
+  deal           Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
   dealId         String
   // 'manual_payment'    — money received, operator-attested
   // 'manual_credit'     — money returned / written off, operator-attested
@@ -1665,7 +1669,7 @@ model DealCollectionEvidence {
   kind           String
   direction      String // 'in' | 'out' — derived from kind, stored for query simplicity
   amountMinor    BigInt // always positive; `direction` carries the sign
-  currency       String   @default("ILS")
+  currency       String    @default("ILS")
   paidAt         DateTime // when the money actually moved (operator-entered)
   method         String? // 'banktransfer' | 'cash' | 'cc' | 'cheque' | 'bit' | 'other'
   reference      String? // external reference / document number the operator has
@@ -1675,16 +1679,16 @@ model DealCollectionEvidence {
   // file concept. Evidence only: it is NEVER presented as an iCount document.
   file           DealFile? @relation(fields: [fileId], references: [id], onDelete: SetNull)
   fileId         String?
-  status         String   @default("active") // 'active' | 'reversed'
+  status         String    @default("active") // 'active' | 'reversed'
   reversedAt     DateTime?
   reversedBy     String?
   reversedByName String?
   reversalReason String?
   // 'operator' — a human recorded it; 'backfill' — the historical reconstruction.
-  origin         String   @default("operator")
+  origin         String    @default("operator")
   createdBy      String? // loose AdminUser id
   createdByName  String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
   @@index([dealId, status])
 }
@@ -1748,10 +1752,10 @@ model PaymentRequest {
   token    String @unique // public /payment/cardcom/<token>
 
   // Frozen customer-facing values
-  currency             String  @default("ILS")
-  amountMinor          BigInt // minor units, VAT-inclusive gross
-  quantity             Int     @default(1)
-  productDescriptionEn String // English line shown on the page + accounting document
+  currency                 String  @default("ILS")
+  amountMinor              BigInt // minor units, VAT-inclusive gross
+  quantity                 Int     @default(1)
+  productDescriptionEn     String // English line shown on the page + accounting document
   // WHO owns the English wording above:
   //   'auto'     — derived from the Deal's canonical English label
   //                (productLabelEn.js) and kept equal to it on every read, so a
@@ -1760,11 +1764,11 @@ model PaymentRequest {
   // Set ONLY by an explicit operator intent flag on the create/edit API, so a
   // script or QA restore can never silently convert 'auto' into 'operator'
   // (the #26617 stale-label incident, 2026-08-04).
-  productDescriptionSource String @default("auto")
-  customerName         String?
-  customerEmail        String?
-  customerPhone        String?
-  vatExempt            Boolean @default(false) // inherited from Deal pricing, frozen
+  productDescriptionSource String  @default("auto")
+  customerName             String?
+  customerEmail            String?
+  customerPhone            String?
+  vatExempt                Boolean @default(false) // inherited from Deal pricing, frozen
 
   // Frozen GOS business identity (SSOT for reporting/audit — NOT sent to Cardcom)
   productId        String?
@@ -1877,26 +1881,26 @@ model WhatsAppAccount {
 // 'manual'). WhatsApp never creates or edits Contacts; unlinking clears these
 // two fields and nothing else.
 model WhatsAppChat {
-  id                 String                     @id @default(cuid())
-  account            WhatsAppAccount            @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId          String
-  externalChatId     String
-  type               String // 'private' | 'group'
-  savedContactName   String?
-  pushName           String?
-  groupSubject       String?
-  phoneNumber        String? // counterparty digits, international form
-  lidJid             String?
-  phoneJid           String?
-  profilePictureUrl  String?
+  id                        String                     @id @default(cuid())
+  account                   WhatsAppAccount            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId                 String
+  externalChatId            String
+  type                      String // 'private' | 'group'
+  savedContactName          String?
+  pushName                  String?
+  groupSubject              String?
+  phoneNumber               String? // counterparty digits, international form
+  lidJid                    String?
+  phoneJid                  String?
+  profilePictureUrl         String?
   // Our OWN R2 copy of the profile picture (whatsapp/<accountId>/avatars/
   // <chatId>.jpg — stable key, refresh overwrites in place) + the last time
   // the avatar worker CHECKED this chat (including "has no picture"), so each
   // chat is probed at most once per refresh window. profilePictureUrl above is
   // the raw CDN link — it carries an expiry token and rots; the key is served
   // through the presign route and does not.
-  profilePictureKey       String?
-  profilePictureCheckedAt DateTime?
+  profilePictureKey         String?
+  profilePictureCheckedAt   DateTime?
   // Probe outcome + scheduling (avatar worker):
   //   status: 'stored' | 'none' (confirmed no picture / privacy — NOT retried
   //           aggressively) | 'error' (transient — bounded exponential backoff)
@@ -1905,12 +1909,12 @@ model WhatsAppChat {
   //   rows whose nextCheckAt is null (never probed) or due. stored/none →
   //   +30d; error → +min(30d, 1h·4^attempts). One column, no hot loops.
   profilePictureStatus      String?
-  profilePictureAttempts    Int       @default(0)
+  profilePictureAttempts    Int                        @default(0)
   profilePictureNextCheckAt DateTime?
-  contact            Contact?                   @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  contactId          String?
-  matchSource        String? // 'phone' | 'manual'
-  lastMessageAt      DateTime?
+  contact                   Contact?                   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactId                 String?
+  matchSource               String? // 'phone' | 'manual'
+  lastMessageAt             DateTime?
   // Canonical read state (server-side SSOT; mirrors the proven Email model).
   // lastReadAt is a monotonic per-chat READ WATER-MARK: an incoming message is
   // unread iff its timestampFromSource > lastReadAt. unreadCount is the cached
@@ -1920,33 +1924,33 @@ model WhatsAppChat {
   // "mark unread" DISPLAY flag: it renders the row unread without inflating the
   // honest count, and is cleared by any real read. Retires the per-device
   // localStorage seenStore as the source of truth.
-  unreadCount        Int                        @default(0)
-  lastReadAt         DateTime?
-  manualUnreadAt     DateTime?
+  unreadCount               Int                        @default(0)
+  lastReadAt                DateTime?
+  manualUnreadAt            DateTime?
   // Inbox workflow state (team-level, not per-admin): pinned floats the chat
   // to the top; snooze hides it from the active scope until snoozedUntil —
   // UNLESS a new message arrives after snoozedAt (Gmail-style early wake).
-  pinnedAt           DateTime?
-  snoozedUntil       DateTime?
-  snoozedAt          DateTime?
+  pinnedAt                  DateTime?
+  snoozedUntil              DateTime?
+  snoozedAt                 DateTime?
   // PROVIDER state (mirrors the phone, written by the bridge): archived /
   // deleted on WhatsApp itself. Rows are never deleted — the active inbox
   // excludes them while CRM history keeps the full mirror.
-  providerArchivedAt DateTime?
-  providerDeletedAt  DateTime?
+  providerArchivedAt        DateTime?
+  providerDeletedAt         DateTime?
   // Pinned ON THE PHONE (read-only mirror; GOS never writes pin state back).
   // Captured from the history bundle + chats events so a chat the phone shows
   // at the very top cannot sort five months deep here — the exact failure that
   // made a pinned conversation invisible (2026-07-30, take-200 truncation).
   // Distinct from pinnedAt, which is the GOS team's own pin.
-  providerPinnedAt   DateTime?
+  providerPinnedAt          DateTime?
   // GOS-side manual hide ("הסתר מהרשימה") — cleanup for chats deleted on the
   // phone BEFORE provider-state tracking existed (no retroactive signal).
-  hiddenAt           DateTime?
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
-  messages           WhatsAppMessage[]
-  scheduledMessages  WhatsAppScheduledMessage[]
+  hiddenAt                  DateTime?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  messages                  WhatsAppMessage[]
+  scheduledMessages         WhatsAppScheduledMessage[]
 
   @@unique([accountId, externalChatId])
   @@index([accountId, lastMessageAt])
@@ -2176,12 +2180,12 @@ model WhatsAppDataGap {
 // import upserts on it, so re-running the migration never duplicates. Airtable
 // is NOT a runtime dependency: nothing reads these columns at request time.
 model WhatsAppTemplate {
-  id             String   @id @default(cuid())
-  nameHe         String // internal display name — what the Deal selector shows
-  bodyHeHtml     String? // editor HTML, Hebrew; null/empty = language unavailable
-  bodyEnHtml     String? // editor HTML, English; null/empty = language unavailable
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
+  id               String   @id @default(cuid())
+  nameHe           String // internal display name — what the Deal selector shows
+  bodyHeHtml       String? // editor HTML, Hebrew; null/empty = language unavailable
+  bodyEnHtml       String? // editor HTML, English; null/empty = language unavailable
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0)
   // The ONE template auto-sent to a genuinely new EXTERNAL lead ("הודעת ברירת
   // מחדל לליד חדש"). At most one row may carry true — enforced in the database
   // by a PARTIAL unique index (see the migration), because "at most one" is an
@@ -2192,11 +2196,11 @@ model WhatsAppTemplate {
   // the star is a property of a template, deletion clears it for free, and
   // whatsapp/newLeadTemplate.js is the one writer that maintains the invariant
   // (starring clears the previous star; an inactive template cannot hold it).
-  isNewLeadDefault Boolean @default(false)
-  sourceSystem   String? // 'airtable' for migrated rows, null for hand-created
-  sourceRecordId String? // Airtable recId (migration provenance)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  isNewLeadDefault Boolean  @default(false)
+  sourceSystem     String? // 'airtable' for migrated rows, null for hand-created
+  sourceRecordId   String? // Airtable recId (migration provenance)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([sourceSystem, sourceRecordId])
   @@index([isActive, sortOrder])
@@ -3425,32 +3429,32 @@ model QuoteDocumentRender {
 // reference-counted). `updatedById` is a loose actor id (no User model yet, same
 // as MediaFile.uploadedById / HolidayRule.reviewedBy). `active=false` = archived.
 model SharedContent {
-  id                     String                        @id @default(cuid())
-  type                   String // meeting_point | ending_point | arrival_instructions | walking_notes | safety | map | custom
-  internalName           String // admin-facing library name (never shown to customers)
-  description            String? // optional internal note
-  bodyHe                 String? // rich HTML (shared RichEditor)
-  bodyEn                 String? // rich HTML
-  image                  MediaFile?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  imageId                String?
-  mapUrl                 String? // reserved (embedded map); not rendered in V1
-  location               Location?                     @relation("SharedContentAnchor", fields: [locationId], references: [id], onDelete: SetNull)
-  locationId             String?
+  id                        String                        @id @default(cuid())
+  type                      String // meeting_point | ending_point | arrival_instructions | walking_notes | safety | map | custom
+  internalName              String // admin-facing library name (never shown to customers)
+  description               String? // optional internal note
+  bodyHe                    String? // rich HTML (shared RichEditor)
+  bodyEn                    String? // rich HTML
+  image                     MediaFile?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  imageId                   String?
+  mapUrl                    String? // reserved (embedded map); not rendered in V1
+  location                  Location?                     @relation("SharedContentAnchor", fields: [locationId], references: [id], onDelete: SetNull)
+  locationId                String?
   // DEPRECATED (kept, not removed): the Slice-2 location-default flag. Location
   // defaults now live as explicit FKs on Location (defaultMeetingPointId / …),
   // migrated from this flag. Resolution no longer reads it.
-  isLocationDefault      Boolean                       @default(false)
-  active                 Boolean                       @default(true)
-  sortOrder              Int                           @default(0)
-  updatedById            String? // loose actor id (no User model yet)
-  createdAt              DateTime                      @default(now())
-  updatedAt              DateTime                      @updatedAt
-  variantLinks           ProductVariantSharedContent[]
+  isLocationDefault         Boolean                       @default(false)
+  active                    Boolean                       @default(true)
+  sortOrder                 Int                           @default(0)
+  updatedById               String? // loose actor id (no User model yet)
+  createdAt                 DateTime                      @default(now())
+  updatedAt                 DateTime                      @updatedAt
+  variantLinks              ProductVariantSharedContent[]
   // Confirmation-email templates that include this block (back-relation).
   confirmationTemplateLinks ConfirmationTemplateBlock[]
   // Locations that reference this block as their default (back-relations).
-  locationDefaultMeeting Location[]                    @relation("LocationDefaultMeeting")
-  locationDefaultEnding  Location[]                    @relation("LocationDefaultEnding")
+  locationDefaultMeeting    Location[]                    @relation("LocationDefaultMeeting")
+  locationDefaultEnding     Location[]                    @relation("LocationDefaultEnding")
 
   @@index([type])
   @@index([locationId])
@@ -3639,6 +3643,10 @@ model Tour {
   sourceRef     String?       @unique // "tour:<recruitment.id>" (migration only)
   titleHe       String
   descriptionHe String?
+  // English twins — the Guide Portal renders training content to guides in
+  // their own language. Nullable, never auto-filled.
+  titleEn       String?
+  descriptionEn String?
   active        Boolean       @default(true)
   sortOrder     Int           @default(0)
   createdAt     DateTime      @default(now())
@@ -3647,25 +3655,28 @@ model Tour {
 }
 
 model TourStation {
-  id             String     @id @default(cuid())
-  sourceRef      String?    @unique // "station:<recruitment.id>" (migration only)
-  tour           Tour       @relation(fields: [tourId], references: [id], onDelete: Cascade)
-  tourId         String
-  titleHe        String
-  descriptionHe  String?
+  id               String     @id @default(cuid())
+  sourceRef        String?    @unique // "station:<recruitment.id>" (migration only)
+  tour             Tour       @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  tourId           String
+  titleHe          String
+  descriptionHe    String?
+  titleEn          String?
+  descriptionEn    String?
   // A stop is not always physical: location | artwork | printed_material | content_stop.
-  kind           String     @default("location")
+  kind             String     @default("location")
   // Hero image → R2/MediaFile (never DB binary). SetNull so removing a file
   // never deletes the station.
-  heroImage      MediaFile? @relation("TourStationHero", fields: [heroImageId], references: [id], onDelete: SetNull)
-  heroImageId    String?
-  heroImageTitle String?
+  heroImage        MediaFile? @relation("TourStationHero", fields: [heroImageId], references: [id], onDelete: SetNull)
+  heroImageId      String?
+  heroImageTitle   String?
+  heroImageTitleEn String?
   // Optional future link to a GOS Location (decision 18) — unused in V1, no FK yet.
-  locationId     String?
-  active         Boolean    @default(true)
-  sortOrder      Int        @default(0)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  locationId       String?
+  active           Boolean    @default(true)
+  sortOrder        Int        @default(0)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
   steps       TourStep[]
   notes       TourStationNote[]
@@ -3682,6 +3693,10 @@ model TourContentBlock {
   sourceRef    String?  @unique
   titleHe      String?
   bodyHe       String   @default("") // rich HTML; inline images via R2 public URLs
+  // English twins. bodyEn is nullable (NOT defaulted to ''), so "no English
+  // written yet" is distinguishable from "deliberately empty".
+  titleEn      String?
+  bodyEn       String?
   internalNote String?
   shared       Boolean  @default(false)
   active       Boolean  @default(true)
@@ -3722,6 +3737,7 @@ model TourBlockAsset {
   assetType      String // video | image | file | link
   language       String? // he | en | null (he-only in V1; field kept for future)
   titleHe        String
+  titleEn        String?
   url            String?
   media          MediaFile?       @relation("TourBlockAssetMedia", fields: [mediaId], references: [id], onDelete: SetNull)
   mediaId        String?
@@ -4619,14 +4635,23 @@ model ProductVariantActivityComponent {
 // per TourEventActivityComponent row (a tour can hold several workshop
 // components, each in a different place). Same soft-delete convention.
 model WorkshopLocation {
-  id           String   @id @default(cuid())
-  nameHe       String
-  address      String?
-  instructions String? // access / parking / setup notes for the team
-  isActive     Boolean  @default(true)
-  sortOrder    Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String   @id @default(cuid())
+  nameHe         String
+  address        String?
+  instructions   String? // access / parking / setup notes for the team
+  // English twins for the Guide Portal (an English-speaking guide must be able
+  // to read WHERE to go and HOW to get in). Nullable: no Hebrew value is ever
+  // copied here, and nothing is machine-translated at runtime — an empty column
+  // is a content gap, reported by scripts/report-portal-english-gaps.mjs.
+  // The unsuffixed columns above are the Hebrew side (kept unrenamed so the
+  // migration stays additive).
+  nameEn         String?
+  addressEn      String?
+  instructionsEn String?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   tourEventLinks TourEventActivityComponent[]
   dealPlanLinks  DealTourPlanActivityComponent[]
@@ -4857,21 +4882,21 @@ model QuestionnaireSection {
 // (server/src/questionnaires/types.js); `config` holds type-specific settings
 // (min/max, maxLength, allowOther, scaleMax, …).
 model QuestionnaireQuestion {
-  id          String               @id @default(cuid())
-  version     QuestionnaireVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  versionId   String
-  section     QuestionnaireSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  sectionId   String
-  key         String
-  type        String
-  label       Json
-  helpText    Json?
-  placeholder Json?
-  required    Boolean              @default(false)
-  sortOrder   Int                  @default(0)
-  config      Json?
+  id             String               @id @default(cuid())
+  version        QuestionnaireVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  versionId      String
+  section        QuestionnaireSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  sectionId      String
+  key            String
+  type           String
+  label          Json
+  helpText       Json?
+  placeholder    Json?
+  required       Boolean              @default(false)
+  sortOrder      Int                  @default(0)
+  config         Json?
   // Backward-only conditional visibility (enforced at publish → acyclic).
-  visibleWhen Json?
+  visibleWhen    Json?
   // MANUAL business flag — "משמשת באוטומציות". The author's DECISION that this
   // question is an automation extension point. Deliberately NOT derived from the
   // Automation Registry: a question may be flagged before any automation exists,
@@ -4879,7 +4904,7 @@ model QuestionnaireQuestion {
   // nothing. Live usage (which AUTs reference this key) is a separate DERIVED
   // read — see server/src/automations/references.js. Carried verbatim by
   // cloneStructureForNewVersion so the decision survives every version.
-  automationFlag Boolean @default(false)
+  automationFlag Boolean              @default(false)
 
   options QuestionnaireQuestionOption[]
   answers QuestionnaireAnswer[]
@@ -5017,7 +5042,7 @@ model QuestionnaireLink {
   // instance and nothing else. Staff links exist because the alternative — a
   // guide-portal deep link — hands over the whole portal to anyone who
   // forwards the message.
-  audience   String    @default("public")
+  audience   String  @default("public")
   // For perActor purposes (tour_summary): the guide's externalPersonId this
   // link belongs to. Joins the submission's singleton scope, so guide A's link
   // can never open guide B's summary.
@@ -5037,19 +5062,19 @@ model QuestionnaireLink {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([purpose, subjectType, subjectId, actorScope, audience], name: "staff_form_link_identity")
   @@index([subjectType, subjectId, purpose])
   @@index([templateId])
-  @@unique([purpose, subjectType, subjectId, actorScope, audience], name: "staff_form_link_identity")
 }
 
 // Which template serves a business purpose (settings surface: the tour
 // summary / coordination cards pick a template here). SetNull — deleting a
 // template leaves the purpose unconfigured, never dangling.
 model QuestionnairePurposeConfig {
-  id         String                 @id @default(cuid())
-  purpose    String                 @unique
-  template   QuestionnaireTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  templateId String?
+  id            String                 @id @default(cuid())
+  purpose       String                 @unique
+  template      QuestionnaireTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateId    String?
   // Read-only context block shown ABOVE the questions:
   // [{ key, enabled, labelHe, labelEn }] in display order. Keys are restricted
   // to the allowlisted catalog (questionnaires/contextCatalog.js) — this is a
@@ -5259,6 +5284,8 @@ model PayrollComponent {
   id           String   @id @default(cuid())
   key          String?  @unique // stable key for system components; null for custom
   nameHe       String
+  // English twin — payroll line names are shown to guides in the portal.
+  nameEn       String?
   kind         String   @default("manual") // 'auto' | 'manual'
   autoRule     String? // base | weekend_holiday | participant_bonus | seniority | travel | general_quantity
   sign         Int      @default(1) // +1 payment, -1 deduction
@@ -5290,6 +5317,7 @@ model PayrollComponent {
 model GeneralActivityType {
   id                    String   @id @default(cuid())
   nameHe                String
+  nameEn                String?
   defaultUnitPriceMinor BigInt   @default(0)
   defaultQuantity       Decimal  @default(1) @db.Decimal(10, 2)
   defaultNotes          String?
@@ -5301,6 +5329,10 @@ model GeneralActivityType {
   // API layer.
   unitLabelSingularHe   String?
   unitLabelPluralHe     String?
+  // English unit nouns, so the portal breakdown reads "₪40 per hour × 1.5
+  // hours" instead of gluing a Hebrew noun onto an English sentence.
+  unitLabelSingularEn   String?
+  unitLabelPluralEn     String?
   active                Boolean  @default(true)
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
@@ -5316,6 +5348,10 @@ model GeneralActivity {
   type         GeneralActivityType @relation(fields: [typeId], references: [id], onDelete: Restrict)
   typeId       String
   titleHe      String // snapshot of the type name at creation (editable)
+  // English snapshot, taken from the type at creation the same way titleHe is.
+  // Nullable: a type with no English name yields no English snapshot rather
+  // than a Hebrew string in an English column.
+  titleEn      String?
   payrollMonth String // "YYYY-MM" — REQUIRED
   date         String? // "YYYY-MM-DD" — optional
   notes        String?
@@ -5339,6 +5375,8 @@ model PayrollActivity {
   generalActivity   GeneralActivity? @relation(fields: [generalActivityId], references: [id], onDelete: Restrict)
   generalActivityId String?          @unique
   titleHe           String // display snapshot (product/variant or activity title)
+  // English display snapshot, frozen alongside titleHe at creation.
+  titleEn           String?
   payrollMonth      String // "YYYY-MM" (tours: derived from the tour date)
   date              String? // "YYYY-MM-DD" (null only for month-level general)
   state             String           @default("active") // active | cancelled | voided
@@ -6156,21 +6194,21 @@ model CommunicationWindowException {
 
 model AdminReportConfig {
   // The report's stable catalog number (registry.js owns the definition).
-  reportNumber Int       @id
-  enabled      Boolean   @default(true)
+  reportNumber         Int       @id
+  enabled              Boolean   @default(true)
   // whatsapp | email — reports were WhatsApp-only until the manager digest.
   // Defaulting to whatsapp leaves every existing configured report unchanged.
-  channel      String    @default("whatsapp")
+  channel              String    @default("whatsapp")
   // Email destination (channel='email'): the connected Gmail account that
   // sends, plus the recipient list. `useDefaultRecipient` lets the office switch
   // the house address off without losing it.
-  emailAccountId      String?
-  emailRecipients     String[] @default([])
-  useDefaultRecipient Boolean  @default(true)
+  emailAccountId       String?
+  emailRecipients      String[]  @default([])
+  useDefaultRecipient  Boolean   @default(true)
   // "שלח בשפת המדריך" — when on, a report addressed to a guide renders in that
   // guide's preferred language, falling back to Hebrew when the report has no
   // English version. Opt-in per report, so nothing changes until switched on.
-  sendInGuideLanguage Boolean  @default(false)
+  sendInGuideLanguage  Boolean   @default(false)
   // Does this report obey the audience×channel sending window? True by
   // default: immediate send is the exception an operator opts INTO per report.
   // False bypasses TIME rules only — the queue, retries, provider deferral,
@@ -6179,68 +6217,68 @@ model AdminReportConfig {
   // When this report was last switched ON. Per-tour notifications never report
   // an event whose due moment precedes it, so enabling a notification can never
   // back-fire a backlog of messages about tours that already happened.
-  activatedAt  DateTime?
+  activatedAt          DateTime?
   // Destination: a connected WhatsApp account + a synced chat (typically the
   // internal operations group). Loose refs — a deleted chat must not delete
   // configuration history; delivery attempts report the problem instead.
-  waAccountId  String?
-  waChatId     String?
-  updatedById  String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  waAccountId          String?
+  waChatId             String?
+  updatedById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 }
 
 // One dispatch attempt of one report. Auditable forever: the rendered text and
 // the trigger inputs are FROZEN at fire time, so later edits to the deal/tour
 // can never rewrite what was reported.
 model AdminReportDelivery {
-  id                   String    @id @default(cuid())
-  reportNumber         Int
+  id                      String    @id @default(cuid())
+  reportNumber            Int
   // Business-event identity — (reportNumber, idempotencyKey) is unique, so a
   // retried trigger or replayed webhook can never produce a second send.
-  idempotencyKey       String
-  status               String    @default("pending") // pending | sent | failed | failed_final | skipped
-  skipReason           String?
+  idempotencyKey          String
+  status                  String    @default("pending") // pending | sent | failed | failed_final | skipped
+  skipReason              String?
   // Loose business ref for the log UI (audit rows outlive their entities).
-  dealId               String?
+  dealId                  String?
   // Frozen trigger inputs + the exact rendered message.
-  payload              Json?
-  renderedText         String?
-  waAccountId          String?
-  waChatId             String?
+  payload                 Json?
+  renderedText            String?
+  waAccountId             String?
+  waChatId                String?
   // Per-person destination (guide-audience reports). waChatId null +
   // recipientPhone set ⇒ the delivery is a private message to that number.
   // Loose ref + frozen phone/name: an audit row stays readable after the person
   // is renamed, changes number, or leaves.
-  recipientPersonRefId String?
-  recipientPhone       String?
-  recipientName        String?
+  recipientPersonRefId    String?
+  recipientPhone          String?
+  recipientName           String?
   // Which channel actually carried this delivery — the log and the queue stay
   // honest once reports can go out by email as well as WhatsApp.
-  channel              String  @default("whatsapp")
-  emailAccountId       String?
-  recipientEmail       String?
-  renderedSubject      String?
-  destinationLabel     String?
-  providerMessageId    String?
+  channel                 String    @default("whatsapp")
+  emailAccountId          String?
+  recipientEmail          String?
+  renderedSubject         String?
+  destinationLabel        String?
+  providerMessageId       String?
   // Customer-audience reports are TRANSPORTED by the shared WhatsApp queue
   // (windows, connection deferral, retries and the media path all live there),
   // so this row is the idempotency gate and the audit record while the linked
   // scheduled message carries the actual send. Loose ref, same convention as
   // the other cross-module ids here.
-  scheduledMessageId   String?
-  attemptCount         Int       @default(0)
+  scheduledMessageId      String?
+  attemptCount            Int       @default(0)
   // Provider unreachable: the row is PRESERVED and retried WITHOUT burning a
   // real attempt (mirrors the WhatsApp/email workers). Before this, a long
   // outage could exhaust the 6-attempt ladder and lose internal reports.
-  connectionDeferredCount Int    @default(0)
-  waitReason           String?
-  effectiveAt          DateTime?
-  nextRetryAt          DateTime?
-  lastError            String?
-  sentAt               DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  connectionDeferredCount Int       @default(0)
+  waitReason              String?
+  effectiveAt             DateTime?
+  nextRetryAt             DateTime?
+  lastError               String?
+  sentAt                  DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   @@unique([reportNumber, idempotencyKey])
   @@index([reportNumber, createdAt])
@@ -6327,6 +6365,12 @@ model IngressEvent {
   @@index([source, receivedAt])
   @@index([dedupeKey])
   @@index([dealId])
+  // The STABLE external-order identity: (store, provider order id) → the Deal
+  // that order created. Every later delivery for the same order resolves through
+  // this index to the same Deal, so a status transition or an edit updates the
+  // purchase instead of creating a second one. See ingress/resolve.js
+  // findDealForExternalOrder.
+  @@index([source, sourceKey, externalId])
 }
 
 // One row per processing attempt — the observability/audit spine. Answers
@@ -6560,13 +6604,13 @@ model AutomationState {
 // One row per execution ATTEMPT — the SOLE source of "last execution", run
 // counts and the error indicator. Never written by hand.
 model AutomationRun {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   autId          String
   // Business identity of the triggering event. Unique ⇒ a replayed trigger
   // (double WON, webhook retry, worker restart) hits P2002 and is dropped —
   // the same idempotency contract the Communication Center and Admin Reports
   // already use.
-  idempotencyKey String @unique
+  idempotencyKey String  @unique
   // ran | skipped | failed
   status         String
   // Hebrew explanation, shown VERBATIM in the registry. A skipped run without
@@ -6597,7 +6641,7 @@ model AutomationRun {
 // when a definition's declared shape hash moves — so "updated date" and the
 // change log are facts about the code, never hand-maintained prose.
 model AutomationChange {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   autId     String
   // registered | enabled | disabled | definition_changed | retired
   kind      String
@@ -6628,14 +6672,14 @@ model AutomationChange {
 // matrix — an operator who deliberately chose a window for one message must not
 // have it silently overridden by a global default.
 model SendingWindowPolicy {
-  id           String  @id @default(cuid())
+  id           String                      @id @default(cuid())
   // customer | guide | manager — who is on the receiving end.
   audienceKind String
   // whatsapp | email
   channel      String
   // When false, this audience/channel pair sends at any hour (global block
   // exceptions still apply — safety always wins, see windows.js).
-  enabled      Boolean @default(false)
+  enabled      Boolean                     @default(false)
   // The weekly rules to obey. Null with enabled=true is a configuration error
   // and fails CLOSED (nothing sends) with a visible reason, never silently.
   window       CommunicationSendingWindow? @relation(fields: [windowId], references: [id], onDelete: SetNull)
@@ -6681,11 +6725,11 @@ model ReviewItem {
   // decides, or it stays open.
   status String @default("open")
 
-  title   String
-  summary String?
+  title      String
+  summary    String?
   // Card-specific payload: the answers that mattered, frozen at creation so a
   // later questionnaire edit never rewrites what a manager reviewed.
-  data    Json?
+  data       Json?
   // Same shape the בקרה dashboard renders: [{ type, id, label, orderNo? }]
   entityRefs Json?
 

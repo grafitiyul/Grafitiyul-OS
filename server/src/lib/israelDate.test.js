@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ISRAEL_TZ, israelToday, isValidDate, addDays, weekdayOf, startOfWeek, endOfWeek,
+  ISRAEL_TZ, israelToday, israelDateOf, isValidDate, addDays, weekdayOf, startOfWeek, endOfWeek,
   compareDates, dateRangeBounds, dayBounds, startOfDayUtc, midnightAfterMs,
 } from './israelDate.js';
 
@@ -10,6 +10,28 @@ import {
 // — both now re-export from here, so those suites also guard this module.
 
 test('ISRAEL_TZ', () => assert.equal(ISRAEL_TZ, 'Asia/Jerusalem'));
+
+// The defect this function exists to prevent: a Date built as LOCAL midnight
+// (which is what parsing "15/09/2026" produces) is 21:00 UTC the day BEFORE in
+// Israel summer time. `toISOString().slice(0,10)` therefore records the tour a
+// day early — it shipped in the ingress record writer and was caught by the Woo
+// lifecycle tests.
+test('israelDateOf returns the Israel calendar day, never the UTC one', () => {
+  const localMidnightSep15 = new Date(2026, 8, 15); // month is 0-based
+  assert.equal(israelDateOf(localMidnightSep15), '2026-09-15');
+
+  // Late-evening instants must not roll backwards.
+  assert.equal(israelDateOf(new Date('2026-09-14T21:00:00Z')), '2026-09-15', 'IDT is UTC+3');
+  assert.equal(israelDateOf(new Date('2026-01-14T22:00:00Z')), '2026-01-15', 'IST is UTC+2');
+  assert.equal(israelDateOf(new Date('2026-09-14T20:59:00Z')), '2026-09-14');
+
+  // Accepts an ISO string as well as a Date.
+  assert.equal(israelDateOf('2026-09-15T06:00:00Z'), '2026-09-15');
+
+  for (const bad of [null, undefined, '', 'not-a-date', new Date('x')]) {
+    assert.equal(israelDateOf(bad), null, `unusable input ⇒ null (${String(bad)})`);
+  }
+});
 
 test('israelToday renders the Israel calendar date, not the server one', () => {
   // July = UTC+3. 22:30Z is already tomorrow in Tel Aviv.

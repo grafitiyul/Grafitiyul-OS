@@ -23,17 +23,23 @@ import { prisma } from '../db.js';
 import { validateEvent, hasUsableIdentity } from './contract.js';
 import { normalizeEvent } from './normalize.js';
 import { buildIdempotencyKey, buildDedupeKey, decideDedupe, dedupeWindowStart } from './identity.js';
-import { resolveContact, findOpenDealForContact } from './resolve.js';
+import { resolveContact, findOpenDealForContact, findDealForExternalOrder } from './resolve.js';
 import {
   createLeadDeal,
   writeIntakeNote,
+  writeOrderStatusNote,
+  updateOrderDeal,
   annotateExistingDeal,
   emitIngressHistory,
   buildIntakeNoteBody,
+  buildOrderStatusNoteBody,
 } from './records.js';
 import { IngressError, toIngressError, STAGES } from './errors.js';
 import { platformConfig } from './config.js';
 import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
+import { statusMeaning } from './adapters/woocommerce.js';
+import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
+import { publicOrigin } from '../communication/context.js';
 
 export const MAX_ATTEMPTS = 8;
 const RETRY_BASE_MS = 60 * 1000; // 1m, 2m, 4m … capped at 1h
@@ -41,6 +47,34 @@ const RETRY_CAP_MS = 60 * 60 * 1000;
 
 export function retryDelayMs(attemptCount) {
   return Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1));
+}
+
+/**
+ * An order that has reached a PAID status wins the deal — through the canonical
+ * transition, inside the caller's transaction.
+ *
+ * Idempotency is the service's own: transitionDealToWon guards on
+ * `status != 'won'` atomically, so processing → completed wins once and the
+ * second delivery is a no-op. Nothing here re-implements that.
+ *
+ * Non-paid statuses NEVER change the business status. In particular a refund or
+ * a cancellation after payment leaves the deal WON with a loud pinned note —
+ * reversing a win automatically would silently undo real revenue, tour bookings
+ * and sent confirmations. That is an office decision, not a webhook's.
+ *
+ * Returns { wonNow, wonAt } so the caller can fire post-commit effects.
+ */
+async function maybeWinOrder(tx, dealId, normalized) {
+  if (normalized.kind !== 'order' || !normalized.order?.paid) return { wonNow: false };
+  try {
+    const t = await transitionDealToWon(tx, { dealId, publicOrigin: publicOrigin() });
+    return { wonNow: t.wonNow, wonAt: t.wonAt };
+  } catch (err) {
+    // A missing final stage must not lose the order. The deal, its note and its
+    // history are already correct; the win is what failed, and it is visible.
+    console.error(`[ingress] WON transition failed for deal ${dealId}: ${err?.message || err}`);
+    return { wonNow: false, error: err?.code || 'won_transition_failed' };
+  }
 }
 
 // Record one attempt. Never throws — an audit-write failure must not mask the
@@ -137,7 +171,26 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
     const priorDealId = match.contactId
       ? await findOpenDealForContact(db, match.contactId, dedupeWindowStart())
       : null;
-    const decision = decideDedupe({ kind: normalized.kind, priorDealId, priorEvent: null });
+    // The order's OWN stable identity (store + provider order id), resolved
+    // independently of the person and of anything mutable on the order. This is
+    // what makes pending → processing → completed one deal.
+    const priorOrder = normalized.kind === 'order'
+      ? await findDealForExternalOrder(db, {
+          source: row.source,
+          sourceKey: row.sourceKey,
+          externalId: normalized.externalId,
+        })
+      : null;
+    const decision = decideDedupe({
+      kind: normalized.kind,
+      priorDealId,
+      priorEvent: null,
+      priorOrderDealId: priorOrder?.dealId || null,
+    });
+    // The status this order was last seen in — rendered in the note as the
+    // transition an operator is actually reading about.
+    const previousStatus = priorOrder?.priorNormalized?.order?.status || null;
+    const meaning = normalized.kind === 'order' ? statusMeaning(normalized.order?.status) : null;
 
     // ── Dry-run: everything decided, nothing written ────────────────────────
     if (row.dryRun) {
@@ -146,9 +199,11 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
       // than an approximation of it. Purely in-memory; nothing is persisted
       // beyond the event's own audit row.
       const notePreview =
-        decision.action === 'create'
+        decision.action === 'create' && normalized.kind !== 'order'
           ? buildIntakeNoteBody(normalized, { ambiguous: match.ambiguous })
-          : null;
+          : meaning
+            ? buildOrderStatusNoteBody(normalized, meaning, { previousStatus })
+            : null;
       await db.ingressEvent.update({
         where: { id: eventId },
         data: {
@@ -157,7 +212,11 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
           attribution: normalized.attribution,
           dedupeKey,
           contactId: match.contactId,
-          outcome: decision.action === 'create' ? 'would_create_deal' : 'would_annotate_deal',
+          outcome: decision.action === 'create'
+            ? 'would_create_deal'
+            : decision.action === 'update_order'
+              ? 'would_update_order'
+              : 'would_annotate_deal',
           dealId: decision.dealId || null,
           attemptCount: attemptNo,
           processedAt: new Date(),
@@ -196,22 +255,60 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
         });
         return { dealId: decision.dealId, contactId: match.contactId, outcome: 'annotated_deal' };
       }
+
+      // ── The same external order, again ─────────────────────────────────────
+      // A status transition or an edit. One deal, updated — never a second one.
+      if (decision.action === 'update_order' && decision.dealId) {
+        await updateOrderDeal(tx, {
+          dealId: decision.dealId,
+          normalized,
+          meaning,
+          previousStatus,
+          createdAt: noteAt,
+        });
+        await emitIngressHistory(tx, {
+          dealId: decision.dealId,
+          normalized,
+          outcome: 'updated_order_deal',
+          createdAt: historyAt,
+        });
+        const won = await maybeWinOrder(tx, decision.dealId, normalized);
+        return {
+          dealId: decision.dealId,
+          contactId: match.contactId || priorOrder?.contactId || null,
+          outcome: 'updated_order_deal',
+          won,
+        };
+      }
+
       const created = await createLeadDeal(tx, { normalized, stageKey });
       // The customer's own words land FIRST — before any system history,
-      // assignment or follow-up entry.
-      await writeIntakeNote(tx, {
-        dealId: created.dealId,
-        normalized,
-        ambiguous: match.ambiguous,
-        createdAt: noteAt,
-      });
+      // assignment or follow-up entry. An ORDER instead opens with its pinned
+      // status note, which already carries the full submitted content.
+      if (normalized.kind === 'order') {
+        await writeOrderStatusNote(tx, {
+          dealId: created.dealId,
+          normalized,
+          meaning,
+          previousStatus: null,
+          createdAt: noteAt,
+        });
+      } else {
+        await writeIntakeNote(tx, {
+          dealId: created.dealId,
+          normalized,
+          ambiguous: match.ambiguous,
+          createdAt: noteAt,
+        });
+      }
       await emitIngressHistory(tx, {
         dealId: created.dealId,
         normalized,
         outcome: 'created_deal',
         createdAt: historyAt,
       });
-      return { ...created, outcome: 'created_deal' };
+      const won = await maybeWinOrder(tx, created.dealId, normalized);
+      return { ...created, outcome: 'created_deal', won };
     });
 
     await db.ingressEvent.update({
@@ -242,6 +339,20 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
     // external intake source, so a future channel is included automatically.
     if (result.outcome === 'created_deal' && normalized.kind === 'lead') {
       fireNewLeadReport({ dealId: result.dealId, origin: `ingress:${row.source}`, eventRef: eventId });
+    }
+
+    // Post-commit effects of a genuine WON transition — Communication Center
+    // triggers, Manager Report #26 and the confirmation email. Fired here, from
+    // the transaction that actually flipped the status, exactly as every other
+    // WON path does it. `cause` marks this as an automatic, order-driven win so
+    // nothing attributes it to a human who never clicked anything.
+    if (result.won?.wonNow) {
+      emitWonTransitionEffects({
+        dealId: result.dealId,
+        wonAt: result.won.wonAt,
+        cause: 'woo_order',
+        paymentAmountMinor: null,
+      });
     }
     return { status: 'processed', ...result };
   } catch (err) {

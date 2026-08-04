@@ -89,7 +89,10 @@ test('classification: a PAID Woo order is created as group', async () => {
   assert.equal(dealFrom(db).activityType, 'group', 'a paid store purchase is a group activity');
 });
 
-test('classification: an UNPAID Woo order stays unclassified — never private', async () => {
+// An abandoned checkout for a tour is still a tour order — what it IS does not
+// depend on whether the money arrived. Payment drives the deal's business
+// status (WON), never its classification.
+test('classification: an UNPAID Woo order is still group — never private', async () => {
   const db = createTestDb();
   await ingest(
     {
@@ -104,7 +107,7 @@ test('classification: an UNPAID Woo order stays unclassified — never private',
     },
     db,
   );
-  assert.equal(dealFrom(db).activityType, null);
+  assert.equal(dealFrom(db).activityType, 'group');
 });
 
 // ── The organization SSOT still wins ────────────────────────────────────────
@@ -127,12 +130,15 @@ test('classification: a linked organization still forces business', async () => 
 
 // ── The pure rule, directly ─────────────────────────────────────────────────
 test('activityTypeForIngress: the rule in isolation', () => {
+  // A lead is never classified, whatever else it carries.
   assert.equal(activityTypeForIngress({ kind: 'lead' }), null);
   assert.equal(activityTypeForIngress({ kind: 'lead', order: { paid: true } }), null);
-  assert.equal(activityTypeForIngress({ kind: 'order', order: { paid: true } }), 'group');
-  assert.equal(activityTypeForIngress({ kind: 'order', order: { paid: false } }), null);
-  assert.equal(activityTypeForIngress({ kind: 'order', order: { paid: null } }), null);
-  assert.equal(activityTypeForIngress({ kind: 'order' }), null);
+  // An order is group regardless of payment — classification is about WHAT it
+  // is, not whether the money arrived.
+  for (const paid of [true, false, null, undefined]) {
+    assert.equal(activityTypeForIngress({ kind: 'order', order: { paid } }), 'group', `paid=${paid}`);
+  }
+  assert.equal(activityTypeForIngress({ kind: 'order' }), 'group');
   // 'private' must not be reachable from external intake at all any more.
   for (const kind of ['lead', 'order']) {
     for (const paid of [true, false, null, undefined]) {

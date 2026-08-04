@@ -10,10 +10,13 @@
 // support both shapes — if the payload is not a complete order we fetch it via
 // the REST API. That also makes replay work when only an id was captured.
 
+import crypto from 'node:crypto';
 import { buildEvent } from '../contract.js';
 import { wooStoreConfig } from '../config.js';
 import { verifyWooSignature } from '../signature.js';
 import { ingressError, STAGES } from '../errors.js';
+
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 40);
 
 export const SOURCE = 'woocommerce';
 
@@ -73,13 +76,110 @@ export function metaValue(order, key) {
   return hit?.value ?? null;
 }
 
-// Woo statuses that represent a real, revenue-bearing purchase. `pending` is
-// deliberately EXCLUDED — those are abandoned carts, which the platform treats
-// as leads through a different path, not as orders.
-export const PAID_STATUSES = Object.freeze(['processing', 'completed', 'on-hold']);
+// Woo statuses that represent money actually received.
+//
+// 'on-hold' was here until 2026-08-04 and is deliberately NOT any more: Woo uses
+// it for "awaiting payment / awaiting confirmation" (bank transfer, cheque,
+// manual review), which is precisely NOT paid. Treating it as paid is what would
+// drive the canonical WON transition — and all of its effects, including a
+// confirmation email to the customer — off an order nobody has paid for.
+//
+// A non-paid status NEVER means "drop the event": every Woo order reaches GOS
+// and becomes a Deal. Paid only decides whether the deal WINS.
+export const PAID_STATUSES = Object.freeze(['processing', 'completed']);
 
 export function isPaidStatus(status) {
-  return PAID_STATUSES.includes(String(status || '').toLowerCase());
+  return PAID_STATUSES.includes(normalizeStatus(status));
+}
+
+export function normalizeStatus(status) {
+  return String(status || '').trim().toLowerCase().replace(/^wc-/, '');
+}
+
+// THE operator-facing meaning of each Woo status. One catalogue, so the pinned
+// note, the timeline entry and any future surface all say the same thing.
+// `known:false` marks a status a plugin invented — reported verbatim rather
+// than silently bucketed as something it may not be.
+const STATUS_MEANING = Object.freeze({
+  pending: { icon: '🛒', title: 'התחיל הזמנה ולא השלים תשלום', detail: 'הלקוח התחיל תהליך הזמנה באתר אך לא השלים את התשלום.' },
+  'checkout-draft': { icon: '🛒', title: 'טיוטת תשלום שלא הושלמה', detail: 'נפתחה טיוטת הזמנה בקופה ולא הושלמה.' },
+  failed: { icon: '❌', title: 'התשלום נכשל', detail: 'ניסיון התשלום נכשל או נדחה.' },
+  'on-hold': { icon: '⏳', title: 'ממתין לתשלום או לאישור', detail: 'ההזמנה ממתינה לתשלום/אישור (למשל העברה בנקאית).' },
+  processing: { icon: '✅', title: 'התשלום התקבל', detail: 'התשלום התקבל וההזמנה בטיפול.' },
+  completed: { icon: '✅', title: 'ההזמנה הושלמה', detail: 'ההזמנה שולמה והושלמה.' },
+  cancelled: { icon: '🚫', title: 'ההזמנה בוטלה', detail: 'ההזמנה בוטלה באתר.' },
+  refunded: { icon: '↩️', title: 'ההזמנה זוכתה — לטיפול המשרד', detail: 'בוצע זיכוי על ההזמנה. סטטוס הדיל לא שונה אוטומטית.' },
+  trash: { icon: '🗑', title: 'ההזמנה הועברה לאשפה בווקומרס', detail: 'ההזמנה הועברה לאשפה בחנות. סטטוס הדיל לא שונה אוטומטית.' },
+});
+
+export function statusMeaning(status) {
+  const key = normalizeStatus(status);
+  const hit = STATUS_MEANING[key];
+  if (hit) return { ...hit, status: key, known: true };
+  return {
+    icon: '⚠️',
+    title: `סטטוס הזמנה לא מוכר: ${key || '—'}`,
+    detail: 'הסטטוס הזה אינו מוכר למערכת. ההזמנה נשמרה כמו שהיא — יש לבדוק ידנית.',
+    status: key,
+    known: false,
+  };
+}
+
+// THE event identity of one Woo delivery — a hash over the fields that carry
+// business meaning, deliberately NOT the raw body.
+//
+// Why a projection and not the raw payload: Woo stamps `date_modified` on every
+// save, so a raw-body hash would mint a brand-new event for a no-op edit and
+// spray meaningless entries across the deal timeline. Why not the order id
+// alone (the rule until 2026-08-04): that collapsed every status transition
+// onto the first delivery, so pending → processing → completed silently froze
+// the deal at `pending`.
+//
+// Why not Woo's x-wc-webhook-delivery-id: WooCommerce mints a NEW delivery id
+// for every delivery attempt, so a retry would carry a different id and be
+// processed a second time — the exact opposite of an idempotency key.
+//
+// The projection therefore contains everything a change to which should update
+// the deal, and nothing else:
+//   identical retry / no-op save → same hash → duplicate, nothing happens
+//   status transition           → new hash  → the SAME deal is updated
+//   date/product/participant/customer edit → new hash → the SAME deal is updated
+export function wooEventProjection(order) {
+  const b = order?.billing || {};
+  return {
+    id: orderIdOf(order),
+    status: normalizeStatus(order?.status),
+    total: order?.total ?? null,
+    currency: order?.currency || null,
+    paymentMethod: order?.payment_method_title || order?.payment_method || null,
+    customerNote: order?.customer_note || null,
+    tourDate: metaValue(order, '_billing_tour_date'),
+    billing: {
+      firstName: b.first_name || null,
+      lastName: b.last_name || null,
+      email: b.email || null,
+      phone: b.phone || null,
+      company: b.company || null,
+    },
+    items: (order?.line_items || [])
+      .map((li) => ({
+        productId: li.product_id ?? null,
+        variationId: li.variation_id ?? null,
+        name: li.name || null,
+        sku: li.sku || null,
+        quantity: li.quantity ?? 1,
+        total: li.total ?? li.price ?? null,
+      }))
+      // Woo does not guarantee line order across saves; sort so a reordered
+      // payload is not mistaken for a real edit.
+      .sort((x, y) => String(x.productId ?? '').localeCompare(String(y.productId ?? ''))
+        || String(x.variationId ?? '').localeCompare(String(y.variationId ?? ''))),
+    coupons: (order?.coupon_lines || []).map((c) => c.code).filter(Boolean).sort(),
+  };
+}
+
+export function wooEventHash(order) {
+  return sha256(JSON.stringify(wooEventProjection(order)));
 }
 
 // Israeli dd/mm/yyyy is what the live store writes; ISO is what a modern store
@@ -91,6 +191,15 @@ export function parseTourDate(value) {
   if (il) return new Date(Number(il[3]), Number(il[2]) - 1, Number(il[1]));
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Total units ordered across all line items. Null when Woo sent no lines, so
+// "unknown" stays distinguishable from a real zero.
+export function orderedQuantity(order) {
+  const items = order?.line_items || [];
+  if (!items.length) return null;
+  const total = items.reduce((sum, li) => sum + (Number(li?.quantity) || 0), 0);
+  return total > 0 ? total : null;
 }
 
 export function toCanonicalEvent(order, { storeKey }) {
@@ -129,6 +238,10 @@ export function toCanonicalEvent(order, { storeKey }) {
       message: order?.customer_note || null,
       preferredDate: parseTourDate(metaValue(order, '_billing_tour_date')),
       formName: null,
+      // Participants = the ordered quantity. For a tour product the quantity IS
+      // the head count — that is what the customer bought and what Woo knows.
+      // Null when there are no line items, never a guessed default.
+      participants: orderedQuantity(order),
     },
     attributionInput: {
       // Woo does not forward UTM by default; when a store plugin records them
@@ -144,6 +257,46 @@ export function toCanonicalEvent(order, { storeKey }) {
       paymentMethod: order?.payment_method_title || order?.payment_method || null,
       storeKey,
       couponLines: (order?.coupon_lines || []).map((c) => c.code).filter(Boolean),
+      // Everything the status note renders. Only what Woo actually sent — a
+      // field the payload does not carry stays null and is shown as unknown,
+      // never invented.
+      wooStatus: normalizeStatus(order?.status),
+      dateCreated: order?.date_created || null,
+      dateModified: order?.date_modified || null,
+      datePaid: order?.date_paid || null,
+      dateCompleted: order?.date_completed || null,
+      discountTotal: order?.discount_total ?? null,
+      shippingTotal: order?.shipping_total ?? null,
+      totalTax: order?.total_tax ?? null,
+      transactionId: order?.transaction_id || null,
+      customerId: order?.customer_id ?? null,
+      customerIp: order?.customer_ip_address || null,
+      orderKey: order?.order_key || null,
+      createdVia: order?.created_via || null,
+      // Line items with the detail an operator reads (variant + per-line total).
+      lineItems: (order?.line_items || []).map((li) => ({
+        name: li.name || null,
+        sku: li.sku || null,
+        quantity: li.quantity ?? 1,
+        total: li.total ?? null,
+        productId: li.product_id ?? null,
+        variationId: li.variation_id ?? null,
+        // Woo variation attributes ("סוג סיור: קבוצתי") when present.
+        //
+        // Woo exposes these under both `key`/`value` and the human-facing
+        // `display_key`/`display_value`, and not every entry carries both.
+        // Read either, and hide only Woo's internal `_`-prefixed keys — keying
+        // the filter on `key` alone silently dropped display-only attributes.
+        meta: (li.meta_data || [])
+          .map((m) => ({
+            key: m?.display_key || m?.key || null,
+            value: m?.display_value ?? m?.value ?? null,
+            internal: String(m?.key || '').startsWith('_'),
+          }))
+          .filter((m) => m.key && !m.internal && m.value !== null && String(m.value).trim() !== '')
+          .map(({ key, value }) => ({ key, value })),
+      })),
+      feeLines: (order?.fee_lines || []).map((f) => ({ name: f.name || null, total: f.total ?? null })),
     },
   });
 }
@@ -157,4 +310,7 @@ export const wooAdapter = Object.freeze({
   fetchOrder,
   toCanonicalEvent,
   isPaidStatus,
+  normalizeStatus,
+  statusMeaning,
+  wooEventHash,
 });

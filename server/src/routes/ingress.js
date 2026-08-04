@@ -165,7 +165,23 @@ router.post(
       source: wooAdapter.key,
       sourceKey: storeKey,
       externalId: orderId,
-      idempotencyKey: buildIdempotencyKey({ source: wooAdapter.key, sourceKey: storeKey, externalId: orderId }),
+      // TWO identities, deliberately separate:
+      //   externalId (order id) — the STABLE identity of the purchase; it is
+      //     what resolves every later delivery to the same Deal.
+      //   idempotencyKey (order id + canonical content hash) — the identity of
+      //     THIS delivery; it is what decides whether we have already processed
+      //     this exact state of the order.
+      // Keying only on the order id (the rule until 2026-08-04) collapsed every
+      // status transition into "duplicate" and froze the deal at its first
+      // delivery. Putting the status in the key instead would have created a new
+      // deal per transition. The content hash gives both: retries and no-op
+      // saves collapse, real changes flow through to the SAME deal.
+      idempotencyKey: buildIdempotencyKey({
+        source: wooAdapter.key,
+        sourceKey: storeKey,
+        externalId: orderId,
+        salt: order ? wooAdapter.wooEventHash(order) : null,
+      }),
       rawPayload: order ? { order } : { orderId, fetchError },
       rawHeaders: { 'x-wc-webhook-signature': req.headers['x-wc-webhook-signature'] || null },
       canonicalEvent,

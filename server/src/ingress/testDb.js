@@ -102,6 +102,25 @@ export function createTestDb(seed = {}) {
       },
       findMany: async ({ where = {} } = {}) =>
         db.ingressEvent.filter((r) => (where.status ? r.status === where.status : true)),
+
+      // The STABLE external-order lookup (findDealForExternalOrder): the most
+      // recent PROCESSED event for one provider order that produced a deal.
+      findFirst: async ({ where = {}, orderBy, select }) => {
+        let rows = db.ingressEvent.filter((r) => {
+          if (where.source !== undefined && r.source !== where.source) return false;
+          if (where.sourceKey !== undefined && (r.sourceKey ?? null) !== (where.sourceKey ?? null)) return false;
+          if (where.externalId !== undefined && String(r.externalId ?? '') !== String(where.externalId)) return false;
+          if (where.status !== undefined && r.status !== where.status) return false;
+          if (where.dealId?.not === null && r.dealId === null) return false;
+          return true;
+        });
+        if (orderBy?.processedAt === 'desc') {
+          rows = rows.sort((a, b) => new Date(b.processedAt || 0) - new Date(a.processedAt || 0));
+        }
+        const row = rows[0] || null;
+        if (!row || !select) return row;
+        return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
+      },
     },
 
     ingressAttempt: {
@@ -170,10 +189,18 @@ export function createTestDb(seed = {}) {
 
     dealStage: {
       findUnique: async ({ where }) => db.dealStage.find((s) => s.key === where.key) || null,
-      findFirst: async ({ where }) =>
-        db.dealStage
+      // Honours orderBy direction: the lead stage is the FIRST active stage by
+      // sortOrder, the WON final stage is the LAST. Ignoring direction would
+      // silently put won deals on the lead stage.
+      findFirst: async ({ where, orderBy }) => {
+        const desc = Array.isArray(orderBy)
+          ? orderBy.some((o) => o.sortOrder === 'desc')
+          : orderBy?.sortOrder === 'desc';
+        const rows = db.dealStage
           .filter((s) => (where?.isActive === undefined ? true : s.isActive === where.isActive))
-          .sort((a, b) => a.sortOrder - b.sortOrder)[0] || null,
+          .sort((a, b) => (desc ? b.sortOrder - a.sortOrder : a.sortOrder - b.sortOrder));
+        return rows[0] || null;
+      },
     },
 
     dealSource: {
@@ -187,14 +214,46 @@ export function createTestDb(seed = {}) {
 
     deal: {
       create: async ({ data }) => {
-        const row = { id: nextId('d'), orderNo: 27000 + db.deal.length, createdAt: new Date(), ...data };
+        const row = {
+          id: nextId('d'), orderNo: 27000 + db.deal.length, createdAt: new Date(),
+          ...data,
+        };
+        delete row.contacts;
         db.deal.push(row);
         for (const dc of data.contacts?.create || []) {
           db.dealContact.push({ id: nextId('dc'), dealId: row.id, ...dc });
         }
         return row;
       },
+      findUnique: async ({ where, select }) => {
+        const row = db.deal.find((d) => d.id === where.id) || null;
+        if (!row || !select) return row;
+        return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
+      },
+      update: async ({ where, data }) => {
+        const row = db.deal.find((d) => d.id === where.id);
+        if (!row) throw new Error('testDb: deal.update missing row');
+        Object.assign(row, data);
+        return row;
+      },
+      // The WON transition's atomic guard: `status != 'won'` decides the race.
+      // Modelled faithfully — a second call must match zero rows.
+      updateMany: async ({ where, data }) => {
+        const rows = db.deal.filter((d) => {
+          if (where.id && d.id !== where.id) return false;
+          if (where.status?.not !== undefined && d.status === where.status.not) return false;
+          return true;
+        });
+        for (const r of rows) Object.assign(r, data);
+        return { count: rows.length };
+      },
     },
+
+    // WON transition support. A deal born from an order has no quote, so the
+    // canonical wonQuoteRef lookup finds nothing — modelled explicitly rather
+    // than stubbed away, so the real code path runs.
+    quoteOffer: { findFirst: async () => null },
+    quoteDocument: { findFirst: async () => null },
 
     dealContact: {
       findFirst: async ({ where }) => {
