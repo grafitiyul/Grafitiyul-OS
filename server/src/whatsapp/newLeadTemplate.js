@@ -78,13 +78,19 @@ export async function setNewLeadDefault(db, templateId) {
   });
 }
 
-/** Remove the star entirely — no template answers new leads. Always valid. */
-export async function clearNewLeadDefault(db) {
-  await db.whatsAppTemplate.updateMany({
-    where: { [STAR_FIELD]: true },
-    data: { [STAR_FIELD]: false },
-  });
-  return { ok: true };
+/**
+ * Remove the star — no template answers new leads. Always valid.
+ *
+ * `templateId` scopes the clear to ONE template: "unstar A" must not silently
+ * clear B's star if the screen was showing stale data. Omit it to clear
+ * whatever holds the star.
+ */
+export async function clearNewLeadDefault(db, templateId = null) {
+  const where = templateId
+    ? { [STAR_FIELD]: true, id: templateId }
+    : { [STAR_FIELD]: true };
+  const { count } = await db.whatsAppTemplate.updateMany({ where, data: { [STAR_FIELD]: false } });
+  return { ok: true, cleared: count };
 }
 
 /**

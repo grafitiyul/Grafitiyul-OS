@@ -66,6 +66,20 @@ test('star: zero starred templates is a valid state', async () => {
   assert.equal(await getStarredTemplate(db), null, 'no star ⇒ no automatic reply');
 });
 
+test('star: unstarring one template never clears another one', async () => {
+  const db = createDb([
+    { id: 'a', nameHe: 'A' },
+    { id: 'b', nameHe: 'B', isNewLeadDefault: true },
+  ]);
+  // A stale screen asks to unstar A, which does not hold the star.
+  const r = await clearNewLeadDefault(db, 'a');
+  assert.equal(r.cleared, 0);
+  assert.deepEqual(starredIds(db), ['b'], "B's star must survive");
+
+  await clearNewLeadDefault(db, 'b');
+  assert.deepEqual(starredIds(db), []);
+});
+
 test('star: an inactive template cannot be starred', async () => {
   const db = createDb([{ id: 'a', nameHe: 'A', isActive: false }]);
   await assert.rejects(

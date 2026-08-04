@@ -194,7 +194,8 @@ router.put(
         // Unstar is idempotent and unconditional — clearing is always safe.
         const existing = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
         if (!existing) return res.status(404).json({ error: 'not_found' });
-        await clearNewLeadDefault(prisma);
+        // Scoped to THIS template: unstarring A must never clear B's star.
+        await clearNewLeadDefault(prisma, existing.id);
         const after = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
         return res.json(toClient(after));
       }
