@@ -150,6 +150,13 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   // Bumped on ביטול / record switch — remounts the rich editor so its internal
   // DOM state clears/reloads along with the draft.
   const [editorNonce, setEditorNonce] = useState(0);
+  // The nonce of the editor instance ALLOWED to write the draft. A remounted
+  // (destroyed) TipTap editor fires one final blur flush with its OLD content
+  // during teardown; without this guard that flush resurrected the
+  // just-cleared draft — save left the composer "open" with the note text and
+  // a second click posted a DUPLICATE note (production bug), and ביטול needed
+  // two clicks for the same reason.
+  const liveEditorNonce = useRef(0);
   const [posting, setPosting] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   // Composer tab strip — keeps the ACTIVE tab visible when the strip scrolls
@@ -183,15 +190,28 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     const restored = readNoteDrafts()[noteDraftKey] || '';
     setDraft(restored);
     setDraftRestored(!noteIsEmpty(restored));
-    setEditorNonce((n) => n + 1);
+    setEditorNonce((n) => {
+      liveEditorNonce.current = n + 1;
+      return n + 1;
+    });
   }, [noteDraftKey]);
 
   function clearDraft() {
     setDraft('');
     setDraftRestored(false);
     writeNoteDraft(noteDraftKey, '');
-    setEditorNonce((n) => n + 1);
+    setEditorNonce((n) => {
+      liveEditorNonce.current = n + 1;
+      return n + 1;
+    });
   }
+
+  // Draft writes are accepted ONLY from the live editor instance — the
+  // teardown blur of a replaced editor (see liveEditorNonce) is ignored.
+  const draftChangeFor = (nonce) => (html) => {
+    if (nonce !== liveEditorNonce.current) return;
+    setDraft(html);
+  };
   // Global expand: default ON. Per-note overrides take precedence over it.
   const [expandAll, setExpandAll] = useState(true);
   const [expandOverrides, setExpandOverrides] = useState({});
@@ -398,7 +418,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 preset="note"
                 collapsible
                 value={draft}
-                onChange={setDraft}
+                onChange={draftChangeFor(editorNonce)}
                 placeholder="כתבו פתק…"
                 maxHeight="50vh"
                 ariaLabel="פתק חדש"

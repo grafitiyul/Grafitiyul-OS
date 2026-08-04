@@ -216,3 +216,47 @@ test('plain digits in alt are NOT mistaken for emoji', () => {
   assert.doesNotMatch(out, /<img/);
   assert.match(out, /123/);
 });
+
+// ---- literal-newline restoration (WhatsApp / Gmail plain-text pastes) ----
+// Production bug: a long multi-paragraph text pasted into a Deal note became
+// ONE unformatted block, because the source carried its line structure as
+// literal \n characters inside inline markup and the DOM collapsed them.
+
+test('WhatsApp Web message span (inline-only, literal newlines) keeps its lines', () => {
+  const out = sanitizePastedHtml(
+    '<span dir="auto" class="copyable-text">שלום רב,\nרצינו לבדוק לגבי הסיור.\n\nתודה,\nורד</span>',
+  );
+  const breaks = (out.match(/<br\s*\/?>/g) || []).length;
+  assert.ok(breaks >= 4, `line structure preserved as breaks (got ${breaks}): ${out}`);
+  assert.match(out, /שלום רב,/);
+  assert.match(out, /ורד/);
+});
+
+test('Gmail plain-text body (white-space:pre-wrap div) keeps its paragraphs', () => {
+  const out = sanitizePastedHtml(
+    '<div style="white-space:pre-wrap">פסקה ראשונה עם תוכן.\n\nפסקה שנייה אחרי שורה ריקה.\nשורה נוספת.</div>',
+  );
+  const breaks = (out.match(/<br\s*\/?>/g) || []).length;
+  assert.ok(breaks >= 3, `blank line + soft breaks preserved (got ${breaks}): ${out}`);
+});
+
+test('pretty-printed HTML newlines between tags are NOT turned into breaks', () => {
+  const out = sanitizePastedHtml('<p>hello\nworld</p>\n<p>second\nparagraph</p>');
+  assert.doesNotMatch(out, /<br/, 'block-structured HTML keeps its whitespace semantics');
+  assert.match(out, /<p>hello\s*world<\/p>/);
+});
+
+test('a fragment that already has <br> structure is left alone (rule 1 disqualified)', () => {
+  const out = sanitizePastedHtml('<span>a\nb<br>c</span>');
+  const breaks = (out.match(/<br\s*\/?>/g) || []).length;
+  assert.equal(breaks, 1, 'the existing <br> is the structure; the stray \n stays whitespace');
+});
+
+test('multi-paragraph Word-style paste keeps separate paragraphs (regression)', () => {
+  const out = sanitizePastedHtml(
+    '<p class="MsoNormal">פסקה ראשונה.</p>\n<p class="MsoNormal">&nbsp;</p>\n<p class="MsoNormal">פסקה שנייה עם <b>הדגשה</b>.</p>',
+  );
+  const paras = (out.match(/<p/g) || []).length;
+  assert.ok(paras >= 3, `paragraphs preserved (got ${paras})`);
+  assert.match(out, /<b>הדגשה<\/b>|<strong>הדגשה<\/strong>/);
+});

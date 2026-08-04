@@ -179,6 +179,12 @@ export function sanitizePastedHtml(html) {
     // <o:p> markers). Drop comment nodes up front so they can't wedge between
     // list markers and their text.
     stripComments(doc.body);
+    // Sources that carry their line structure as LITERAL newlines inside
+    // inline markup (WhatsApp Web message spans, Gmail plain-text
+    // white-space:pre-wrap divs) collapse into one unformatted block when the
+    // DOM treats \n as ordinary whitespace. Restore the structure BEFORE any
+    // other pass — see the function for the (deliberately narrow) rules.
+    restoreLiteralNewlines(doc, doc.body);
     // Emoji/tiny-icon <img> normalization MUST run before cleanAttributes
     // strips width/height/class — that sizing evidence is what identifies an
     // inline emoji sprite vs a real content image.
@@ -268,6 +274,60 @@ function normalizeEmojiImages(body) {
     if (!isEmojiAlt(alt) && !tiny && !dataUri) continue; // real content image
     if (alt) img.replaceWith(body.ownerDocument.createTextNode(alt));
     else img.remove();
+  }
+}
+
+// ── Literal-newline restoration ──────────────────────────────────────────────
+// Two narrow, deliberate rules — NEVER applied to ordinary pretty-printed HTML
+// (where \n between tags is meaningless formatting whitespace):
+//
+//   1. INLINE-ONLY fragment: the paste contains no block elements and no <br>
+//      at all (e.g. WhatsApp Web copies a multi-line message as one
+//      <span class="copyable-text">line1\nline2</span>). The literal newlines
+//      ARE the only structure — convert each \n to a <br>.
+//
+//   2. An element whose INLINE style declares white-space: pre / pre-wrap /
+//      pre-line (Gmail plain-text bodies, some code/console copies): its own
+//      newlines are meaningful by declaration — convert within that element.
+//
+// Word / Google Docs / web-page pastes always contain block elements, so rule 1
+// never touches them, and they don't declare pre-wrap inline, so neither does
+// rule 2. Runs before every other pass; the later passes never touch text
+// nodes, and ProseMirror renders consecutive <br>s as the blank lines they are.
+const NEWLINE_BLOCKISH_SELECTOR =
+  'p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, br, blockquote, pre, table, figure, section, article';
+
+function textToBreaks(doc, container) {
+  // SHOW_TEXT = 4. Snapshot first — we replace nodes while iterating.
+  const walker = doc.createTreeWalker(container, 4);
+  const texts = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.nodeValue.includes('\n')) texts.push(walker.currentNode);
+  }
+  for (const t of texts) {
+    const parts = t.nodeValue.split('\n');
+    const frag = doc.createDocumentFragment();
+    parts.forEach((part, i) => {
+      if (i) frag.appendChild(doc.createElement('br'));
+      if (part) frag.appendChild(doc.createTextNode(part));
+    });
+    t.parentNode?.replaceChild(frag, t);
+  }
+}
+
+function restoreLiteralNewlines(doc, body) {
+  // Rule 2 first: explicit inline pre-wrap declarations (checked before the
+  // attribute stripper removes them). <pre> itself is left to the schema.
+  for (const el of Array.from(body.querySelectorAll('[style]'))) {
+    if (el.tagName === 'PRE') continue;
+    const ws = parseInlineStyles(el.getAttribute('style') || '')['white-space'] || '';
+    if (/^pre(-wrap|-line)?$/.test(ws) && el.textContent.includes('\n')) {
+      textToBreaks(doc, el);
+    }
+  }
+  // Rule 1: the whole fragment is inline-only — the newlines are the structure.
+  if (!body.querySelector(NEWLINE_BLOCKISH_SELECTOR) && body.textContent.includes('\n')) {
+    textToBreaks(doc, body);
   }
 }
 
