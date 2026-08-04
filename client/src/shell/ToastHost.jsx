@@ -24,9 +24,13 @@ export default function ToastHost() {
 
   if (!toasts.length) return null;
 
+  // z-index sits ABOVE the dialog layer (z-50): a send is confirmed from inside
+  // the preview, so the toast must never be painted behind it. The width uses
+  // plain utilities on purpose — an arbitrary calc() written without spaces
+  // around the operator is invalid CSS and drops the whole declaration.
   return (
     <div
-      className="pointer-events-none fixed top-4 right-4 z-[100] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2"
+      className="pointer-events-none fixed top-4 right-4 z-[200] flex w-80 max-w-[90vw] flex-col gap-2"
       dir="rtl"
       aria-live="polite"
     >
