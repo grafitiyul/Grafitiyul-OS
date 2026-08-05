@@ -42,6 +42,7 @@ export default function SitePageEditor() {
   const [openSection, setOpenSection] = useState(null);
   const [drift, setDrift] = useState([]); // pricing rows whose live card moved
   const [bulk, setBulk] = useState(null); // bulk-translate progress/summary
+  const [conflict, setConflict] = useState(null); // 409: newer draft exists on the server
   const loadedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -51,6 +52,7 @@ export default function SitePageEditor() {
     setDoc(d);
     setMeta({ internalName: p.internalName, pageType: p.pageType, slug: p.slug, defaultLanguage: p.defaultLanguage || 'he' });
     setDirty(false);
+    setConflict(null);
     loadedRef.current = true;
     // Drift is advisory: a failure to compute it must never block editing.
     if (d.sections.some((s) => s.type === 'pricing')) {
@@ -72,23 +74,43 @@ export default function SitePageEditor() {
   const update = (nextDoc) => { setDoc(nextDoc); setDirty(true); };
   const updateMeta = (patch) => { setMeta((m) => ({ ...m, ...patch })); setDirty(true); };
 
+  // Optimistic concurrency: every write carries the updatedAt this editor is
+  // based on. A 409 means someone (or another tab) saved a newer draft since —
+  // the server refused to overwrite it, and the operator chooses to reload.
+  const handleWriteError = (e) => {
+    if (e?.status === 409 || e?.payload?.error === 'draft_conflict') {
+      setConflict({ updatedAt: e?.payload?.updatedAt || null, updatedByName: e?.payload?.updatedByName || null });
+      return;
+    }
+    const codes = {
+      slug_taken: 'הכתובת (slug) כבר תפוסה בעמוד אחר.',
+      slug_reserved: 'הכתובת הזו שמורה למערכת ואינה יכולה לשמש עמוד.',
+    };
+    setError(codes[e?.payload?.error] || String(e.message || e));
+  };
+
   async function save() {
     setSaving(true); setError(null);
     try {
-      const { page: p } = await api.sitePages.save(id, { document: doc, ...meta });
+      const { page: p } = await api.sitePages.save(id, { document: doc, ...meta, baseUpdatedAt: page.updatedAt });
       setPage(p); setDirty(false); setSavedAt(new Date());
     } catch (e) {
-      setError(e?.payload?.error === 'slug_taken' ? 'הכתובת (slug) כבר תפוסה בעמוד אחר.' : String(e.message || e));
+      handleWriteError(e);
     } finally { setSaving(false); }
   }
 
   async function publish() {
     setSaving(true); setError(null);
     try {
-      if (dirty) await api.sitePages.save(id, { document: doc, ...meta });
-      await api.sitePages.publish(id, {});
+      let base = page.updatedAt;
+      if (dirty) {
+        const { page: p } = await api.sitePages.save(id, { document: doc, ...meta, baseUpdatedAt: base });
+        setPage(p); setDirty(false);
+        base = p.updatedAt;
+      }
+      await api.sitePages.publish(id, { baseUpdatedAt: base });
       await load();
-    } catch (e) { setError(String(e.message || e)); } finally { setSaving(false); }
+    } catch (e) { handleWriteError(e); } finally { setSaving(false); }
   }
 
   async function openPreview(locale = 'he', device = 'desktop') {
@@ -175,6 +197,36 @@ export default function SitePageEditor() {
       </div>
 
       {error ? <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
+
+      {conflict ? (
+        <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-4">
+          <p className="text-sm font-semibold text-rose-900">
+            ⚠ העמוד השתנה מאז שנפתח בחלון הזה — השמירה בוטלה כדי לא לדרוס את השינויים החדשים.
+          </p>
+          <p className="mt-1 text-sm text-rose-800">
+            נשמר לאחרונה
+            {conflict.updatedByName ? ` על ידי ${conflict.updatedByName}` : ' ממקום אחר'}
+            {conflict.updatedAt ? ` ב-${new Date(conflict.updatedAt).toLocaleString('he-IL')}` : ''}.
+            טענו את הגרסה העדכנית כדי להמשיך; אם יש כאן שינויים חשובים — העתיקו אותם קודם.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-800"
+              onClick={() => load().catch((e) => setError(String(e.message || e)))}
+            >
+              טעינת הגרסה העדכנית (השינויים בחלון הזה יאבדו)
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm text-rose-800 hover:border-rose-400"
+              onClick={() => setConflict(null)}
+            >
+              המשך לעיין כאן (שמירה תישאר חסומה)
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* English completeness + the page-level translation action. Honest by
           construction: the count comes from the same walker the bulk action

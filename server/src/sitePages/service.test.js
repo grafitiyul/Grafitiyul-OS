@@ -21,6 +21,10 @@ function makeDb() {
   const versions = new Map();
   let seq = 0;
   const id = (p) => `${p}_${++seq}`;
+  // Monotonic deterministic clock — every write gets a DISTINCT updatedAt, so
+  // the optimistic-concurrency tests can never pass by same-millisecond luck.
+  let clock = 1700000000000;
+  const tick = () => new Date((clock += 1000));
 
   const withRelations = (page, include) => {
     if (!page) return null;
@@ -46,14 +50,14 @@ function makeDb() {
       },
       async findMany() { return [...pages.values()]; },
       async create({ data }) {
-        const row = { id: id('page'), publishedVersionId: null, publishedAt: null, createdAt: new Date(), updatedAt: new Date(), ...data };
+        const row = { id: id('page'), publishedVersionId: null, publishedAt: null, createdAt: tick(), updatedAt: tick(), ...data };
         pages.set(row.id, row);
         return { ...row };
       },
       async update({ where, data }) {
         const row = pages.get(where.id);
         if (!row) throw new Error('page not found');
-        Object.assign(row, data, { updatedAt: new Date() });
+        Object.assign(row, data, { updatedAt: tick() });
         return { ...row };
       },
       async delete({ where }) { pages.delete(where.id); },
@@ -248,6 +252,51 @@ test('a duplicate slug is rejected rather than silently overwriting a page', asy
     () => createPage({ internalName: 'b', pageType: 'info', slug: 'same-slug' }),
     /slug_taken/,
   );
+});
+
+// ── optimistic concurrency: no stale-editor overwrite ──────────────────────
+// Born from the 2026-08-05 incident: an editor tab loaded before a server-side
+// draft change saved later and silently reverted it. A write now carries the
+// updatedAt it was based on; an older base is refused with 409 draft_conflict.
+test('a save based on an older draft is REFUSED and the newer draft survives', async () => {
+  const page = await createPage({ internalName: 'עמוד', pageType: 'info', slug: 'conflict-page' });
+  const staleBase = page.updatedAt;
+
+  // A second session saves first (no base = legacy client, allowed through).
+  const newer = await saveDraft(page.id, { document: docOf('שינוי חדש יותר') });
+  assert.notEqual(new Date(newer.updatedAt).getTime(), new Date(staleBase).getTime());
+
+  // The stale tab now tries to save what it loaded long ago.
+  await assert.rejects(
+    () => saveDraft(page.id, { document: docOf('דריסה ישנה'), baseUpdatedAt: staleBase }),
+    (e) => e.code === 'draft_conflict' && e.status === 409 && 'updatedAt' in e.meta,
+  );
+
+  const row = await getPage(page.id);
+  assert.equal(row.draft.sections[0].htmlHe, '<p>שינוי חדש יותר</p>', 'the newer draft was not overwritten');
+});
+
+test('a save based on the CURRENT draft succeeds, and the returned base allows the next save', async () => {
+  const page = await createPage({ internalName: 'עמוד', pageType: 'info', slug: 'fresh-page' });
+  const p1 = await saveDraft(page.id, { document: docOf('א'), baseUpdatedAt: page.updatedAt });
+  const p2 = await saveDraft(page.id, { document: docOf('ב'), baseUpdatedAt: p1.updatedAt });
+  assert.equal((await getPage(p2.id)).draft.sections[0].htmlHe, '<p>ב</p>');
+});
+
+test('publish based on an older draft view is refused too — publishing freezes content the editor never saw', async () => {
+  const page = await createPage({ internalName: 'עמוד', pageType: 'info', slug: 'pub-conflict' });
+  const staleBase = page.updatedAt;
+  await saveDraft(page.id, { document: docOf('תוכן של מישהו אחר') });
+
+  await assert.rejects(
+    () => publishPage(page.id, { baseUpdatedAt: staleBase }),
+    (e) => e.code === 'draft_conflict' && e.status === 409,
+  );
+  assert.equal(await getPublishedBySlug('pub-conflict'), null, 'nothing was published');
+
+  const fresh = await getPage(page.id);
+  const r = await publishPage(page.id, { baseUpdatedAt: fresh.updatedAt });
+  assert.equal(r.version.versionNo, 1, 'publishing with the current base works');
 });
 
 test('a reserved system name can never become a page slug (create or rename)', async () => {

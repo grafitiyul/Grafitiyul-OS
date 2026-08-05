@@ -93,12 +93,33 @@ export async function createPage({ internalName, pageType, slug, defaultLanguage
 }
 
 /**
+ * Optimistic concurrency: the editor sends back the `updatedAt` it loaded
+ * (`baseUpdatedAt`); a write based on an older draft is REFUSED with 409
+ * `draft_conflict` instead of silently overwriting newer changes. Protects
+ * the whole draft — born from the 2026-08-05 incident where a stale editor
+ * tab reverted a server-side seo change on save. A client that sends no
+ * base (older build during a deploy window) is let through unchecked.
+ */
+function assertBaseFresh(page, baseUpdatedAt) {
+  if (baseUpdatedAt === undefined || baseUpdatedAt === null || baseUpdatedAt === '') return;
+  const base = new Date(baseUpdatedAt).getTime();
+  if (!Number.isFinite(base) || base !== new Date(page.updatedAt).getTime()) {
+    const err = new Error('draft_conflict');
+    err.status = 409;
+    err.code = 'draft_conflict';
+    err.meta = { updatedAt: page.updatedAt, updatedByName: page.updatedByName || null };
+    throw err;
+  }
+}
+
+/**
  * Save the working copy. Deliberately does NOT touch publishedVersionId, so the
  * live page is byte-identical before and after — that is regression test #3.
  */
-export async function saveDraft(id, { document, internalName, pageType, slug, defaultLanguage, actor }) {
+export async function saveDraft(id, { document, internalName, pageType, slug, defaultLanguage, baseUpdatedAt, actor }) {
   const page = await prisma.sitePage.findUnique({ where: { id } });
   if (!page) return null;
+  assertBaseFresh(page, baseUpdatedAt);
 
   const data = {
     draft: sanitizeDocument(document),
@@ -134,12 +155,15 @@ export async function saveDraft(id, { document, internalName, pageType, slug, de
  * is a button a nervous operator will press twice, and because a duplicate
  * version would invalidate the WordPress cache for no reason.
  */
-export async function publishPage(id, { note, actor } = {}) {
+export async function publishPage(id, { note, actor, baseUpdatedAt } = {}) {
   const page = await prisma.sitePage.findUnique({
     where: { id },
     include: { publishedVersion: true },
   });
   if (!page) return null;
+  // Publishing freezes the CURRENT draft — an editor holding an older view
+  // must not publish content it has never seen.
+  assertBaseFresh(page, baseUpdatedAt);
 
   const content = sanitizeDocument(page.draft);
 

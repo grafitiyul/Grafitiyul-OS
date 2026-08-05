@@ -19,6 +19,19 @@ const actorOf = (req) => ({
   name: req.adminUser?.displayName || req.adminUser?.name || req.user?.name || null,
 });
 
+// Service errors carry a code (slug_taken, slug_reserved, draft_conflict…) and
+// a status. Answer them as REAL structured responses — the editor branches on
+// payload.error (e.g. the 409 conflict banner); the generic 500 middleware
+// would flatten them into internal_error.
+const withServiceErrors = (fn) => handle(async (req, res) => {
+  try {
+    await fn(req, res);
+  } catch (e) {
+    if (!e?.code) throw e;
+    res.status(e.status || 400).json({ error: e.code, ...(e.meta || {}) });
+  }
+});
+
 /** Editor bootstrap: the type registries, so the client never hardcodes them. */
 router.get('/meta', handle(async (_req, res) => {
   res.json({ pageTypes: PAGE_TYPES, sectionTypes: SECTION_TYPES });
@@ -34,19 +47,23 @@ router.get('/:id', handle(async (req, res) => {
   res.json({ page });
 }));
 
-router.post('/', handle(async (req, res) => {
+router.post('/', withServiceErrors(async (req, res) => {
   const page = await createPage({ ...req.body, actor: actorOf(req) });
   res.status(201).json({ page });
 }));
 
-router.put('/:id', handle(async (req, res) => {
+router.put('/:id', withServiceErrors(async (req, res) => {
   const page = await saveDraft(req.params.id, { ...req.body, actor: actorOf(req) });
   if (!page) return res.status(404).json({ error: 'not_found' });
   res.json({ page });
 }));
 
-router.post('/:id/publish', handle(async (req, res) => {
-  const result = await publishPage(req.params.id, { note: req.body?.note, actor: actorOf(req) });
+router.post('/:id/publish', withServiceErrors(async (req, res) => {
+  const result = await publishPage(req.params.id, {
+    note: req.body?.note,
+    baseUpdatedAt: req.body?.baseUpdatedAt,
+    actor: actorOf(req),
+  });
   if (!result) return res.status(404).json({ error: 'not_found' });
   res.json(result);
 }));
