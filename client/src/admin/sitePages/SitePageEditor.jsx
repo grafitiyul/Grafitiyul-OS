@@ -4,10 +4,15 @@ import { api } from '../../lib/api.js';
 import ReorderableList from '../common/ReorderableList.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import BackButton from '../common/BackButton.jsx';
-import { SECTION_EDITORS, Field, TextInput, Bilingual, pricingRowMissingEnglish } from './SectionEditors.jsx';
+import { SECTION_EDITORS, Field, TextInput, Bilingual } from './SectionEditors.jsx';
 import {
   SECTION_TYPES, PAGE_TYPES, makeSection, newId, normalizeDocument,
+  listBilingualFields, englishCompleteness, setAtPath,
 } from '../../../../shared/sitePage.mjs';
+import { forceBlockDirection } from '../../../../shared/textDirection.mjs';
+
+const hasText = (v) =>
+  !!v && String(v).replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') !== '';
 
 // The structured page editor. Explicit save (no auto-save): publishing is a
 // deliberate act here and a half-typed sentence must never become the live page,
@@ -36,6 +41,7 @@ export default function SitePageEditor() {
   const [preview, setPreview] = useState(null); // { html, locale, device }
   const [openSection, setOpenSection] = useState(null);
   const [drift, setDrift] = useState([]); // pricing rows whose live card moved
+  const [bulk, setBulk] = useState(null); // bulk-translate progress/summary
   const loadedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -90,6 +96,34 @@ export default function SitePageEditor() {
     setPreview({ html, locale, device });
   }
 
+  /**
+   * "תרגם את כל החוסרים לאנגלית" — fills ONLY empty English fields, section by
+   * section, through the same /api/translate service as the per-field button.
+   * Never overwrites existing English, never saves: the page stays dirty for
+   * operator review, exactly like a manual edit.
+   */
+  async function translateMissing() {
+    const all = listBilingualFields(doc);
+    const targets = all.filter((f) => hasText(f.he) && !hasText(f.en));
+    const skipped = all.filter((f) => hasText(f.he) && hasText(f.en)).length;
+    setBulk({ running: targets.length > 0, done: 0, total: targets.length, translated: 0, skipped, failed: [] });
+    let translated = 0;
+    const failed = [];
+    for (const f of targets) {
+      try {
+        const out = await api.translate.field({ content: f.he, direction: 'he_to_en', format: f.kind });
+        const content = f.kind === 'html' ? forceBlockDirection(out.content, 'ltr') : out.content;
+        setDoc((prev) => setAtPath(prev, f.enPath, content));
+        setDirty(true);
+        translated += 1;
+      } catch {
+        failed.push(f.label);
+      }
+      setBulk((b) => ({ ...b, done: (b?.done || 0) + 1, translated, failed: [...failed] }));
+    }
+    setBulk((b) => ({ ...b, running: false }));
+  }
+
   const sections = doc?.sections || [];
   const setSections = (next) => update({ ...doc, sections: next });
 
@@ -99,6 +133,8 @@ export default function SitePageEditor() {
     if (page.draftDirty) return { text: 'יש שינויים שלא פורסמו', cls: 'bg-amber-100 text-amber-800' };
     return { text: 'מפורסם ומעודכן', cls: 'bg-emerald-100 text-emerald-800' };
   }, [page]);
+
+  const english = useMemo(() => (doc ? englishCompleteness(doc) : { done: 0, total: 0 }), [doc]);
 
   if (error && !page) return <div className="p-6 text-rose-600">{error}</div>;
   if (!doc || !page) return <div className="p-6 text-slate-500">טוען…</div>;
@@ -139,6 +175,47 @@ export default function SitePageEditor() {
       </div>
 
       {error ? <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
+
+      {/* English completeness + the page-level translation action. Honest by
+          construction: the count comes from the same walker the bulk action
+          uses, over VISIBLE content only. */}
+      {tab === 'content' && english.total > 0 ? (
+        <div className={`mb-4 rounded-xl border p-3 ${english.done < english.total ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`text-sm font-medium ${english.done < english.total ? 'text-amber-900' : 'text-emerald-900'}`}>
+              תוכן אנגלי: {english.done} מתוך {english.total} שדות הושלמו
+            </span>
+            {english.done < english.total ? (
+              <span className="text-xs text-amber-800">
+                הגרסה האנגלית לא מציגה עברית — שדות חסרים פשוט לא יופיעו (ועמוד ריק יציג "coming soon").
+              </span>
+            ) : (
+              <span className="text-xs text-emerald-800">כל השדות הגלויים מתורגמים.</span>
+            )}
+            <div className="flex-1" />
+            <button
+              type="button"
+              disabled={bulk?.running || english.done >= english.total}
+              onClick={translateMissing}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-40"
+            >
+              {bulk?.running ? `מתרגם… ${bulk.done}/${bulk.total}` : '✨ תרגם את כל החוסרים לאנגלית'}
+            </button>
+          </div>
+          {bulk?.running ? (
+            <p className="mt-2 text-xs text-amber-800">
+              מתרגם שדה-אחר-שדה — אל תשנו את מבנה העמוד (הוספה/מחיקה/סדר) עד לסיום. שום דבר לא נשמר אוטומטית.
+            </p>
+          ) : null}
+          {bulk && !bulk.running ? (
+            <p className="mt-2 text-xs text-slate-700">
+              סיכום תרגום: תורגמו {bulk.translated} · דולגו {bulk.skipped} (קיים תרגום) · נכשלו {bulk.failed.length}
+              {bulk.failed.length ? ` (${bulk.failed.slice(0, 5).join(', ')}${bulk.failed.length > 5 ? '…' : ''})` : ''}
+              {' — '}בדקו את התוצאה ולחצו שמירת טיוטה.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {tab === 'content' ? (
         <>
@@ -402,11 +479,11 @@ export default function SitePageEditor() {
               const warnings = [];
               const driftCount = drift.filter((d) => d.status !== 'match').length;
               if (driftCount) warnings.push(`שימו לב: ${driftCount} פריטי מחירון בעמוד שונים מכרטיסי התמחור הקנוניים.`);
-              const missingEn = (doc.sections || [])
-                .filter((s) => s.type === 'pricing' && !s.hidden)
-                .flatMap((s) => s.rows || [])
-                .filter((r) => !r.hidden && pricingRowMissingEnglish(r)).length;
-              if (missingEn) warnings.push(`${missingEn} פריטי מחירון חסרים תרגום לאנגלית — הם יוסתרו לגמרי בגרסה האנגלית (אין נפילה לעברית).`);
+              if (english.total > english.done) {
+                warnings.push(
+                  `תוכן אנגלי: ${english.done} מתוך ${english.total} שדות הושלמו — שדות חסרים יוסתרו לגמרי בגרסה האנגלית (אין נפילה לעברית).`,
+                );
+              }
               setConfirm({
                 title: 'לפרסם את העמוד?',
                 body: [

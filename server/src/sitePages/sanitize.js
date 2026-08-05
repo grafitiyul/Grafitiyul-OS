@@ -18,17 +18,22 @@ const OPTIONS = {
     'ul', 'ol', 'li', 'blockquote',
     'h2', 'h3', 'h4',
     'a', 'span', 'div',
+    // Inline images inside rich sections (intro content etc.) — uploaded via
+    // the canonical media pipeline; src is scheme-checked like href, so
+    // data:/javascript: URIs never survive.
+    'img',
   ],
   allowedAttributes: {
     // `dir` is load-bearing here: these pages mix Hebrew RTL and English LTR.
     '*': ['dir'],
     a: ['href', 'target', 'rel'],
+    img: ['src', 'alt'],
     span: ['dir'],
     p: ['dir'],
     div: ['dir'],
   },
   allowedSchemes: ['http', 'https', 'mailto', 'tel'],
-  allowedSchemesAppliedToAttributes: ['href'],
+  allowedSchemesAppliedToAttributes: ['href', 'src'],
   disallowedTagsMode: 'discard',
   // Drop these WITH their text content — a stripped <script> that left its source
   // behind as visible text would be both ugly and a hint at what was attempted.
@@ -40,6 +45,11 @@ const OPTIONS = {
       attribs: { ...attribs, target: '_blank', rel: 'noopener noreferrer nofollow' },
     }),
   },
+  // Images must be absolute http(s) (our media pipeline yields absolute R2
+  // URLs). A relative or scheme-less src is dropped WITH the tag — the scheme
+  // allowlist alone does not catch relative URLs.
+  exclusiveFilter: (frame) =>
+    frame.tag === 'img' && !/^https?:\/\//i.test(String(frame.attribs?.src || '')),
 };
 
 /** Sanitize one rich-text field. Returns '' for empty/degenerate input. */

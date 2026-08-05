@@ -249,3 +249,15 @@ test('a duplicate slug is rejected rather than silently overwriting a page', asy
     /slug_taken/,
   );
 });
+
+test('a reserved system name can never become a page slug (create or rename)', async () => {
+  await assert.rejects(
+    () => createPage({ internalName: 'x', pageType: 'info', slug: 'admin' }),
+    /slug_reserved/,
+  );
+  const page = await createPage({ internalName: 'x', pageType: 'info', slug: 'fine-slug' });
+  await assert.rejects(
+    () => saveDraft(page.id, { document: docOf('t'), slug: 'payment' }),
+    /slug_reserved/,
+  );
+});

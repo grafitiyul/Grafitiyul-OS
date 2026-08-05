@@ -148,11 +148,18 @@ empty labels would look broken.
 
 ## 4a) Public GOS-hosted pages (2026-08-05 — live NOW, not waiting for WordPress)
 
-`GET /pages/:slug` on the GOS app origin serves every published page as a full
-server-rendered HTML document — ONE generic route (`routes/publicPages.js` +
-`sitePages/publicPage.js`), no per-slug code. Public shell: brand header,
-accessible עברית|English switcher, mobile-first, `Cache-Control: no-store`,
-no admin metadata. `GET /pages/sitemap.xml` lists indexable pages only.
+`GET /:slug` at the GOS app origin ROOT (owner correction: clean URLs, no
+/pages prefix) serves every published page as a full server-rendered HTML
+document — ONE generic route (`routes/publicPages.js` + `sitePages/publicPage.js`),
+no per-slug code. Collision safety is double-fenced: the router mounts AFTER
+every API/static route (existing routes win by ordering), and
+`sitePages/reservedSlugs.js` is the explicit registry of first-segment names a
+slug may never use — enforced both at the route (no DB hit) and at page
+create/rename (`slug_reserved`). Unknown slugs fall through to the SPA exactly
+as before. Legacy `/pages/:slug` → one 301 hop, query preserved.
+Public shell: brand header, accessible עברית|English switcher, mobile-first,
+`Cache-Control: no-store`, no admin metadata. `GET /sitemap.xml` lists
+indexable pages only.
 
 - **Language**: `?lang=he|en` always wins and survives deep links/refresh;
   otherwise `SitePage.defaultLanguage` (per-page config, editor-set; the agents
@@ -161,8 +168,26 @@ no admin metadata. `GET /pages/sitemap.xml` lists indexable pages only.
   hide; a locale with zero content serves an honest noindex "version coming
   soon" page (the restaurant page's English, until translated).
 - **Canonical owner**: `publicLinks.js` — page URLs derive from
-  `SITE_PAGES_PUBLIC_BASE || <app origin>/pages`. When WordPress takes over,
-  change that ONE base and every link, canonical and sitemap entry follows.
+  `SITE_PAGES_PUBLIC_BASE || <app origin>` (domain root). When WordPress takes
+  over, change that ONE base and every link, canonical and sitemap entry follows.
+
+## 4b) Translation workflow (2026-08-05)
+
+- Every bilingual field edits He|En side by side (`Bilingual`, with the shared
+  TranslateButton and a "חסר באנגלית" badge). Recommendation cards are fully
+  bilingual: `name/category/hours/kosher/notes` + `…En` counterparts
+  (`CARD_BILINGUAL_PAIRS`); address/phone/links stay language-neutral. English
+  rendering hides untranslated fact rows (strict) — the ONE exception is the
+  business name (EN shows `nameEn || name`; identity, not content).
+- `shared/sitePage.mjs`: `listBilingualFields(doc)` (every pair, with settable
+  paths), `englishCompleteness(doc)` (visible content only), `setAtPath`.
+- Editor banner: "תוכן אנגלי: X מתוך Y שדות הושלמו" + page-level
+  **"תרגם את כל החוסרים לאנגלית"** — fills only EMPTY English fields via
+  `/api/translate`, shows progress + translated/skipped/failed summary, never
+  saves (page stays dirty for review). Publish confirmation repeats the count.
+- Rich sections use the `sitePage` editor preset (mirrors the sanitizer:
+  headings/lists/links/images, no fonts/colors/video) with canonical-pipeline
+  image upload; the sanitizer allows absolute-https `<img>` only.
 
 ## 5) Public rendering
 

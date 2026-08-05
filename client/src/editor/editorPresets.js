@@ -22,4 +22,8 @@ export const EDITOR_PRESETS = {
   lite: { toolbar: 'lite', tone: 'default' },
   note: { toolbar: 'full', tone: 'note' },
   title: { singleLine: true },
+  // "דפי אתר" rich sections: exactly what the site-page sanitizer keeps —
+  // headings/lists/links/images/direction, no fonts/colors/video (those would
+  // be silently stripped on save, which is worse than not offering them).
+  sitePage: { toolbar: 'sitePage', tone: 'default' },
 };

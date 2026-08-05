@@ -56,19 +56,25 @@ function linkTag(url, label) {
 // exist. Empty fields emit nothing at all — the recovered data is uneven (some
 // venues have no hours, some no website) and rendering empty labels would look
 // broken.
+// [heKey, hebrewLabel, englishLabel, enKey]. enKey null = language-neutral
+// value (address/phone) shown on both pages; otherwise the English page uses
+// the En field or hides the row entirely — never the Hebrew text (strict).
 const CARD_ROWS = [
-  ['hours', 'שעות פעילות', 'Hours'],
-  ['address', 'כתובת', 'Address'],
-  ['phone', 'טלפון', 'Phone'],
-  ['kosher', 'כשרות', 'Kosher'],
-  ['notes', 'הערות', 'Notes'],
+  ['hours', 'שעות פעילות', 'Hours', 'hoursEn'],
+  ['address', 'כתובת', 'Address', null],
+  ['phone', 'טלפון', 'Phone', null],
+  ['kosher', 'כשרות', 'Kosher', 'kosherEn'],
+  ['notes', 'הערות', 'Notes', 'notesEn'],
 ];
+
+const cardValue = (card, heKey, enKey, locale) =>
+  locale === 'en' && enKey ? card[enKey] : card[heKey];
 
 function renderCard(card, locale) {
   const label = (he, en) => (locale === 'en' ? en : he);
-  const rows = CARD_ROWS.filter(([k]) => card[k])
-    .map(([k, he, en]) => {
-      const value = card[k];
+  const rows = CARD_ROWS.filter(([k, , , enKey]) => cardValue(card, k, enKey, locale))
+    .map(([k, he, en, enKey]) => {
+      const value = cardValue(card, k, enKey, locale);
       const body = String(value)
         .split('\n')
         .map((line) => esc(line))
@@ -83,6 +89,11 @@ function renderCard(card, locale) {
     .join('');
 
   const description = pickOr(card, 'description', locale);
+  // A business name is an IDENTITY, not translatable content — the one
+  // deliberate cross-language exception: EN shows nameEn when provided,
+  // otherwise the original name.
+  const name = (locale === 'en' && card.nameEn) || card.name;
+  const category = cardValue(card, 'category', 'categoryEn', locale);
   const links = [
     card.website ? linkTag(card.website, label('אתר המקום', 'Website')) : '',
     card.mapUrl ? linkTag(card.mapUrl, label('מפה', 'Map')) : '',
@@ -92,10 +103,10 @@ function renderCard(card, locale) {
 
   return (
     `<article class="gos-card">` +
-    (card.image ? `<div class="gos-card__media">${imageTag(card.image, card.name, 'gos-card__img')}</div>` : '') +
+    (card.image ? `<div class="gos-card__media">${imageTag(card.image, name, 'gos-card__img')}</div>` : '') +
     `<div class="gos-card__body">` +
-    `<h3 class="gos-card__name" dir="${dirFor(card.name)}">${esc(card.name)}</h3>` +
-    (card.category ? `<p class="gos-card__category" dir="${dirFor(card.category)}">${esc(card.category)}</p>` : '') +
+    `<h3 class="gos-card__name" dir="${dirFor(name)}">${esc(name)}</h3>` +
+    (category ? `<p class="gos-card__category" dir="${dirFor(category)}">${esc(category)}</p>` : '') +
     (description ? `<p class="gos-card__desc" dir="${dirFor(description)}">${esc(description)}</p>` : '') +
     (rows ? `<dl class="gos-card__facts">${rows}</dl>` : '') +
     (links ? `<p class="gos-card__links">${links}</p>` : '') +
@@ -347,6 +358,7 @@ export const pageStylesheet = `
 .gos-page__note{opacity:.85;margin:0 0 1em}
 .gos-page__rich :is(p,ul,ol){margin:0 0 .9em}
 .gos-page__rich a{text-decoration:underline}
+.gos-page__rich img{max-width:100%;height:auto;border-radius:12px}
 .gos-page__divider{border:0;border-top:1px solid rgba(128,128,128,.35);margin:2.5rem 0}
 .gos-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
 .gos-card{display:flex;flex-direction:column;border:1px solid rgba(128,128,128,.28);border-radius:16px;overflow:hidden;background:rgba(127,127,127,.04)}

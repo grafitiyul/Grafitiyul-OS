@@ -41,10 +41,30 @@ export const SECTION_TYPES = [
 export const SECTION_TYPE_KEYS = SECTION_TYPES.map((t) => t.key);
 export const sectionType = (key) => SECTION_TYPES.find((t) => t.key === key) || null;
 
-/** Fields of ONE recommendation card. Kept flat: every one is operator-editable. */
+/**
+ * Fields of ONE recommendation card. Kept flat: every one is operator-editable.
+ *
+ * Bilingual model: `name/category/hours/kosher/notes` are the HEBREW values
+ * (original storage keys, so existing content stays valid) with `…En`
+ * counterparts. `address/phone/website/mapUrl/image` are language-neutral.
+ * The English page renders the En value or hides the row (strict — no Hebrew
+ * fallback); `name` is the one deliberate exception: a business name is an
+ * identity, so EN shows `nameEn || name`.
+ */
 export const CARD_FIELDS = [
-  'name', 'descriptionHe', 'descriptionEn', 'category',
-  'address', 'phone', 'hours', 'kosher', 'notes', 'website', 'mapUrl', 'image',
+  'name', 'nameEn', 'descriptionHe', 'descriptionEn', 'category', 'categoryEn',
+  'address', 'phone', 'hours', 'hoursEn', 'kosher', 'kosherEn', 'notes', 'notesEn',
+  'website', 'mapUrl', 'image',
+];
+
+/** The card pairs the translation workflow covers: [heKey, enKey]. */
+export const CARD_BILINGUAL_PAIRS = [
+  ['name', 'nameEn'],
+  ['descriptionHe', 'descriptionEn'],
+  ['category', 'categoryEn'],
+  ['hours', 'hoursEn'],
+  ['kosher', 'kosherEn'],
+  ['notes', 'notesEn'],
 ];
 
 /**
@@ -261,6 +281,108 @@ export function localeContentCount(doc, locale) {
     }
   }
   return n;
+}
+
+// ── Translation workflow helpers ────────────────────────────────────────────
+// ONE walker over every bilingual pair in a document, used by the editor's
+// per-page completeness indicator and the "תרגם את כל החוסרים" bulk action.
+// Each entry addresses the En field by PATH so the client can fill it
+// immutably; `kind` says whether the translate call should preserve HTML.
+
+const HTML_PAIR_BASES = new Set(['html', 'answer']);
+
+function pairsOfSection(t) {
+  // fooHe + fooEn both declared → a bilingual pair named foo.
+  return t.fields
+    .filter((f) => f.endsWith('He') && t.fields.includes(`${f.slice(0, -2)}En`))
+    .map((f) => f.slice(0, -2));
+}
+
+/**
+ * Every bilingual field in the document, with paths into the normalized shape.
+ * Hidden sections/rows/cards are included (a translation done while hidden is
+ * not lost); the completeness counter below filters to VISIBLE content.
+ */
+export function listBilingualFields(doc) {
+  const d = normalizeDocument(doc);
+  const out = [];
+  const add = (label, kind, hePath, enPath, heVal, enVal) =>
+    out.push({ label, kind, hePath, enPath, he: heVal || '', en: enVal || '' });
+
+  add('כותרת העמוד', 'text', ['titleHe'], ['titleEn'], d.titleHe, d.titleEn);
+  for (const base of ['title', 'description', 'ogTitle', 'ogDescription']) {
+    add(`SEO ${base}`, 'text', ['seo', `${base}He`], ['seo', `${base}En`], d.seo[`${base}He`], d.seo[`${base}En`]);
+  }
+
+  d.sections.forEach((s, si) => {
+    const t = sectionType(s.type);
+    if (!t) return;
+    const sLabel = t.label;
+    for (const base of pairsOfSection(t)) {
+      add(
+        `${sLabel} · ${base}`,
+        HTML_PAIR_BASES.has(base) ? 'html' : 'text',
+        ['sections', si, `${base}He`],
+        ['sections', si, `${base}En`],
+        s[`${base}He`],
+        s[`${base}En`],
+      );
+    }
+    (s.cards || []).forEach((c, ci) => {
+      for (const [heKey, enKey] of CARD_BILINGUAL_PAIRS) {
+        add(
+          `${c.name || 'כרטיס'} · ${heKey.replace(/He$/, '')}`,
+          'text',
+          ['sections', si, 'cards', ci, heKey],
+          ['sections', si, 'cards', ci, enKey],
+          c[heKey],
+          c[enKey],
+        );
+      }
+    });
+    (s.items || []).forEach((q, qi) => {
+      add(`שאלה ${qi + 1}`, 'text', ['sections', si, 'items', qi, 'questionHe'], ['sections', si, 'items', qi, 'questionEn'], q.questionHe, q.questionEn);
+      add(`תשובה ${qi + 1}`, 'html', ['sections', si, 'items', qi, 'answerHe'], ['sections', si, 'items', qi, 'answerEn'], q.answerHe, q.answerEn);
+    });
+    (s.rows || []).forEach((r, ri) => {
+      for (const base of ['title', 'meta', 'notes']) {
+        add(`${r.titleHe || 'פריט'} · ${base}`, 'text', ['sections', si, 'rows', ri, `${base}He`], ['sections', si, 'rows', ri, `${base}En`], r[`${base}He`], r[`${base}En`]);
+      }
+      (r.lines || []).forEach((l, li) => {
+        if (l.kind === 'custom') {
+          add(`${r.titleHe || 'פריט'} · שורה ${li + 1}`, 'text', ['sections', si, 'rows', ri, 'lines', li, 'labelHe'], ['sections', si, 'rows', ri, 'lines', li, 'labelEn'], l.labelHe, l.labelEn);
+        }
+      });
+    });
+  });
+  return out;
+}
+
+const hasText = (v) => !!v && String(v).replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') !== '';
+
+/**
+ * "תוכן אנגלי: done מתוך total" — over VISIBLE content only. total counts
+ * pairs whose Hebrew side has content; done counts those already translated.
+ */
+export function englishCompleteness(doc) {
+  const fields = listBilingualFields(visibleDocument(doc));
+  const relevant = fields.filter((f) => hasText(f.he));
+  return {
+    total: relevant.length,
+    done: relevant.filter((f) => hasText(f.en)).length,
+  };
+}
+
+/** Immutable set-at-path over the plain-JSON document shape. */
+export function setAtPath(doc, path, value) {
+  if (!path.length) return value;
+  const [head, ...rest] = path;
+  if (Array.isArray(doc)) {
+    const copy = doc.slice();
+    copy[head] = setAtPath(doc[head], rest, value);
+    return copy;
+  }
+  return { ...doc, [head]: setAtPath(doc?.[head] ?? {}, rest, value) };
 }
 
 /** A slug an operator typed, reduced to what may appear in a URL path segment. */

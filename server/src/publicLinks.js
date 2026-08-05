@@ -22,13 +22,15 @@
 // WHERE the pages are served from — the ONE line that moves when hosting moves.
 //
 // Until the WordPress shell is installed on the marketing site, the pages'
-// public home is GOS itself: /pages/<slug> on the app origin (owner decision,
-// 2026-08-05 — "do not wait for WordPress"). When WordPress takes over, set
-// SITE_PAGES_PUBLIC_BASE=https://grafitiyul.co.il (or change the default here)
-// and every derived link, canonical URL and sitemap entry follows.
+// public home is GOS itself at the domain ROOT: /<slug> on the app origin
+// (owner corrections, 2026-08-05 — clean URLs, no /pages prefix). When
+// WordPress takes over, set SITE_PAGES_PUBLIC_BASE=https://grafitiyul.co.il
+// (or change the default here) and every derived link, canonical URL and
+// sitemap entry follows.
 const PAGES_BASE = (
   process.env.SITE_PAGES_PUBLIC_BASE ||
-  `${process.env.PUBLIC_ORIGIN || 'https://app.grafitiyul.co.il'}/pages`
+  process.env.PUBLIC_ORIGIN ||
+  'https://app.grafitiyul.co.il'
 ).replace(/\/+$/, '');
 
 /** logical name -> the SitePage slug that owns it. */

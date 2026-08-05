@@ -58,7 +58,7 @@ import { ingestMirror } from './mirror/pipeline.js';
 import { airtableClientFromEnv } from './mirror/sources/airtableClient.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import publicSitePagesRouter from './routes/publicSitePages.js';
-import publicPagesRouter from './routes/publicPages.js';
+import rootPagesRouter, { legacyPagesRouter } from './routes/publicPages.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
 import savedViewsRouter from './routes/savedViews.js';
@@ -334,11 +334,10 @@ app.use('/api/webhooks', icountWebhookRouter);
 // payload, re-verifies server-side (GetLpResult), marks the request paid once,
 // and triggers the iCount document. Idempotent against retries.
 app.use('/api/webhooks', cardcomWebhookRouter);
-// PUBLIC website pages on the GOS domain — /pages/<slug> (+ /pages/sitemap.xml).
-// ONE generic SSR route over the published 'דפי אתר' content; must be mounted
-// before the SPA fallback. The temporary public home until WordPress renders
-// them (canonical owner: publicLinks.js).
-app.use('/pages', publicPagesRouter);
+// LEGACY /pages/<slug> — 301 to the clean root URLs below (query preserved,
+// single hop). The clean pages themselves are mounted just before the SPA
+// fallback so every real application route keeps winning.
+app.use('/pages', legacyPagesRouter);
 // PUBLIC canonical payment URLs — /payment/<provider>/<token> (Cardcom + iCount).
 // Provider is visible in the URL. Must be mounted before the SPA fallback.
 app.use('/payment', paymentRouter);
@@ -602,6 +601,16 @@ app.use(
     },
   }),
 );
+
+// ── PUBLIC website pages at the domain root — /:slug ───────────────
+//
+// 'דפי אתר' clean URLs (e.g. /restaurant-recommendations). Mounted HERE —
+// after every API route and the static middlewares, immediately before the
+// SPA fallback — so an existing route always wins by ordering, and
+// reservedSlugs.js refuses system names before any DB lookup. A slug that is
+// not a published page calls next() and the SPA fallback behaves exactly as
+// it always has. /sitemap.xml (indexable pages only) lives on the same router.
+app.use(rootPagesRouter);
 
 // ── SPA fallback with token-aware manifest rewrite ─────────────────
 //

@@ -224,9 +224,9 @@ test('restaurants sends the canonical link to that booking\'s customer', async (
   const r = h.fired.find((f) => f.number === 24);
   assert.equal(r.idempotencyKey, 'coordination_restaurants:sub_1');
   assert.equal(r.recipient.phone, '050-1111111');
-  // The link follows publicLinks.js — currently the GOS-hosted /pages home
+  // The link follows publicLinks.js — currently the GOS-hosted clean root URL
   // (until the WordPress shell exists; one-line change there moves everyone).
-  assert.equal(r.data.publicLinks.restaurantRecommendations, 'https://app.grafitiyul.co.il/pages/restaurant-recommendations');
+  assert.equal(r.data.publicLinks.restaurantRecommendations, 'https://app.grafitiyul.co.il/restaurant-recommendations');
 });
 
 test('a customer with no phone is a skip, never a send to nobody', async () => {

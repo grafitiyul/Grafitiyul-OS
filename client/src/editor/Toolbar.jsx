@@ -165,6 +165,20 @@ export const TOOLBAR_PRESETS = {
     ['highlight', 'emoji'],
     ['fontSize'],
   ],
+  // "דפי אתר" sections — mirrors the server-side sanitize allowlist exactly:
+  // no fonts/colors (style attrs are stripped), no video (iframes stripped),
+  // no dynamic fields (pages have no variable context). Image upload goes
+  // through the canonical media pipeline like every editor.
+  sitePage: [
+    ['undo', 'redo'],
+    ['heading'],
+    ['bold', 'italic', 'underline'],
+    ['bulletList', 'orderedList'],
+    ['alignRight', 'alignCenter', 'alignLeft'],
+    ['dirRtl', 'dirLtr'],
+    ['link'],
+    ['image', 'emoji'],
+  ],
   // Communication Center email body: full rich email formatting, but no
   // video/font-family (email clients render them unreliably) and no the HR
   // dynamicField menu — the Communication editor renders its own

@@ -42,11 +42,31 @@ export function TextInput({ value, onChange, placeholder, dir }) {
  * TranslateButton between them. Bilingual editing is a first-class requirement
  * for this module, so it is ONE component rather than a per-screen pattern.
  */
-function Bilingual({ label, he, en, onHe, onEn, rich = false, hint }) {
+const hasText = (v) =>
+  !!v && String(v).replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') !== '';
+
+function Bilingual({ label, he, en, onHe, onEn, rich = false, multiline = false, hint }) {
+  const missing = hasText(he) && !hasText(en);
+  const input = (value, onChange, dir, aria) => {
+    if (rich) {
+      // sitePage preset = exactly what the sanitizer keeps, incl. image upload
+      // through the canonical media pipeline (drag/drop + paste supported).
+      return <RichEditor value={value || ''} onChange={onChange} preset="sitePage" minContentHeight={120} ariaLabel={aria} />;
+    }
+    if (multiline) {
+      return <textarea className={I} rows={2} dir={dir} value={value || ''} onChange={(e) => onChange(e.target.value)} aria-label={aria} />;
+    }
+    return <TextInput value={value} onChange={onChange} dir={dir} />;
+  };
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-1">
-        <label className={L + ' mb-0'}>{label}</label>
+        <span className="flex items-center gap-2">
+          <label className={L + ' mb-0'}>{label}</label>
+          {missing ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">חסר באנגלית</span>
+          ) : null}
+        </span>
         <TranslateButton
           getSource={() => he || ''}
           getTarget={() => en || ''}
@@ -58,19 +78,11 @@ function Bilingual({ label, he, en, onHe, onEn, rich = false, hint }) {
       <div className="grid gap-3 md:grid-cols-2">
         <div>
           <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">עברית</p>
-          {rich ? (
-            <RichEditor value={he || ''} onChange={onHe} preset="lite" minContentHeight={120} ariaLabel={`${label} עברית`} />
-          ) : (
-            <TextInput value={he} onChange={onHe} dir="rtl" />
-          )}
+          {input(he, onHe, 'rtl', `${label} עברית`)}
         </div>
         <div>
           <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">English</p>
-          {rich ? (
-            <RichEditor value={en || ''} onChange={onEn} preset="lite" minContentHeight={120} ariaLabel={`${label} English`} />
-          ) : (
-            <TextInput value={en} onChange={onEn} dir="ltr" />
-          )}
+          {input(en, onEn, 'ltr', `${label} English`)}
         </div>
       </div>
       {hint ? <p className="mt-1 text-xs text-slate-400">{hint}</p> : null}
@@ -92,19 +104,17 @@ function ImageField({ value, onChange }) {
 }
 
 // ── One recommendation card ────────────────────────────────────────────────
+// Every translatable card field is a Bilingual pair (He | En side by side with
+// the shared TranslateButton). address/phone/website/mapUrl/image stay
+// language-neutral. The English page hides an untranslated fact row entirely
+// (strict) — except the name, where EN shows nameEn or the original name.
 function CardRow({ card, onChange, onRemove, onDuplicate }) {
   const f = (k) => (v) => onChange({ ...card, [k]: v });
   return (
     <div className={`rounded-xl border p-3 ${card.hidden ? 'border-slate-200 bg-slate-50 opacity-70' : 'border-slate-200 bg-white'}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="cursor-grab select-none text-slate-400" title="גררו לשינוי סדר">⠿</span>
-        <input
-          className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm font-medium"
-          value={card.name || ''}
-          dir="auto"
-          placeholder="שם המקום"
-          onChange={(e) => f('name')(e.target.value)}
-        />
+        <span className="flex-1 text-sm font-medium text-slate-800">{card.name || 'מקום חדש'}</span>
         <button type="button" className="text-xs text-slate-500 hover:text-slate-800" onClick={onDuplicate}>שכפול</button>
         <button
           type="button"
@@ -115,15 +125,19 @@ function CardRow({ card, onChange, onRemove, onDuplicate }) {
         </button>
         <button type="button" className="text-xs text-rose-600 hover:text-rose-800" onClick={onRemove}>מחיקה</button>
       </div>
+      <Bilingual
+        label="שם המקום"
+        hint="באנגלית יוצג השם האנגלי אם הוזן; אחרת השם המקורי (שם עסק הוא זהות, לא תוכן)."
+        he={card.name} en={card.nameEn} onHe={f('name')} onEn={f('nameEn')}
+      />
+      <Bilingual label="תיאור" he={card.descriptionHe} en={card.descriptionEn} onHe={f('descriptionHe')} onEn={f('descriptionEn')} />
+      <Bilingual label="קטגוריה / אזור" he={card.category} en={card.categoryEn} onHe={f('category')} onEn={f('categoryEn')} />
+      <Bilingual multiline label="שעות פעילות" he={card.hours} en={card.hoursEn} onHe={f('hours')} onEn={f('hoursEn')} />
+      <Bilingual label="כשרות" he={card.kosher} en={card.kosherEn} onHe={f('kosher')} onEn={f('kosherEn')} />
+      <Bilingual label="הערות" he={card.notes} en={card.notesEn} onHe={f('notes')} onEn={f('notesEn')} />
       <div className="grid gap-2 md:grid-cols-2">
         <Field label="כתובת"><TextInput value={card.address} onChange={f('address')} dir="rtl" /></Field>
         <Field label="טלפון"><TextInput value={card.phone} onChange={f('phone')} dir="ltr" /></Field>
-        <Field label="שעות פעילות">
-          <textarea className={I} rows={2} dir="rtl" value={card.hours || ''} onChange={(e) => f('hours')(e.target.value)} />
-        </Field>
-        <Field label="כשרות"><TextInput value={card.kosher} onChange={f('kosher')} dir="rtl" /></Field>
-        <Field label="הערות"><TextInput value={card.notes} onChange={f('notes')} dir="rtl" /></Field>
-        <Field label="קטגוריה"><TextInput value={card.category} onChange={f('category')} dir="rtl" /></Field>
         <Field label="אתר"><TextInput value={card.website} onChange={f('website')} dir="ltr" placeholder="https://…" /></Field>
         <Field label="קישור למפה"><TextInput value={card.mapUrl} onChange={f('mapUrl')} dir="ltr" placeholder="https://…" /></Field>
       </div>

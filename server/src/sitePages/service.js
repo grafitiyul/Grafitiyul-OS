@@ -1,5 +1,6 @@
 import { prisma as realPrisma } from '../db.js';
 import { sanitizeDocument } from './sanitize.js';
+import { isReservedSlug } from './reservedSlugs.js';
 import { normalizeSlug, documentSummary, emptyDocument } from '../../../shared/sitePage.mjs';
 
 // Test seam. The draft/published invariants below are the whole point of this
@@ -70,6 +71,8 @@ export async function createPage({ internalName, pageType, slug, defaultLanguage
   if (!name) throw badRequest('internalName_required');
   const cleanSlug = normalizeSlug(slug);
   if (!cleanSlug) throw badRequest('slug_required');
+  // Pages live at the domain root — a slug must never shadow a system route.
+  if (isReservedSlug(cleanSlug)) throw badRequest('slug_reserved');
   const clash = await prisma.sitePage.findUnique({ where: { slug: cleanSlug } });
   if (clash) throw badRequest('slug_taken');
 
@@ -114,6 +117,7 @@ export async function saveDraft(id, { document, internalName, pageType, slug, de
     const cleanSlug = normalizeSlug(slug);
     if (!cleanSlug) throw badRequest('slug_required');
     if (cleanSlug !== page.slug) {
+      if (isReservedSlug(cleanSlug)) throw badRequest('slug_reserved');
       const clash = await prisma.sitePage.findUnique({ where: { slug: cleanSlug } });
       if (clash) throw badRequest('slug_taken');
       data.slug = cleanSlug;

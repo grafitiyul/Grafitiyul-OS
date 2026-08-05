@@ -7,7 +7,9 @@ import {
   normalizeDocument, visibleDocument, makeSection, makeCard, emptyDocument,
   normalizeSlug, SECTION_TYPE_KEYS, documentSummary,
   makePricingRow, makePricingLine,
+  listBilingualFields, englishCompleteness, setAtPath,
 } from '../../../shared/sitePage.mjs';
+import { isReservedSlug } from './reservedSlugs.js';
 import { PUBLIC_LINKS, SITE_PAGE_SLUGS, sitePageUrl } from '../publicLinks.js';
 
 // Regression tests for the "דפי אתר" module. These cover the behaviours the
@@ -31,7 +33,9 @@ function cardsSection(cards, heading = 'מסעדות') {
 // ── #8 No unsafe HTML / scripts ────────────────────────────────────────────
 test('#8 script tags, handlers and javascript: URLs never survive sanitization', () => {
   assert.equal(sanitizeSiteHtml('<script>alert(1)</script><p>ok</p>'), '<p>ok</p>');
-  assert.equal(sanitizeSiteHtml('<img src=x onerror="alert(1)">'), '');
+  assert.equal(sanitizeSiteHtml('<img src=x onerror="alert(1)">'), '', 'relative/handler img is dropped whole');
+  assert.equal(sanitizeSiteHtml('<img src="https://cdn.example/pic.jpg" alt="x">'), '<img src="https://cdn.example/pic.jpg" alt="x" />', 'absolute https img survives (inline images in rich sections)');
+  assert.ok(!sanitizeSiteHtml('<img src="data:image/png;base64,AAAA">').includes('img'), 'data: URIs never survive');
   assert.equal(sanitizeSiteHtml('<iframe src="https://evil"></iframe>'), '');
   assert.ok(!sanitizeSiteHtml('<a href="javascript:alert(1)">x</a>').includes('javascript:'));
   assert.equal(safeUrl('javascript:alert(1)'), '');
@@ -228,12 +232,12 @@ test('#11 images carry alt text and lazy loading', () => {
 // (/pages/<slug> on the app origin — owner decision 2026-08-05). publicLinks
 // stays the ONE owner: moving back to the marketing domain is a one-line
 // change there, and these assertions then change with it.
-test('#12 page links resolve through the canonical slug owner to the GOS public pages', () => {
+test('#12 page links resolve through the canonical slug owner to the CLEAN root URLs', () => {
   assert.equal(SITE_PAGE_SLUGS.restaurantRecommendations, 'restaurant-recommendations');
-  assert.equal(PUBLIC_LINKS.restaurantRecommendations, 'https://app.grafitiyul.co.il/pages/restaurant-recommendations');
-  assert.equal(PUBLIC_LINKS.agentPriceList, 'https://app.grafitiyul.co.il/pages/agent-price-list');
+  assert.equal(PUBLIC_LINKS.restaurantRecommendations, 'https://app.grafitiyul.co.il/restaurant-recommendations');
+  assert.equal(PUBLIC_LINKS.agentPriceList, 'https://app.grafitiyul.co.il/agent-price-list');
   // slashes in either direction still produce exactly one canonical form
-  assert.equal(sitePageUrl('/restaurant-recommendations/'), 'https://app.grafitiyul.co.il/pages/restaurant-recommendations');
+  assert.equal(sitePageUrl('/restaurant-recommendations/'), 'https://app.grafitiyul.co.il/restaurant-recommendations');
 });
 
 test('#12 no customer-facing link points at THEGUY, and all are https', () => {
@@ -363,6 +367,78 @@ test('a pricing row with no title renders nothing (no orphan price fragments)', 
   const s = pricingSection([{ titleHe: '', lines: [priceLine({ kind: 'fixed', amountMinor: 55500 })] }]);
   const { html } = renderPage(docWith(s), { locale: 'he' });
   assert.ok(!html.includes('555'));
+});
+
+// ── bilingual cards (strict English rendering) ─────────────────────────────
+test('card facts render per locale: English uses En fields or hides the row — never Hebrew', () => {
+  const s = cardsSection([
+    {
+      name: 'קפה מלכה', nameEn: 'Cafe Malka',
+      hours: 'ראשון עד חמישי 08:00-17:00', hoursEn: 'Sun-Thu 08:00-17:00',
+      kosher: 'כשר למהדרין', // kosherEn deliberately empty
+      address: 'אליפלט 26',
+    },
+  ]);
+  const he = renderPage(docWith(s), { locale: 'he' }).html;
+  assert.ok(he.includes('קפה מלכה'));
+  assert.ok(he.includes('ראשון עד חמישי'));
+  assert.ok(he.includes('כשר למהדרין'));
+
+  const en = renderPage(docWith(s), { locale: 'en' }).html;
+  assert.ok(en.includes('Cafe Malka'), 'EN shows the English name');
+  assert.ok(!en.includes('קפה מלכה'), 'the Hebrew name is replaced when nameEn exists');
+  assert.ok(en.includes('Sun-Thu 08:00-17:00'));
+  assert.ok(!en.includes('ראשון עד חמישי'), 'Hebrew hours never leak into English');
+  assert.ok(!en.includes('כשר למהדרין'), 'an untranslated fact row is hidden, not shown in Hebrew');
+  assert.ok(en.includes('אליפלט 26'), 'address is language-neutral and stays');
+});
+
+test('a card with no nameEn keeps its original name on the English page (identity exception)', () => {
+  const s = cardsSection([{ name: 'גושן', descriptionEn: 'Great burger place' }]);
+  const en = renderPage(docWith(s), { locale: 'en' }).html;
+  assert.ok(en.includes('גושן'));
+  assert.ok(en.includes('Great burger place'));
+});
+
+// ── translation workflow helpers ───────────────────────────────────────────
+test('englishCompleteness counts VISIBLE Hebrew-filled pairs and their translations', () => {
+  const s = cardsSection([
+    { name: 'א', hours: 'שעות', hoursEn: 'Hours' },
+    { name: 'ב', hidden: true, hours: 'מוסתר' },
+  ], 'מסעדות');
+  const text = makeSection('richText');
+  text.headingHe = 'חניונים';
+  const doc = docWith(s, text);
+  const c = englishCompleteness(doc);
+  // Hebrew-filled visible pairs: section heading (מסעדות), card א name+hours,
+  // richText heading (חניונים). Translated: hoursEn only.
+  assert.equal(c.total, 4);
+  assert.equal(c.done, 1);
+});
+
+test('listBilingualFields addresses every pair with a settable path', () => {
+  const faq = makeSection('faq');
+  faq.items = [{ id: 'q1', hidden: false, questionHe: 'שאלה?', questionEn: '', answerHe: '<p>תשובה</p>', answerEn: '' }];
+  const doc = docWith(faq);
+  const fields = listBilingualFields(doc);
+  const q = fields.find((f) => f.he === 'שאלה?');
+  assert.ok(q, 'the FAQ question pair is enumerated');
+  assert.equal(q.kind, 'text');
+  const a = fields.find((f) => f.he === '<p>תשובה</p>');
+  assert.equal(a.kind, 'html', 'FAQ answers translate as HTML');
+  const next = setAtPath(doc, q.enPath, 'Question?');
+  assert.equal(next.sections[0].items[0].questionEn, 'Question?');
+  assert.equal(doc.sections[0].items[0].questionEn, '', 'setAtPath is immutable');
+});
+
+// ── reserved slugs (root-URL collision fence) ──────────────────────────────
+test('system route names can never become page slugs', () => {
+  for (const bad of ['admin', 'api', 'assets', 'payment', 'pay', 'p', 'r', 'g', 'launch', 'login', 'pages', 'sitemap.xml', 'health', 'preview', 'Admin']) {
+    assert.ok(isReservedSlug(bad), `"${bad}" must be reserved`);
+  }
+  for (const ok of ['restaurant-recommendations', 'agent-price-list', 'about-us']) {
+    assert.ok(!isReservedSlug(ok), `"${ok}" must be allowed`);
+  }
 });
 
 // ── contract guards ────────────────────────────────────────────────────────
