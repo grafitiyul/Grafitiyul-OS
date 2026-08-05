@@ -239,17 +239,25 @@ export default function CodeManagedNotifications({ group, emptyHe = 'אין הת
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[12.5px] font-semibold text-gray-700">תצוגה מקדימה (נתוני דוגמה)</span>
                     <div className="flex items-center gap-2">
-                      {/* Guides only. A CUSTOMER message always follows the
-                          customer's own language — there is nothing to toggle,
-                          and offering the choice would imply an operator could
-                          send a customer Hebrew by mistake. */}
-                      {toCustomer && (
+                      {/* A CUSTOMER message always follows the customer's own
+                          language — there is nothing to toggle, and offering
+                          the choice would imply an operator could send a
+                          customer Hebrew by mistake. Every other report gets
+                          the ONE guide-language checkbox: per-guide messages
+                          follow each recipient's own profile language; a
+                          group-destination report follows the language of the
+                          guides assigned to the triggering event. */}
+                      {toCustomer ? (
                         <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
                           נשלח בשפת הלקוח
                         </span>
-                      )}
-                      {toGuides && (
-                        <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-gray-700">
+                      ) : (
+                        <label
+                          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-gray-700"
+                          title={toGuides
+                            ? 'כל מדריך מקבל את ההודעה בשפה המוגדרת בפרופיל שלו; ללא שפה מוגדרת — עברית.'
+                            : 'כשהמדריך המשובץ לאירוע מוגדר כדובר אנגלית, הדיווח נשלח באנגלית; אחרת (או ללא אירוע/שיבוץ) — עברית.'}
+                        >
                           <input
                             type="checkbox"
                             checked={!!r.sendInGuideLanguage}

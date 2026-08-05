@@ -53,7 +53,10 @@ const CONTEXT_SELECT = {
       productVariant: { select: { location: { select: { nameHe: true, nameEn: true } } } },
       location: { select: { nameHe: true, nameEn: true } },
       assignments: {
-        select: { displayName: true, personRef: { select: { displayName: true, profile: true } } },
+        // role + externalPersonId are what the canonical guide-name rule needs
+        // (notifiableGuides filters by role; resolveStaffDisplayName may fall
+        // back to an email-shaped externalPersonId for historical staff).
+        select: { role: true, displayName: true, externalPersonId: true, personRef: { select: { displayName: true, profile: true } } },
         orderBy: { createdAt: 'asc' },
       },
     },

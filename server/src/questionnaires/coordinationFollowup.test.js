@@ -20,9 +20,12 @@ const QUESTIONS = [
   { key: 'q_rest', config: { coordinationRole: 'send_restaurant_recommendations' } },
 ];
 
+// PRODUCTION SHAPE: coordination is per-booking (not perActor), so staff links
+// and their submissions carry actorScope: null — always. A test that fabricates
+// an actorScope here proves a code path production can never take.
 const SUBMISSION = {
   id: 'sub_1', purpose: 'coordination', subjectType: 'booking', subjectId: 'bk_A',
-  actorScope: 'ext_guide_1', language: 'he',
+  actorScope: null, language: 'he',
 };
 
 /** A booking graph shaped exactly like loadCoordinationScope's select. */
@@ -44,7 +47,7 @@ function bookingRow({ id = 'bk_A', seats = [13], name = ['דנה', 'לוי'], ph
       product: { nameHe: 'סיור וסדנת גרפיטי', nameEn: 'Graffiti tour' },
       productVariant: { location: { nameHe: 'פלורנטין', nameEn: 'Florentin' } },
       location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' },
-      assignments: [{ personRef: { displayName: 'יואב כהן' } }],
+      assignments: [{ role: 'guide', displayName: null, externalPersonId: null, personRef: { displayName: 'יואב כהן', profile: null } }],
     },
   };
 }
@@ -151,10 +154,37 @@ test('a real change creates ONE card and fires exactly #21 and #22', async () =>
     assert.equal(c.note, 'הצטרפו שתי משפחות');
     // Canonical customer label: organization first (privacy rule).
     assert.equal(c.customerName, 'עיריית תל אביב');
-    assert.equal(c.guideName, 'יואב כהן');
+    // From the TOUR ASSIGNMENT — the submission's actorScope is null (above),
+    // so a name here proves the canonical source is in use.
+    assert.equal(c.guideNameHe, 'יואב כהן');
+    assert.equal(c.guideNameEn, 'יואב כהן', 'no English profile name → the canonical resolver falls back to Hebrew');
     assert.equal(c.variantName, 'פלורנטין');
     assert.equal(c.reviewItemId, 'ri_1', 'the card exists before the message that links to it');
   }
+});
+
+test('guide name resolves from the TOUR ASSIGNMENTS (lead first, assistants never), in both languages', async () => {
+  const booking = bookingRow();
+  booking.tourEvent.assignments = [
+    { role: 'assistant', displayName: null, externalPersonId: null, personRef: { displayName: 'עוזר הדרכה', profile: null } },
+    { role: 'lead_guide', displayName: null, externalPersonId: null, personRef: { displayName: 'יואב כהן', profile: { firstNameEn: 'Yoav', lastNameEn: 'Cohen' } } },
+    { role: 'guide', displayName: null, externalPersonId: null, personRef: { displayName: 'מיכל לוי', profile: null } },
+  ];
+  const h = harness({ booking });
+  await run(h, { q_match: false, q_count: 18 });
+  const c = h.fired[0].data.participantChange;
+  assert.equal(c.guideNameHe, 'יואב כהן', 'the lead guide wins; the plain guide and the assistant are not shown');
+  assert.equal(c.guideNameEn, 'Yoav Cohen', 'English from the canonical staff profile');
+});
+
+test('a tour with NO assigned guides freezes null — the report honestly shows —', async () => {
+  const booking = bookingRow();
+  booking.tourEvent.assignments = [];
+  const h = harness({ booking });
+  await run(h, { q_match: false, q_count: 18 });
+  const c = h.fired[0].data.participantChange;
+  assert.equal(c.guideNameHe, null);
+  assert.equal(c.guideNameEn, null);
 });
 
 test('the registered count is the REGISTRATION sum, not Booking.seats', async () => {

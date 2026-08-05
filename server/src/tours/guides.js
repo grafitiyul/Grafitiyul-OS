@@ -38,6 +38,19 @@ export function guideFullName(assignment) {
   return resolveStaffDisplayName(assignment) || null;
 }
 
+/**
+ * The guide language of a WHOLE tour, for one shared (group-destination)
+ * message that cannot be split per person: 'en' only when EVERY notifiable
+ * guide prefers English in their canonical staff profile; 'he' when any
+ * prefers Hebrew or has no language set; null when nobody is assigned
+ * (callers fall back to Hebrew).
+ */
+export function guidesPreferredLanguage(assignments = []) {
+  const guides = notifiableGuides(assignments);
+  if (!guides.length) return null;
+  return guides.every((a) => a.personRef?.profile?.preferredLanguage === 'en') ? 'en' : 'he';
+}
+
 /** Prisma select fragment for assignments used by notifications. */
 export const GUIDE_ASSIGNMENT_SELECT = {
   role: true,

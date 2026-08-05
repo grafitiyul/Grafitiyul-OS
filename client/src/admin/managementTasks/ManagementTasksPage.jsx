@@ -264,7 +264,7 @@ function TourGroup({ group, status, busy, focusId, onAct, onOpenDeal }) {
         </h2>
         {when ? <span className="text-[12.5px] font-medium text-gray-600">{when}</span> : null}
         {product ? <span className="text-[12px] text-gray-500">{product}</span> : null}
-        {d.guideName ? <span className="text-[12px] text-gray-500">· {d.guideName}</span> : null}
+        {(d.guideName || d.guideNameHe) ? <span className="text-[12px] text-gray-500">· {d.guideName || d.guideNameHe}</span> : null}
         <span className="ms-auto text-[11.5px] text-gray-400">
           {cards.length === 1 ? 'משימה אחת' : `${cards.length} משימות נפרדות`}
         </span>

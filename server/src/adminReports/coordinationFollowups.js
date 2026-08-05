@@ -46,7 +46,9 @@ const participantBody = (ctx, lang) => {
     he ? '👥 שינוי בכמות המשתתפים 👥' : '👥 Participant count changed 👥',
     '',
     `${he ? 'לקוח' : 'Customer'}: ${party}`,
-    `${he ? 'מדריך' : 'Guide'}: ${r.guideName || '—'}`,
+    // Frozen from the canonical TourEvent staff assignments at fire time —
+    // each language shows the canonical staff name for that language.
+    `${he ? 'מדריך' : 'Guide'}: ${(he ? r.guideNameHe : r.guideNameEn) || '—'}`,
     `${he ? 'מוצר' : 'Product'}: ${product}`,
     `${he ? 'מועד הסיור' : 'Tour'}: ${formatDateHe(r.tourDate) || '—'} ${r.tourTime || ''}`.trim(),
     '',
@@ -71,7 +73,8 @@ const participantSample = () => ({
   participantChange: {
     customerName: 'דנה לוי',
     orgName: 'עיריית תל אביב',
-    guideName: 'יואב כהן',
+    guideNameHe: 'יואב כהן',
+    guideNameEn: 'Yoav Cohen',
     productName: 'סיור וסדנת גרפיטי',
     variantName: 'פלורנטין',
     tourDate: '2026-09-16',
@@ -97,7 +100,8 @@ export const COORDINATION_FOLLOWUP_REPORTS = [
       + 'ושונה בפועל. פעם אחת לכל הגשה. תשובה "כן", תשובה ריקה או מספר זהה אינם מפעילים דיווח.',
     dataHe:
       'הכמות הרשומה מגיעה מהרישומים הקנוניים של ההזמנה הזו (TicketRegistration) — לא מסך '
-      + 'הסיור, שבסיור פתוח מאגד לקוחות שאינם קשורים. הדיווח אינו מעדכן דבר: לא הזמנה, '
+      + 'הסיור, שבסיור פתוח מאגד לקוחות שאינם קשורים. שם המדריך נקרא משיבוצי הצוות של '
+      + 'האירוע (המקור הקנוני בכל המערכת). הדיווח אינו מעדכן דבר: לא הזמנה, '
       + 'לא מחיר, לא קיבולת ולא שיבוץ.',
     render: (ctx) => participantBody(ctx, 'he'),
     renderEn: (ctx) => participantBody(ctx, 'en'),

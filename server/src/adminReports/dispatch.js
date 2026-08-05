@@ -14,10 +14,32 @@ import { reportByNumber, renderReport, renderReportSubject, reportChannel } from
 import { deliverReportEmail, resolveEmailRecipients } from './emailDelivery.js';
 import { checkSendAllowed, audienceKindFromReport } from '../communication/sendingPolicy.js';
 import { enqueueCustomerMessage } from './customerDelivery.js';
+import { guidesPreferredLanguage } from '../tours/guides.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
 export async function reportConfig(number) {
   return prisma.adminReportConfig.findUnique({ where: { reportNumber: Number(number) } });
+}
+
+/**
+ * The ONE language decision for a report delivery — every channel, every
+ * audience:
+ *   customer → always the customer's own language; internal toggles are
+ *     irrelevant to what a customer receives.
+ *   per-person staff (a guide) → their preferred language when the office
+ *     checked 'שלח בשפת המדריך', else Hebrew.
+ *   group/office destination → the SAME checkbox; with no single recipient the
+ *     EVENT's guides decide: English only when every notifiable guide assigned
+ *     to ctx.tour prefers English in the canonical staff profile
+ *     (tours/guides.js), Hebrew otherwise or when there is no tour in context.
+ * renderReport itself falls back to Hebrew when a report has no English
+ * version, so an untranslated report still arrives.
+ */
+export function reportLanguage(report, config, recipient, ctx) {
+  if (report.audience === 'customer') return recipient?.preferredLanguage || 'he';
+  if (!config?.sendInGuideLanguage) return 'he';
+  if (recipient) return recipient.preferredLanguage || 'he';
+  return guidesPreferredLanguage(ctx?.tour?.assignments) || 'he';
 }
 
 /** Human label for a configured destination (group subject / phone). */
@@ -61,16 +83,7 @@ export async function fireAdminReport(
     const ctx = await loadTriggerContext({ dealId, sessionId, tourEventId });
     Object.assign(ctx, data || {});
     if (recipient) ctx.recipient = recipient;
-    // Language. Guide-audience reports may follow the guide's own preferred
-    // language when the office enables it; manager reports stay Hebrew unless
-    // the same switch is turned on for them. Falls back to Hebrew whenever the
-    // report has no English version, so an untranslated report still arrives.
-    // A CUSTOMER report always follows the customer's own language: "send in
-    // the guide's language" is a staff setting and has no meaning here, and a
-    // customer must never receive Hebrew because an internal toggle is off.
-    const lang = report.audience === 'customer'
-      ? (recipient?.preferredLanguage || 'he')
-      : (config?.sendInGuideLanguage ? (recipient?.preferredLanguage || 'he') : 'he');
+    const lang = reportLanguage(report, config, recipient, ctx);
     const renderedText = renderReport(number, ctx, lang);
 
     const base = {
@@ -113,7 +126,7 @@ export async function fireAdminReport(
       return { ok: false, reason: 'recipient_unreachable' };
     }
 
-    if (reportChannel(report) === 'email') return fireEmailReport({ report, config, base, ctx }, log);
+    if (reportChannel(report) === 'email') return fireEmailReport({ report, config, base, ctx, lang }, log);
 
     const row = await createDelivery({
       ...base,
@@ -149,9 +162,11 @@ export async function fireAdminReport(
  * its own auditable outcome and its own retry — a bounced manager address must
  * not hide a successful send to the others.
  */
-async function fireEmailReport({ report, config, base, ctx }, log) {
+async function fireEmailReport({ report, config, base, ctx, lang = 'he' }, log) {
   const recipients = resolveEmailRecipients(config);
-  const subject = renderReportSubject(report.number, ctx);
+  // Subject and body must speak the SAME language — the bilingual guard
+  // guarantees an English body always has an English subject to render.
+  const subject = renderReportSubject(report.number, ctx, lang);
   let created = 0;
   for (const email of recipients) {
     const row = await createDelivery({

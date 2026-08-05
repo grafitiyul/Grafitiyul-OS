@@ -32,7 +32,8 @@ import { loadCoordinationScope } from './coordinationContext.js';
 import { bookingSeatCount, coordinationContact } from './contextCatalog.js';
 import { resolveMeetingPoint } from '../tours/meetingPoint.js';
 import { publicLinksContext } from '../publicLinks.js';
-import { staffName } from '../../../shared/staffName.mjs';
+import { notifiableGuides } from '../tours/guides.js';
+import { resolveStaffDisplayName } from '../../../shared/staffAssignmentDisplay.mjs';
 import { GENERIC_CUSTOMER_EN, GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
 
 /**
@@ -68,14 +69,19 @@ function customerRecipient(deal, lang) {
   };
 }
 
-/** The guide who filled the form (actorScope is their externalPersonId). */
-async function guideFor(actorScope, db) {
-  if (!actorScope) return null;
-  const p = await db.personRef.findUnique({
-    where: { externalPersonId: actorScope },
-    select: { displayName: true, profile: true },
-  });
-  return p ? staffName(p, 'he') : null;
+/**
+ * The tour's guide name(s), resolved from the CANONICAL TourEvent staff
+ * assignments — never from the submission. Coordination forms are per-booking
+ * (not perActor), so `submission.actorScope` is ALWAYS null in production;
+ * resolving the name from it silently rendered "מדריך: —" on every #21/#22.
+ * Lead guide(s) when assigned, otherwise every assigned guide — the same rule
+ * every tour notification uses (tours/guides.js + resolveStaffDisplayName).
+ */
+function assignedGuideNames(tour, lang) {
+  const names = notifiableGuides(tour?.assignments)
+    .map((a) => resolveStaffDisplayName(a, lang))
+    .filter(Boolean);
+  return names.length ? names.join(', ') : null;
 }
 
 /**
@@ -116,14 +122,14 @@ export async function coordinationFollowups(
     out.participantChange = verdict;
 
     if (verdict.changed) {
-      const guideName = await guideFor(submission.actorScope, db);
       const customerName = coordinationCustomerLabel(deal);
       const variantName = tour?.productVariant?.location?.nameHe || tour?.location?.nameHe || null;
 
       const frozen = {
         customerName,
         orgName: deal?.organization?.name || null,
-        guideName,
+        guideNameHe: assignedGuideNames(tour, 'he'),
+        guideNameEn: assignedGuideNames(tour, 'en'),
         productName: tour?.product?.nameHe || null,
         variantName,
         tourDate: tour?.date || null,
