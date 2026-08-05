@@ -661,6 +661,13 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ starred }),
       }),
+    // Which business number the automatic new-lead reply sends from. Only the
+    // starred template accepts it; takes effect on the next lead.
+    setNewLeadAccount: (id, accountId) =>
+      request(`/api/whatsapp-templates/${id}/new-lead-account`, {
+        method: 'PUT',
+        body: JSON.stringify({ accountId }),
+      }),
     // subject: a dealId string (Deal modal) OR { chatId } (standalone inbox).
     resolved: (id, subject, lang) =>
       request(

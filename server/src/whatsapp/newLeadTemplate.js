@@ -16,6 +16,22 @@
 // read the same rows, the same bilingual bodies and the same active flag.
 
 const STAR_FIELD = 'isNewLeadDefault';
+const ACCOUNT_FIELD = 'newLeadSendAccountId';
+
+// The number a new lead is greeted from when nobody has chosen one.
+//
+// 'main' (מכירות) rather than a coin-flip between the two configured bridges: a
+// first reply to a brand-new lead is a SALES first touch, and picking silently
+// between two real business numbers is exactly what the canonical sender
+// resolver refuses to do. This constant is the deliberate, documented answer to
+// that question for THIS flow only — every other server-initiated send keeps
+// its own rule.
+export const DEFAULT_NEW_LEAD_ACCOUNT_ID = 'main';
+
+/** The account a template will send from — its own choice, or the default. */
+export function newLeadAccountIdOf(template) {
+  return template?.[ACCOUNT_FIELD] || DEFAULT_NEW_LEAD_ACCOUNT_ID;
+}
 
 /** Raised when the operator tries to star a template that cannot hold the star. */
 export class TemplateNotStarrableError extends Error {
@@ -43,6 +59,7 @@ export async function getStarredTemplate(db) {
       bodyHeHtml: true,
       bodyEnHtml: true,
       isActive: true,
+      newLeadSendAccountId: true,
       updatedAt: true,
     },
   });
@@ -58,7 +75,7 @@ export async function getStarredTemplate(db) {
 export async function setNewLeadDefault(db, templateId) {
   const target = await db.whatsAppTemplate.findUnique({
     where: { id: templateId },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, [ACCOUNT_FIELD]: true },
   });
   if (!target) throw new TemplateNotStarrableError('not_found');
   // An inactive template is not offered anywhere and must never be the thing
@@ -73,8 +90,45 @@ export async function setNewLeadDefault(db, templateId) {
     });
     return tx.whatsAppTemplate.update({
       where: { id: templateId },
-      data: { [STAR_FIELD]: true },
+      data: {
+        [STAR_FIELD]: true,
+        // Switching the star KEEPS whatever this template already had, and
+        // otherwise lands on the safe default. Never inherits the outgoing
+        // template's choice: the account is a property of the template, so
+        // carrying it across would silently change the sending number of a
+        // template the operator did not configure.
+        [ACCOUNT_FIELD]: target[ACCOUNT_FIELD] || DEFAULT_NEW_LEAD_ACCOUNT_ID,
+      },
     });
+  });
+}
+
+/**
+ * Choose the number the automatic new-lead reply is sent from.
+ *
+ * Only meaningful on the STARRED template — that is the only one that sends —
+ * so setting it on another row is refused rather than quietly stored, which
+ * would leave an invisible setting waiting to surprise someone later.
+ *
+ * `validAccountIds` is supplied by the caller from the canonical account list;
+ * this module does not decide which numbers exist.
+ */
+export async function setNewLeadSendAccount(db, templateId, accountId, validAccountIds = null) {
+  const id = String(accountId || '').trim();
+  if (!id) throw new TemplateNotStarrableError('account_required');
+  if (validAccountIds && !validAccountIds.includes(id)) {
+    throw new TemplateNotStarrableError('unknown_account');
+  }
+  const target = await db.whatsAppTemplate.findUnique({
+    where: { id: templateId },
+    select: { id: true, [STAR_FIELD]: true },
+  });
+  if (!target) throw new TemplateNotStarrableError('not_found');
+  if (!target[STAR_FIELD]) throw new TemplateNotStarrableError('template_not_starred');
+
+  return db.whatsAppTemplate.update({
+    where: { id: templateId },
+    data: { [ACCOUNT_FIELD]: id },
   });
 }
 

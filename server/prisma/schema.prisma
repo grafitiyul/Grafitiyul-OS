@@ -2209,6 +2209,19 @@ model WhatsAppTemplate {
   // whatsapp/newLeadTemplate.js is the one writer that maintains the invariant
   // (starring clears the previous star; an inactive template cannot hold it).
   isNewLeadDefault Boolean  @default(false)
+  // WHICH business number the automatic new-lead reply is sent from.
+  //
+  // Owned by the template, not by an environment variable: which number greets
+  // a new lead is an everyday business decision (מכירות vs שירות לקוחות) the
+  // office must be able to change from the settings screen without a deploy.
+  // WHATSAPP_SYSTEM_ACCOUNT is deliberately NOT consulted for this flow — it
+  // remains the fallback for other server-initiated sends only.
+  //
+  // A WhatsAppAccount id ('main' | 'office'), kept as a LOOSE reference like the
+  // rest of the WhatsApp module: accounts are bridge-keyed configuration and a
+  // template must survive one being retired. Null = never chosen, and resolves
+  // to the default at send time.
+  newLeadSendAccountId String?
   sourceSystem     String? // 'airtable' for migrated rows, null for hand-created
   sourceRecordId   String? // Airtable recId (migration provenance)
   createdAt        DateTime @default(now())

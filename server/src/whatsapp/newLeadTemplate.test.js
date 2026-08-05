@@ -4,6 +4,9 @@ import {
   getStarredTemplate,
   setNewLeadDefault,
   clearNewLeadDefault,
+  setNewLeadSendAccount,
+  newLeadAccountIdOf,
+  DEFAULT_NEW_LEAD_ACCOUNT_ID,
   setActive,
   templateLanguages,
   TemplateNotStarrableError,
@@ -125,6 +128,71 @@ test('star: getStarredTemplate returns both language bodies for the send path', 
   const t = await getStarredTemplate(db);
   assert.equal(t.id, 'a');
   assert.deepEqual(templateLanguages(t), { he: true, en: true });
+});
+
+// ── The sending account ─────────────────────────────────────────────────────
+
+test('account: the default is מכירות (main) when nothing was ever chosen', () => {
+  assert.equal(DEFAULT_NEW_LEAD_ACCOUNT_ID, 'main');
+  assert.equal(newLeadAccountIdOf({ newLeadSendAccountId: null }), 'main');
+  assert.equal(newLeadAccountIdOf({}), 'main');
+  assert.equal(newLeadAccountIdOf(null), 'main');
+  assert.equal(newLeadAccountIdOf({ newLeadSendAccountId: 'office' }), 'office');
+});
+
+test('account: starring a template lands on the safe default', async () => {
+  const db = createDb([{ id: 'a', nameHe: 'A' }]);
+  await setNewLeadDefault(db, 'a');
+  assert.equal(db._rows[0].newLeadSendAccountId, 'main');
+});
+
+test('account: switching the star KEEPS each template’s own saved choice', async () => {
+  const db = createDb([
+    { id: 'a', nameHe: 'A', isNewLeadDefault: true, newLeadSendAccountId: 'office' },
+    { id: 'b', nameHe: 'B', newLeadSendAccountId: null },
+  ]);
+  // B has never been configured → the safe default, NOT A's office.
+  await setNewLeadDefault(db, 'b');
+  assert.equal(db._rows[1].newLeadSendAccountId, 'main', 'never inherits the outgoing template’s number');
+  assert.equal(db._rows[0].newLeadSendAccountId, 'office', 'A keeps its own setting for later');
+
+  // Starring A again restores ITS choice rather than resetting it.
+  await setNewLeadDefault(db, 'a');
+  assert.equal(db._rows[0].newLeadSendAccountId, 'office');
+});
+
+test('account: only the STARRED template accepts an account', async () => {
+  const db = createDb([
+    { id: 'a', nameHe: 'A', isNewLeadDefault: true },
+    { id: 'b', nameHe: 'B' },
+  ]);
+  await assert.rejects(
+    () => setNewLeadSendAccount(db, 'b', 'office', ['main', 'office']),
+    (e) => e instanceof TemplateNotStarrableError && e.code === 'template_not_starred',
+    'an invisible setting on a non-sending template would surprise someone later',
+  );
+  const updated = await setNewLeadSendAccount(db, 'a', 'office', ['main', 'office']);
+  assert.equal(updated.newLeadSendAccountId, 'office');
+});
+
+test('account: an unknown or empty account id is refused', async () => {
+  const db = createDb([{ id: 'a', nameHe: 'A', isNewLeadDefault: true }]);
+  for (const [value, code] of [['', 'account_required'], ['   ', 'account_required'], ['ghost', 'unknown_account']]) {
+    await assert.rejects(
+      () => setNewLeadSendAccount(db, 'a', value, ['main', 'office']),
+      (e) => e instanceof TemplateNotStarrableError && e.code === code,
+      `${JSON.stringify(value)} ⇒ ${code}`,
+    );
+  }
+  assert.equal(db._rows[0].newLeadSendAccountId, undefined, 'a refused change writes nothing');
+});
+
+test('account: getStarredTemplate exposes the account to the send path', async () => {
+  const db = createDb([
+    { id: 'a', nameHe: 'A', isNewLeadDefault: true, newLeadSendAccountId: 'office' },
+  ]);
+  const t = await getStarredTemplate(db);
+  assert.equal(newLeadAccountIdOf(t), 'office');
 });
 
 test('templateLanguages: empty and whitespace-only bodies count as absent', () => {

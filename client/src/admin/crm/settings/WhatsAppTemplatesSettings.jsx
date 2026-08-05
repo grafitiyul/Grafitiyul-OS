@@ -282,6 +282,20 @@ export default function WhatsAppTemplatesSettings() {
     }
   }
 
+  // Which business number the automatic reply goes out from. Applies to the
+  // next new lead immediately — no deploy, nothing cached.
+  async function changeSendAccount(item, accountId) {
+    // Optimistic: the dropdown must feel instant. A failure re-reads the truth.
+    setItems((list) => list.map((t) => (t.id === item.id ? { ...t, newLeadSendAccountId: accountId } : t)));
+    try {
+      await api.whatsappTemplates.setNewLeadAccount(item.id, accountId);
+      await refresh();
+    } catch (e) {
+      setAlertMsg('לא הצלחנו לעדכן את חשבון השליחה: ' + (e.payload?.error || e.message));
+      await refresh();
+    }
+  }
+
   async function remove(item) {
     try {
       await api.whatsappTemplates.remove(item.id);
@@ -339,6 +353,26 @@ export default function WhatsAppTemplatesSettings() {
                 {starred ? (
                   <span className="text-emerald-800">
                     כרגע נשלח: “{starred.nameHe}”
+                    {(() => {
+                      // The chosen number must be able to send. If it cannot, GOS
+                      // does NOT quietly use the other one — it skips and records
+                      // why — so the operator has to see it here.
+                      const acc = (meta.sendAccounts || []).find(
+                        (a) => a.id === (starred.newLeadSendAccountId || meta.defaultSendAccountId),
+                      );
+                      if (!acc) return null;
+                      return (
+                        <>
+                          {' '}· דרך <b>{acc.label}</b>
+                          {!acc.connected && (
+                            <span className="text-red-700">
+                              {' '}— החשבון מנותק, ולכן לא תישלח תשובה אוטומטית (המערכת לא תשלח
+                              מהמספר השני)
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                     {(!starred.hasHe || !starred.hasEn) && (
                       <span className="text-amber-700">
                         {' '}· חסר {!starred.hasHe ? 'נוסח בעברית' : 'נוסח באנגלית'} —
@@ -411,6 +445,27 @@ export default function WhatsAppTemplatesSettings() {
                   >
                     {item.isNewLeadDefault ? '★' : '☆'}
                   </button>
+                  {/* Sending account — ONLY on the template that actually sends.
+                      Sits immediately beside the star because it qualifies it:
+                      "this one answers new leads, from this number." */}
+                  {item.isNewLeadDefault && (
+                    <label className="flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1">
+                      <span className="text-[11px] font-medium text-amber-900">שליחה דרך</span>
+                      <select
+                        value={item.newLeadSendAccountId || meta.defaultSendAccountId || 'main'}
+                        onChange={(e) => changeSendAccount(item, e.target.value)}
+                        aria-label="חשבון הוואטסאפ שממנו נשלחת התשובה האוטומטית לליד חדש"
+                        className="rounded-md border border-amber-300 bg-white px-1.5 py-0.5 text-[12px] text-gray-800 focus:border-amber-500 focus:outline-none"
+                      >
+                        {(meta.sendAccounts || []).map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.label}
+                            {a.connected ? '' : ' (מנותק)'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[14px] font-medium text-gray-900">
                       {item.nameHe}

@@ -30,9 +30,10 @@
 import { prisma } from '../db.js';
 import { loadTriggerContext, contactPhone } from '../communication/context.js';
 import { resolveTemplateBody } from './templateResolve.js';
-import { getStarredTemplate, templateLanguages } from './newLeadTemplate.js';
+import { getStarredTemplate, templateLanguages, newLeadAccountIdOf } from './newLeadTemplate.js';
 import { leadSendLanguage } from './leadLanguage.js';
 import { enqueueCustomerWhatsApp } from './customerQueue.js';
+import { listSelectableAccounts, configuredAccounts } from './senderAccount.js';
 
 /** The idempotency identity of one automatic reply. */
 export const autoReplyKey = (dealId) => `new_lead_auto_reply:${dealId}`;
@@ -49,6 +50,12 @@ export const SKIP_TEXT = Object.freeze({
   missing_en_content: 'לליד זר נדרש נוסח באנגלית — לנוסח שסומן אין תוכן באנגלית',
   empty_render: 'הנוסח התרוקן אחרי מילוי המשתנים — לא נשלח',
   no_account: 'אין חשבון WhatsApp זמין לשליחה',
+  // The account the operator CHOSE cannot send right now. Never silently
+  // replaced by the other number — the customer would receive a first message
+  // from a business line the office did not pick.
+  account_unknown: 'החשבון שנבחר לשליחה אינו קיים יותר — יש לבחור חשבון בהגדרות הנוסחים',
+  account_not_configured: 'החשבון שנבחר לשליחה אינו מוגדר בשרת — לא נשלחה הודעה',
+  account_disconnected: 'החשבון שנבחר לשליחה מנותק כרגע — לא נשלחה הודעה ולא הוחלף חשבון',
   empty_content: 'אין תוכן לשליחה',
   duplicate: 'האירוע כבר טופל — לא נשלחה הודעה נוספת',
 });
@@ -152,22 +159,46 @@ export async function sendNewLeadAutoReply(
       log.info?.(`[new-lead-reply] deal=${dealId} unresolved variables: ${missing.join(', ')}`);
     }
 
+    // ── Which number sends it ───────────────────────────────────────────────
+    // The operator's choice on the starred template, never an environment
+    // variable and never a guess. Validated against the CANONICAL account list
+    // (the same one every sending surface reads) before anything is queued.
+    //
+    // The critical rule: if the chosen account cannot send, we DO NOT send from
+    // the other one. A customer's very first impression must come from the
+    // number the office picked, so an unavailable account is a recorded skip —
+    // never a silent substitution.
+    const accountId = newLeadAccountIdOf(template);
+    const accounts = await listSelectableAccounts(db);
+    const account = accounts.find((a) => a.id === accountId) || null;
+    const accountNote = {
+      phoneIntl, language, templateId: template.id, templateName: template.nameHe,
+      renderedText: text, accountId,
+    };
+    if (!account) return skip('account_unknown', accountNote);
+    // Addressability is checked against the bridge map DIRECTLY, not through
+    // listSelectableAccounts' `bridgeConfigured` flag: that flag deliberately
+    // reads an EMPTY bridge map as "addressing unconfigured, not broken" so a
+    // local dev box does not show every number as failed. For a real automatic
+    // send to a real stranger, "we have no bridge at all" is not sendable — it
+    // is a skip with a reason, not an optimistic queue row.
+    if (!configuredAccounts().includes(accountId)) return skip('account_not_configured', accountNote);
+    if (!account.connected) return skip('account_disconnected', accountNote);
+
     // ── Send through the canonical customer queue ───────────────────────────
     // Sending windows, connection deferral, retries, pacing, delivery logging
-    // and message history all belong to the queue. Baileys is never called
-    // from here, and no new sender or fallback number is invented: the account
-    // comes from the canonical resolver, which refuses on ambiguity.
+    // and message history all belong to the queue. Baileys is never called from
+    // here. The account is passed EXPLICITLY, which short-circuits the canonical
+    // resolver's fallback chain — so WHATSAPP_SYSTEM_ACCOUNT is never consulted
+    // for this flow, while other server-initiated sends keep it unchanged.
     const queued = await enqueueCustomerWhatsApp(db, {
       phone: phoneIntl,
       text,
+      explicitAccountId: accountId,
       createdById: `new-lead-auto-reply:${template.id}`,
     });
 
-    if (!queued.ok) {
-      return skip(queued.reason, {
-        phoneIntl, language, templateId: template.id, templateName: template.nameHe, renderedText: text,
-      });
-    }
+    if (!queued.ok) return skip(queued.reason, accountNote);
 
     await finish(db, ledger.id, {
       status: 'queued',

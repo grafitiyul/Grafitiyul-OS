@@ -15,8 +15,12 @@ import {
 import {
   setNewLeadDefault,
   clearNewLeadDefault,
+  setNewLeadSendAccount,
+  newLeadAccountIdOf,
+  DEFAULT_NEW_LEAD_ACCOUNT_ID,
   TemplateNotStarrableError,
 } from '../whatsapp/newLeadTemplate.js';
+import { listSelectableAccounts } from '../whatsapp/senderAccount.js';
 
 // CRM Settings → "נוסחים לתבניות ווטסאפ" + the Deal template modal.
 //
@@ -65,6 +69,10 @@ function toClient(t) {
     // The star: this template is auto-sent to genuinely new EXTERNAL leads.
     // At most one template carries it; zero is valid and means no auto-reply.
     isNewLeadDefault: !!t.isNewLeadDefault,
+    // Which business number that automatic reply goes out from. Resolved (never
+    // raw null) so the dropdown always shows the account that would actually be
+    // used, including for a template that has never been configured.
+    newLeadSendAccountId: newLeadAccountIdOf(t),
     sortOrder: t.sortOrder,
     sourceSystem: t.sourceSystem,
     sourceRecordId: t.sourceRecordId,
@@ -80,10 +88,22 @@ router.get(
   '/meta',
   handle(async (req, res) => {
     res.set('Cache-Control', 'no-store');
+    // The sending accounts for the new-lead dropdown come from the CANONICAL
+    // account list — same rows, same order, same labels every other sending
+    // surface shows. Labels are never hardcoded here: renaming a number in
+    // admin must rename it in this dropdown too.
+    const accounts = await listSelectableAccounts(prisma);
     res.json({
       variables: templateVariables(),
       categories: { customer: 'לקוח' },
       supportedKeys: TEMPLATE_VARIABLE_KEYS,
+      sendAccounts: accounts.map((a) => ({
+        id: a.id,
+        label: a.label,
+        connected: a.connected,
+        bridgeConfigured: a.bridgeConfigured,
+      })),
+      defaultSendAccountId: DEFAULT_NEW_LEAD_ACCOUNT_ID,
     });
   }),
 );
@@ -200,6 +220,29 @@ router.put(
         return res.json(toClient(after));
       }
       const updated = await setNewLeadDefault(prisma, req.params.id);
+      return res.json(toClient(updated));
+    } catch (err) {
+      if (err instanceof TemplateNotStarrableError) {
+        return res.status(err.code === 'not_found' ? 404 : 400).json({ error: err.code });
+      }
+      throw err;
+    }
+  }),
+);
+
+// Which business number the automatic new-lead reply is sent from.
+//
+// Only the STARRED template can hold this, because only it sends. Takes effect
+// on the very next lead — nothing is cached and no deploy is involved.
+router.put(
+  '/:id/new-lead-account',
+  handle(async (req, res) => {
+    const accountId = String(req.body?.accountId || '').trim();
+    // Validated against the canonical list rather than a local enum, so a
+    // retired or renamed number cannot be selected.
+    const valid = (await listSelectableAccounts(prisma)).map((a) => a.id);
+    try {
+      const updated = await setNewLeadSendAccount(prisma, req.params.id, accountId, valid);
       return res.json(toClient(updated));
     } catch (err) {
       if (err instanceof TemplateNotStarrableError) {

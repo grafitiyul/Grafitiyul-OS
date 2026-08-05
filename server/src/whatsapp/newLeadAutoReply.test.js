@@ -2,22 +2,45 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sendNewLeadAutoReply, autoReplyKey } from './newLeadAutoReply.js';
 
-// One bridge configured, so the canonical sender resolver has an unambiguous
-// answer without inventing a fallback number.
-process.env.WHATSAPP_BRIDGE_URLS = 'main=http://bridge.test';
+// BOTH business numbers configured — the real production shape. The account is
+// chosen on the starred template, so ambiguity between two bridges must never
+// arise and WHATSAPP_SYSTEM_ACCOUNT must never be consulted.
+process.env.WHATSAPP_BRIDGE_URLS = 'main=http://bridge.test,office=http://bridge2.test';
+// Deliberately set to the WRONG account throughout this suite: if any test
+// passes because of it, the flow is still reading the environment variable.
+process.env.WHATSAPP_SYSTEM_ACCOUNT = 'office';
 
 // A stand-in covering exactly the tables this path writes: the idempotency
 // ledger, the chat lookup and the canonical outbound queue. The queue write is
 // NOT stubbed out — the tests assert the real row shape, which is what proves
 // "sending goes through the canonical queue".
-function createDb({ templates = [], chats = [] } = {}) {
-  const db = { newLeadAutoReply: [], whatsAppScheduledMessage: [], whatsAppChat: chats, whatsAppTemplate: templates };
+function createDb({ templates = [], chats = [], accounts = null } = {}) {
+  const db = {
+    newLeadAutoReply: [],
+    whatsAppScheduledMessage: [],
+    whatsAppChat: chats,
+    whatsAppTemplate: templates,
+    // Both numbers active and connected unless a test says otherwise.
+    whatsAppAccount: accounts || [
+      { id: 'main', label: 'מכירות', status: 'connected', active: true, sortOrder: 0, phoneJid: '972500000001@s.whatsapp.net' },
+      { id: 'office', label: 'שירות לקוחות', status: 'connected', active: true, sortOrder: 1, phoneJid: '972500000002@s.whatsapp.net' },
+    ],
+  };
   let seq = 0;
   const match = (row, where) => Object.entries(where).every(([k, v]) => row[k] === v);
 
   const client = {
     _tables: db,
     $transaction: async (fn) => fn(client),
+    whatsAppAccount: {
+      findMany: async ({ where = {}, select }) => {
+        const rows = db.whatsAppAccount
+          .filter((a) => (where.active === undefined ? true : a.active === where.active))
+          .sort((a, b) => a.sortOrder - b.sortOrder || String(a.id).localeCompare(String(b.id)));
+        if (!select) return rows;
+        return rows.map((r) => Object.fromEntries(Object.keys(select).map((k) => [k, r[k]])));
+      },
+    },
     newLeadAutoReply: {
       create: async ({ data }) => {
         if (db.newLeadAutoReply.some((r) => r.idempotencyKey === data.idempotencyKey)) {
@@ -143,6 +166,80 @@ test('auto-reply: an existing private chat on the account is reused for thread c
   assert.equal(queue(db)[0].chatId, 'chat_9');
 });
 
+// ── Which number sends it ───────────────────────────────────────────────────
+// The account is configured on the starred template, in the settings screen.
+// WHATSAPP_SYSTEM_ACCOUNT is set to 'office' for this whole suite, so any test
+// that lands on 'office' by accident is reading the environment variable.
+
+test('account: a starred template with no saved choice sends from מכירות (main)', async () => {
+  const db = createDb({ templates: [template({ newLeadSendAccountId: null })] });
+  await run(db, ctxFor());
+  assert.equal(queue(db)[0].accountId, 'main', 'the safe default, NOT the env var');
+  assert.equal(ledger(db).accountId, 'main');
+});
+
+test('account: the operator switches to שירות לקוחות and future sends use it', async () => {
+  const db = createDb({ templates: [template({ newLeadSendAccountId: 'office' })] });
+  const r = await run(db, ctxFor());
+  assert.equal(r.status, 'queued');
+  assert.equal(queue(db)[0].accountId, 'office', 'the template’s choice wins');
+  assert.equal(ledger(db).accountId, 'office');
+});
+
+test('account: no Railway variable is required — the env is never consulted', async () => {
+  const saved = process.env.WHATSAPP_SYSTEM_ACCOUNT;
+  delete process.env.WHATSAPP_SYSTEM_ACCOUNT;
+  try {
+    // Two bridges configured and nothing in the environment: the old rule would
+    // have thrown "ambiguous sender" and skipped. The template answers instead.
+    const db = createDb({ templates: [template({ newLeadSendAccountId: 'office' })] });
+    const r = await run(db, ctxFor());
+    assert.equal(r.status, 'queued', 'sending must not depend on a Railway variable');
+    assert.equal(queue(db)[0].accountId, 'office');
+  } finally {
+    process.env.WHATSAPP_SYSTEM_ACCOUNT = saved;
+  }
+});
+
+test('account: a DISCONNECTED chosen account never falls back to the other one', async () => {
+  const db = createDb({
+    templates: [template({ newLeadSendAccountId: 'office' })],
+    accounts: [
+      { id: 'main', label: 'מכירות', status: 'connected', active: true, sortOrder: 0 },
+      { id: 'office', label: 'שירות לקוחות', status: 'disconnected', active: true, sortOrder: 1 },
+    ],
+  });
+  const r = await run(db, ctxFor());
+
+  assert.deepEqual({ status: r.status, reason: r.reason }, { status: 'skipped', reason: 'account_disconnected' });
+  assert.equal(queue(db).length, 0, 'nothing may be sent from מכירות instead');
+  // The reason must be readable and the intent recorded.
+  assert.equal(ledger(db).accountId, 'office', 'the ledger records which account was chosen');
+  assert.match(ledger(db).reason, /מנותק/);
+  assert.match(ledger(db).reason, /לא הוחלף חשבון/);
+  assert.match(ledger(db).renderedText, /שלום דור/, 'and what would have been sent');
+});
+
+test('account: an account that no longer exists is an explicit skip', async () => {
+  const db = createDb({ templates: [template({ newLeadSendAccountId: 'retired_number' })] });
+  const r = await run(db, ctxFor());
+  assert.equal(r.reason, 'account_unknown');
+  assert.equal(queue(db).length, 0);
+});
+
+test('account: an account with no bridge configured is an explicit skip', async () => {
+  const saved = process.env.WHATSAPP_BRIDGE_URLS;
+  process.env.WHATSAPP_BRIDGE_URLS = 'main=http://bridge.test'; // office has no bridge
+  try {
+    const db = createDb({ templates: [template({ newLeadSendAccountId: 'office' })] });
+    const r = await run(db, ctxFor());
+    assert.equal(r.reason, 'account_not_configured');
+    assert.equal(queue(db).length, 0);
+  } finally {
+    process.env.WHATSAPP_BRIDGE_URLS = saved;
+  }
+});
+
 // ── Exactly once ────────────────────────────────────────────────────────────
 
 test('auto-reply: 27 retries of the same event send exactly one message', async () => {
@@ -211,13 +308,18 @@ test('auto-reply: a lead with no phone is skipped distinctly', async () => {
   assert.equal(queue(db).length, 0);
 });
 
-test('auto-reply: no WhatsApp account configured is an honest skip, not a crash', async () => {
+test('auto-reply: no WhatsApp bridge configured at all is an honest skip, not a crash', async () => {
   const saved = process.env.WHATSAPP_BRIDGE_URLS;
   process.env.WHATSAPP_BRIDGE_URLS = '';
   try {
     const db = createDb({ templates: [template()] });
     const r = await run(db, ctxFor());
-    assert.deepEqual({ status: r.status, reason: r.reason }, { status: 'skipped', reason: 'no_account' });
+    // Sharper than the old generic 'no_account': the number exists and is
+    // connected in the DB, but nothing can address it.
+    assert.deepEqual(
+      { status: r.status, reason: r.reason },
+      { status: 'skipped', reason: 'account_not_configured' },
+    );
     assert.equal(queue(db).length, 0);
     // The rendered text is still frozen on the ledger, so an operator can see
     // exactly what would have been sent.
