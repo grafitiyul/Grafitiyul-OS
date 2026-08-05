@@ -22,11 +22,15 @@ export function __useTestDb(fake) {
 //   3. Everything stored has been sanitized. sanitizeDocument runs on save AND
 //      on publish, so a row written before a rule was tightened cannot leak.
 
+const LOCALES = ['he', 'en'];
+const cleanLocale = (v, fallback = 'he') => (LOCALES.includes(v) ? v : fallback);
+
 const listSelect = {
   id: true,
   internalName: true,
   pageType: true,
   slug: true,
+  defaultLanguage: true,
   status: true,
   publishedAt: true,
   draftDirty: true,
@@ -61,7 +65,7 @@ export async function getPage(id) {
   return page;
 }
 
-export async function createPage({ internalName, pageType, slug, actor }) {
+export async function createPage({ internalName, pageType, slug, defaultLanguage, actor }) {
   const name = String(internalName || '').trim();
   if (!name) throw badRequest('internalName_required');
   const cleanSlug = normalizeSlug(slug);
@@ -75,6 +79,7 @@ export async function createPage({ internalName, pageType, slug, actor }) {
       internalName: name,
       pageType: String(pageType || 'info'),
       slug: cleanSlug,
+      defaultLanguage: cleanLocale(defaultLanguage),
       draft,
       status: 'draft',
       draftDirty: true,
@@ -88,7 +93,7 @@ export async function createPage({ internalName, pageType, slug, actor }) {
  * Save the working copy. Deliberately does NOT touch publishedVersionId, so the
  * live page is byte-identical before and after — that is regression test #3.
  */
-export async function saveDraft(id, { document, internalName, pageType, slug, actor }) {
+export async function saveDraft(id, { document, internalName, pageType, slug, defaultLanguage, actor }) {
   const page = await prisma.sitePage.findUnique({ where: { id } });
   if (!page) return null;
 
@@ -104,6 +109,7 @@ export async function saveDraft(id, { document, internalName, pageType, slug, ac
     data.internalName = n;
   }
   if (pageType !== undefined) data.pageType = String(pageType);
+  if (defaultLanguage !== undefined) data.defaultLanguage = cleanLocale(defaultLanguage, page.defaultLanguage || 'he');
   if (slug !== undefined) {
     const cleanSlug = normalizeSlug(slug);
     if (!cleanSlug) throw badRequest('slug_required');
@@ -225,6 +231,7 @@ export async function getPublishedBySlug(slug) {
   return {
     slug: page.slug,
     pageType: page.pageType,
+    defaultLanguage: cleanLocale(page.defaultLanguage),
     versionId: page.publishedVersion.id,
     versionNo: page.publishedVersion.versionNo,
     publishedAt: page.publishedVersion.publishedAt,

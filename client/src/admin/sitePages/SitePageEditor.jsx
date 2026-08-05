@@ -26,7 +26,7 @@ export default function SitePageEditor() {
 
   const [page, setPage] = useState(null);
   const [doc, setDoc] = useState(null);
-  const [meta, setMeta] = useState({ internalName: '', pageType: 'info', slug: '' });
+  const [meta, setMeta] = useState({ internalName: '', pageType: 'info', slug: '', defaultLanguage: 'he' });
   const [tab, setTab] = useState('content');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,7 +43,7 @@ export default function SitePageEditor() {
     setPage(p);
     const d = normalizeDocument(p.draft);
     setDoc(d);
-    setMeta({ internalName: p.internalName, pageType: p.pageType, slug: p.slug });
+    setMeta({ internalName: p.internalName, pageType: p.pageType, slug: p.slug, defaultLanguage: p.defaultLanguage || 'he' });
     setDirty(false);
     loadedRef.current = true;
     // Drift is advisory: a failure to compute it must never block editing.
@@ -143,7 +143,7 @@ export default function SitePageEditor() {
       {tab === 'content' ? (
         <>
           <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-4">
               <Field label="סוג עמוד">
                 <select
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -155,6 +155,16 @@ export default function SitePageEditor() {
               </Field>
               <Field label="כתובת בעמוד (slug)" hint="החלק שאחרי הדומיין. שינוי כתובת מחייב הפניה 301 באתר.">
                 <TextInput value={meta.slug} onChange={(v) => updateMeta({ slug: v })} dir="ltr" />
+              </Field>
+              <Field label="שפת ברירת מחדל" hint="השפה שבה העמוד הציבורי נפתח כשאין בחירה מפורשת בכתובת.">
+                <select
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  value={meta.defaultLanguage}
+                  onChange={(e) => updateMeta({ defaultLanguage: e.target.value })}
+                >
+                  <option value="he">עברית</option>
+                  <option value="en">English</option>
+                </select>
               </Field>
               <Field label="כותרת העמוד (עברית)">
                 <TextInput value={doc.titleHe} onChange={(v) => update({ ...doc, titleHe: v })} dir="rtl" />
@@ -396,7 +406,7 @@ export default function SitePageEditor() {
                 .filter((s) => s.type === 'pricing' && !s.hidden)
                 .flatMap((s) => s.rows || [])
                 .filter((r) => !r.hidden && pricingRowMissingEnglish(r)).length;
-              if (missingEn) warnings.push(`${missingEn} פריטי מחירון חסרים תרגום לאנגלית — באנגלית יוצג הנוסח העברי.`);
+              if (missingEn) warnings.push(`${missingEn} פריטי מחירון חסרים תרגום לאנגלית — הם יוסתרו לגמרי בגרסה האנגלית (אין נפילה לעברית).`);
               setConfirm({
                 title: 'לפרסם את העמוד?',
                 body: [

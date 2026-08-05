@@ -120,11 +120,21 @@ test('#6 Hebrew renders RTL and English renders LTR', () => {
   assert.match(en, /dir="ltr">Restaurant recommendations</);
 });
 
-test('#6 a missing English translation falls back to Hebrew rather than rendering blank', () => {
+test('#6 STRICT locales: missing English NEVER silently falls back to Hebrew', () => {
   const hero = makeSection('hero');
   hero.titleHe = 'רק עברית';
-  const en = renderPage(docWith(hero), { locale: 'en' }).html;
-  assert.ok(en.includes('רק עברית'));
+  const text = makeSection('richText');
+  text.headingHe = 'כותרת';
+  text.htmlHe = '<p>תוכן בעברית</p>';
+  const en = renderPage(docWith(hero, text), { locale: 'en' }).html;
+  assert.ok(!en.includes('רק עברית'), 'Hebrew title must not appear on the English page');
+  assert.ok(!en.includes('תוכן בעברית'), 'Hebrew body must not appear on the English page');
+  // …and the same in the other direction.
+  const enOnly = makeSection('richText');
+  enOnly.headingEn = 'English only';
+  enOnly.htmlEn = '<p>english body</p>';
+  const he = renderPage(docWith(enOnly), { locale: 'he' }).html;
+  assert.ok(!he.includes('English only'));
 });
 
 test('#6 per-field direction follows the actual text, not the page locale', () => {
@@ -155,7 +165,7 @@ test('#7 SEO fields resolve per locale with sensible fallback', () => {
   assert.equal(he.ogTitle, 'כותרת SEO');
 
   const en = pageSeo(doc, { locale: 'en' });
-  assert.equal(en.title, 'כותרת SEO', 'falls back to Hebrew when no English SEO title');
+  assert.equal(en.title, '', 'STRICT: an English page never advertises a Hebrew title');
   assert.equal(en.locale, 'en_US');
 });
 
@@ -214,18 +224,21 @@ test('#11 images carry alt text and lazy loading', () => {
 });
 
 // ── #12 GOS links resolve to the live page ─────────────────────────────────
-test('#12 the restaurant link resolves through the canonical slug owner', () => {
+// Until the WordPress shell exists, the pages' public home is GOS itself
+// (/pages/<slug> on the app origin — owner decision 2026-08-05). publicLinks
+// stays the ONE owner: moving back to the marketing domain is a one-line
+// change there, and these assertions then change with it.
+test('#12 page links resolve through the canonical slug owner to the GOS public pages', () => {
   assert.equal(SITE_PAGE_SLUGS.restaurantRecommendations, 'restaurant-recommendations');
-  assert.equal(PUBLIC_LINKS.restaurantRecommendations, 'https://grafitiyul.co.il/restaurant-recommendations/');
-  assert.equal(sitePageUrl('restaurant-recommendations'), 'https://grafitiyul.co.il/restaurant-recommendations/');
+  assert.equal(PUBLIC_LINKS.restaurantRecommendations, 'https://app.grafitiyul.co.il/pages/restaurant-recommendations');
+  assert.equal(PUBLIC_LINKS.agentPriceList, 'https://app.grafitiyul.co.il/pages/agent-price-list');
   // slashes in either direction still produce exactly one canonical form
-  assert.equal(sitePageUrl('/restaurant-recommendations/'), 'https://grafitiyul.co.il/restaurant-recommendations/');
+  assert.equal(sitePageUrl('/restaurant-recommendations/'), 'https://app.grafitiyul.co.il/pages/restaurant-recommendations');
 });
 
-test('#12 no customer-facing link points at THEGUY or the app origin', () => {
+test('#12 no customer-facing link points at THEGUY, and all are https', () => {
   for (const url of Object.values(PUBLIC_LINKS)) {
     assert.ok(!url.includes('theguy'), `${url} must not reference the temporary domain`);
-    assert.ok(!url.includes('app.grafitiyul'), `${url} is a website page, not a GOS app route`);
     assert.match(url, /^https:\/\//);
   }
 });

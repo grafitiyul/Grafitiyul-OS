@@ -58,6 +58,7 @@ import { ingestMirror } from './mirror/pipeline.js';
 import { airtableClientFromEnv } from './mirror/sources/airtableClient.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import publicSitePagesRouter from './routes/publicSitePages.js';
+import publicPagesRouter from './routes/publicPages.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
 import savedViewsRouter from './routes/savedViews.js';
@@ -333,6 +334,11 @@ app.use('/api/webhooks', icountWebhookRouter);
 // payload, re-verifies server-side (GetLpResult), marks the request paid once,
 // and triggers the iCount document. Idempotent against retries.
 app.use('/api/webhooks', cardcomWebhookRouter);
+// PUBLIC website pages on the GOS domain — /pages/<slug> (+ /pages/sitemap.xml).
+// ONE generic SSR route over the published 'דפי אתר' content; must be mounted
+// before the SPA fallback. The temporary public home until WordPress renders
+// them (canonical owner: publicLinks.js).
+app.use('/pages', publicPagesRouter);
 // PUBLIC canonical payment URLs — /payment/<provider>/<token> (Cardcom + iCount).
 // Provider is visible in the URL. Must be mounted before the SPA fallback.
 app.use('/payment', paymentRouter);

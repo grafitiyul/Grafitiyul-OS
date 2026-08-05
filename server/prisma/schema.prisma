@@ -6798,6 +6798,9 @@ model SitePage {
   pageType     String @default("info")
   // URL path segment on the public website, e.g. "restaurant-recommendations".
   slug         String @unique
+  // The language the public page opens in when the URL carries no explicit
+  // ?lang=. Per-page configuration (he | en), never guessed from the browser.
+  defaultLanguage String @default("he")
 
   // The mutable working copy. Shape = shared/sitePage.mjs normalizeDocument().
   draft Json

@@ -19,10 +19,17 @@
 // a dead link with no review. Changing one is a code change, like the reports
 // that use them.
 
-// The public marketing website. Distinct from PUBLIC_ORIGIN, which is the GOS
-// app itself (app.grafitiyul.co.il) — customer-facing content pages and
-// capability links are different properties and must never be conflated.
-const SITE = (process.env.PUBLIC_WEBSITE_ORIGIN || 'https://grafitiyul.co.il').replace(/\/+$/, '');
+// WHERE the pages are served from — the ONE line that moves when hosting moves.
+//
+// Until the WordPress shell is installed on the marketing site, the pages'
+// public home is GOS itself: /pages/<slug> on the app origin (owner decision,
+// 2026-08-05 — "do not wait for WordPress"). When WordPress takes over, set
+// SITE_PAGES_PUBLIC_BASE=https://grafitiyul.co.il (or change the default here)
+// and every derived link, canonical URL and sitemap entry follows.
+const PAGES_BASE = (
+  process.env.SITE_PAGES_PUBLIC_BASE ||
+  `${process.env.PUBLIC_ORIGIN || 'https://app.grafitiyul.co.il'}/pages`
+).replace(/\/+$/, '');
 
 /** logical name -> the SitePage slug that owns it. */
 export const SITE_PAGE_SLUGS = {
@@ -32,10 +39,10 @@ export const SITE_PAGE_SLUGS = {
   agentPriceList: 'agent-price-list',
 };
 
-/** Absolute public URL of a website page, by slug. Always a trailing slash. */
+/** Absolute public URL of a website page, by slug. */
 export function sitePageUrl(slug) {
   const clean = String(slug || '').replace(/^\/+|\/+$/g, '');
-  return clean ? `${SITE}/${clean}/` : `${SITE}/`;
+  return clean ? `${PAGES_BASE}/${clean}` : PAGES_BASE;
 }
 
 export const PUBLIC_LINKS = Object.fromEntries(

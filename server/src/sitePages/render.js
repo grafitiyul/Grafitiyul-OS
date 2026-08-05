@@ -25,11 +25,15 @@ const esc = (s) =>
 const isHebrew = (s) => /[֐-׿]/.test(String(s || ''));
 const dirFor = (s) => (isHebrew(s) ? 'rtl' : 'ltr');
 
-/** A bilingual value with graceful fallback to the other language. */
+/**
+ * A bilingual value, STRICT per locale: the English page never silently shows
+ * Hebrew content and vice versa (owner rule, 2026-08-05). An empty field simply
+ * renders nothing — the editor is where missing translations are surfaced, and
+ * a locale with no content at all gets the "coming soon" page, not a mixed one.
+ */
 const pickOr = (obj, base, locale) => {
   const primary = locale === 'en' ? obj[`${base}En`] : obj[`${base}He`];
-  const secondary = locale === 'en' ? obj[`${base}He`] : obj[`${base}En`];
-  return (primary || secondary || '').trim();
+  return (primary || '').trim();
 };
 
 function heading(text, level = 2) {
@@ -127,6 +131,8 @@ function pricingLineLabel(line, locale) {
   const fixed = PRICING_LINE_LABELS[line.kind];
   const custom = pickOr(line, 'label', locale);
   // A custom label always wins (even on fixed/extra); registry label otherwise.
+  // A custom line with no label in THIS locale renders nothing at all — a bare
+  // amount with no wording would be worse than a hidden line.
   return custom || (fixed ? (locale === 'en' ? fixed[1] : fixed[0]) : '');
 }
 
@@ -138,7 +144,7 @@ function renderPricingRow(row, locale) {
   const lines = (row.lines || [])
     .map((l) => {
       const label = pricingLineLabel(l, locale);
-      if (!label && l.amountMinor == null) return '';
+      if (!label) return '';
       const amount = l.amountMinor == null ? '' : `<span class="gos-price__amount" dir="ltr">${esc(formatAmount(l.amountMinor, locale))}</span>`;
       return (
         `<li class="gos-price__line">` +
@@ -221,7 +227,7 @@ function renderSection(section, locale) {
       const items = section.items
         .map((i) => {
           const q = pickOr(i, 'question', locale);
-          const a = locale === 'en' ? i.answerEn || i.answerHe : i.answerHe || i.answerEn;
+          const a = locale === 'en' ? i.answerEn : i.answerHe;
           if (!q) return '';
           return (
             `<details class="gos-faq__item">` +
@@ -282,22 +288,23 @@ export function renderPage(content, { locale = 'he' } = {}) {
   return { html, seo: pageSeo(doc, { locale }) };
 }
 
-/** The metadata WordPress should emit in <head>. */
+/**
+ * The metadata the public head should emit. STRICT per locale like the body —
+ * an English page never advertises a Hebrew title. Fallbacks stay inside the
+ * same locale (SEO title → page title, og → seo).
+ */
 export function pageSeo(content, { locale = 'he', canonicalFallback = '' } = {}) {
   const doc = visibleDocument(content);
   const s = doc.seo;
-  const title = (locale === 'en' ? s.titleEn || s.titleHe : s.titleHe || s.titleEn) || pickOr(doc, 'title', locale);
-  const description = locale === 'en' ? s.descriptionEn || s.descriptionHe : s.descriptionHe || s.descriptionEn;
+  const title = pickOr(s, 'title', locale) || pickOr(doc, 'title', locale);
+  const description = pickOr(s, 'description', locale);
   return {
     title: title || '',
     description: description || '',
     canonical: s.canonicalUrl || canonicalFallback || '',
     noindex: s.noindex === true,
-    ogTitle: (locale === 'en' ? s.ogTitleEn || s.ogTitleHe : s.ogTitleHe || s.ogTitleEn) || title || '',
-    ogDescription:
-      (locale === 'en' ? s.ogDescriptionEn || s.ogDescriptionHe : s.ogDescriptionHe || s.ogDescriptionEn) ||
-      description ||
-      '',
+    ogTitle: pickOr(s, 'ogTitle', locale) || title || '',
+    ogDescription: pickOr(s, 'ogDescription', locale) || description || '',
     ogImage: s.ogImage || '',
     locale: locale === 'en' ? 'en_US' : 'he_IL',
   };
@@ -317,7 +324,7 @@ export function pageStructuredData(content, { locale = 'he' } = {}) {
     mainEntity: faq
       .map((i) => {
         const q = pickOr(i, 'question', locale);
-        const a = (locale === 'en' ? i.answerEn || i.answerHe : i.answerHe || i.answerEn) || '';
+        const a = (locale === 'en' ? i.answerEn : i.answerHe) || '';
         if (!q || !a) return null;
         return {
           '@type': 'Question',

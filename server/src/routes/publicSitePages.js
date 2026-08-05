@@ -3,6 +3,7 @@ import { handle } from '../asyncHandler.js';
 import { prisma } from '../db.js';
 import { getPublishedBySlug } from '../sitePages/service.js';
 import { renderPage, pageSeo, pageStructuredData, pageStylesheet } from '../sitePages/render.js';
+import { sitePageUrl } from '../publicLinks.js';
 
 // PUBLIC surface for "דפי אתר" — the ONLY way content leaves GOS for the website.
 //
@@ -37,16 +38,19 @@ router.get('/site-pages/:slug', handle(async (req, res) => {
   res.set('ETag', etag);
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
-  const { html, seo } = renderPage(published.content, { locale });
+  const { html } = renderPage(published.content, { locale });
   res.json({
     slug: published.slug,
     pageType: published.pageType,
+    defaultLanguage: published.defaultLanguage,
     versionId: published.versionId,
     versionNo: published.versionNo,
     publishedAt: published.publishedAt,
     locale,
     html,
-    seo: { ...seo, ...pageSeo(published.content, { locale }) },
+    // The canonical URL is owned by publicLinks — ONE place to change when the
+    // pages move (e.g. back onto the WordPress domain).
+    seo: pageSeo(published.content, { locale, canonicalFallback: sitePageUrl(published.slug) }),
     structuredData: pageStructuredData(published.content, { locale }),
     stylesheet: pageStylesheet,
   });

@@ -235,6 +235,34 @@ export function visibleDocument(doc) {
   };
 }
 
+/**
+ * How many locale-bearing text fields a VISIBLE document actually fills for a
+ * locale. Rendering is strict per language (no cross-language fallback), so
+ * this is the honesty check behind the public "version coming soon" page:
+ * count 0 means the locale has nothing publishable, not a half-translated mix.
+ */
+export function localeContentCount(doc, locale) {
+  const d = visibleDocument(doc);
+  const suffix = locale === 'en' ? 'En' : 'He';
+  let n = 0;
+  const countObj = (obj) => {
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string' && k.endsWith(suffix) && v.trim()) n += 1;
+    }
+  };
+  countObj(d);
+  for (const s of d.sections) {
+    countObj(s);
+    for (const c of s.cards || []) countObj(c);
+    for (const i of s.items || []) countObj(i);
+    for (const r of s.rows || []) {
+      countObj(r);
+      for (const l of r.lines || []) countObj(l);
+    }
+  }
+  return n;
+}
+
 /** A slug an operator typed, reduced to what may appear in a URL path segment. */
 export function normalizeSlug(input) {
   return str(input)
