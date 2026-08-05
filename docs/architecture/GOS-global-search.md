@@ -194,7 +194,55 @@ than implying completeness.
 
 ---
 
-## 8. Known limitations (honest, not speculative)
+## 8. Recent searches + "+ ליד" no-result creation (2026-08-05)
+
+Two client-side additions on the SAME canonical pipeline — no second search
+system, no new endpoints.
+
+### Recent searches
+
+- Focusing the EMPTY field shows the operator's recent searches (most recent
+  first, capped at 10). Typing switches to normal live results.
+- A search is committed to history when the operator ACTS on it — selects a
+  result, opens "+ ליד", or dismisses the completed panel — never per
+  keystroke, so prefixes don't pollute the list.
+- Store: `localStorage`, versioned payload, key namespaced by the logged-in
+  admin username (`gos.globalSearch.recents.v1:<username>`) so operators
+  sharing a browser profile never see each other's history. Only
+  `{ q, kind, at }` is stored — never result contents or customer records.
+  Username arrives through `SessionUserProvider`, hydrated from the SAME
+  `/api/auth/status` call the AdminGuard already makes.
+- Modules: `recentSearches.js` (store), rendered inside the existing panel.
+
+### Input classification (`searchIntent.js`)
+
+Deterministic only, reusing the two canonical classifiers:
+`shared/phone.mjs normalizePhoneIntl` (promoted from
+`server/src/whatsapp/phone.js`, which now re-exports it — still ONE notion of
+"same number") and `shared/nameLanguage.mjs classifyNameScript`. Email shape
+matches the server ingress convention (trim + lowercase). Kinds: phone /
+email / name_he / name_en / mixed / invalid. Malformed input (short digit
+fragments, impossible phones, bad emails) is `invalid` and never offers
+creation.
+
+### "+ ליד" no-result action
+
+- Appears ONLY when: the search completed (never while loading), the current
+  category returned zero results, AND a follow-up `category=all` query
+  confirmed zero across every canonical index (normalized phone, email,
+  Hebrew/English names, deal number, organizations). If other categories DO
+  have hits, the panel offers "הצג בהכל" instead — formatting differences can
+  never masquerade as "no match".
+- Opens the canonical `CreateDealModal` (same dialog as the deals list and
+  contact page) via its `prefill` prop: exactly one Contact field receives the
+  classified value (phone keeps the operator's original formatting; email is
+  lowercased; names go to the single full-name field whose existing
+  `contactNamesFromFull` split routes Hebrew/Latin/mixed at submit). Mixed
+  input opens with the original text plus a hint — never a silent guess.
+- Nothing is created before submit; submit runs the modal's unchanged flow
+  (one contact, one deal, primary link, navigate to the deal).
+
+## 9. Known limitations (honest, not speculative)
 
 1. **Very broad queries rank within a 300-row candidate window, not the whole
    match set.** Each lookup is capped at `CANDIDATE_CAP = 300` rows ordered by

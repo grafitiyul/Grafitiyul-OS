@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { NavConfigProvider } from '../../shell/navConfig.jsx';
+import { SessionUserProvider } from '../../shell/sessionUser.jsx';
 
 // Admin auth gate. Wraps everything that lives under `/admin`. Three
 // transient phases:
@@ -32,6 +33,7 @@ export default function AdminGuard({ children }) {
   const location = useLocation();
   const [phase, setPhase] = useState('loading');
   const [navPrefs, setNavPrefs] = useState([]);
+  const [username, setUsername] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +50,7 @@ export default function AdminGuard({ children }) {
         }
         const data = await res.json();
         if (Array.isArray(data?.nav?.modules)) setNavPrefs(data.nav.modules);
+        if (typeof data?.username === 'string') setUsername(data.username);
         setPhase(data?.authenticated ? 'authed' : 'unauthed');
       } catch {
         if (cancelled) return;
@@ -79,5 +82,9 @@ export default function AdminGuard({ children }) {
     return <Navigate to={`/admin/login?${qs}`} replace />;
   }
 
-  return <NavConfigProvider initialPrefs={navPrefs}>{children}</NavConfigProvider>;
+  return (
+    <SessionUserProvider username={username}>
+      <NavConfigProvider initialPrefs={navPrefs}>{children}</NavConfigProvider>
+    </SessionUserProvider>
+  );
 }

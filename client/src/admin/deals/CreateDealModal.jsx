@@ -20,6 +20,12 @@ const MODAL_INPUT =
 // primary linked organization is preselected, and the title auto-derives from
 // its name. Everything else (source, inquiry, org override) is the same flow.
 //
+// prefill — opening from the global search's "+ ליד" no-result action:
+// { fullName?, phone?, email?, hint? }. Exactly the classified value lands in
+// its Contact field; everything else stays the normal empty flow (source is
+// the operator's choice, nothing is created before submit). `hint` renders a
+// small notice for mixed-language input the classifier would not guess on.
+//
 // Catalogs: pass types/subtypes/sources when the host page already holds them
 // (deals list); omit them and the modal loads the small catalogs itself
 // (contact page). Pass `orgs` for a preloaded org list; omit for server search.
@@ -29,16 +35,18 @@ export default function CreateDealModal({
   subtypes: subtypesProp,
   sources: sourcesProp,
   presetContact = null,
+  prefill = null,
   onClose,
   onCreated,
 }) {
   const preset = presetContact || null;
   const presetName = preset ? contactDisplayName(preset) : '';
   const presetOrg = preset ? presetOrgForContact(preset) : null;
+  const pre = (!preset && prefill) || {};
 
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState(pre.fullName || '');
+  const [phone, setPhone] = useState(pre.phone || '');
+  const [email, setEmail] = useState(pre.email || '');
   const [title, setTitle] = useState(presetName);
   const [titleTouched, setTitleTouched] = useState(false);
   const [inquiry, setInquiry] = useState('');
@@ -88,7 +96,17 @@ export default function CreateDealModal({
   // mounted while open, so no extra gating is needed.
   useDirtyWhen(
     { fullName, phone, email, inquiry, sourceId, sourceFree, org: !!orgRes },
-    { fullName: '', phone: '', email: '', inquiry: '', sourceId: '', sourceFree: '', org: !!presetOrg },
+    // A prefilled value (global-search "+ ליד") is the baseline, not operator
+    // work — an untouched prefilled modal closes without a dirty warning.
+    {
+      fullName: pre.fullName || '',
+      phone: pre.phone || '',
+      email: pre.email || '',
+      inquiry: '',
+      sourceId: '',
+      sourceFree: '',
+      org: !!presetOrg,
+    },
   );
 
   async function submit(e) {
@@ -194,6 +212,11 @@ export default function CreateDealModal({
             </div>
           ) : (
             <>
+              {pre.hint && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                  {pre.hint}
+                </div>
+              )}
               <Field label="שם מלא *">
                 <input autoFocus value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="לדוגמה: ישראל ישראלי" className={MODAL_INPUT} />
               </Field>
