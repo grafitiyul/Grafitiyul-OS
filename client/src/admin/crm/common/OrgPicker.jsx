@@ -30,10 +30,14 @@ export function OrgPicker({
   showSubtype = false,
   serverSearch = false,
   allowCreateDialog = false,
+  // Optional {id, name} to start with an existing org already selected (e.g. a
+  // contact's linked organization when opening a deal from the contact page).
+  // Purely the INITIAL state — the picker stays uncontrolled after mount.
+  initialSelected = null,
   onResolve,
 }) {
-  const [orgName, setOrgName] = useState('');
-  const [selectedOrgId, setSelectedOrgId] = useState('');
+  const [orgName, setOrgName] = useState(initialSelected?.name || '');
+  const [selectedOrgId, setSelectedOrgId] = useState(initialSelected?.id || '');
   const [existingOrgType, setExistingOrgType] = useState(null);
   const [orgFocused, setOrgFocused] = useState(false);
   const [orgTypeId, setOrgTypeId] = useState('');

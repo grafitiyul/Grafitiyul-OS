@@ -11,6 +11,8 @@ import ReservationLinkSection from './ReservationLinkSection.jsx';
 import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
 import FileEntryList from '../../common/files/FileEntryList.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
+import CreateDealModal from '../../deals/CreateDealModal.jsx';
+import { dealPath } from '../../deals/config.js';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -32,6 +34,7 @@ export default function ContactDetail() {
   const [form, setForm] = useState(null);
   const [original, setOriginal] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [showCreateDeal, setShowCreateDeal] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -198,11 +201,21 @@ export default function ContactDetail() {
       <div className="flex items-center gap-2 text-[13px]">
         <BackButton to="/admin/crm/contacts" label="חזרה לאנשי קשר" />
       </div>
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
-        <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900">{fullName}</h1>
-        {fullNameEn && fullNameEn !== fullName && (
-          <div className="text-sm text-gray-500 mt-0.5" dir="ltr">{fullNameEn}</div>
-        )}
+      {/* Header — the contact identity + the PRIMARY workspace action: opening a
+          new deal for this contact (RTL: the action sits on the LEFT edge). */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900">{fullName}</h1>
+          {fullNameEn && fullNameEn !== fullName && (
+            <div className="text-sm text-gray-500 mt-0.5" dir="ltr">{fullNameEn}</div>
+          )}
+        </div>
+        <button
+          onClick={() => setShowCreateDeal(true)}
+          className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+        >
+          + פתיחת דיל חדש
+        </button>
       </div>
       {/* Timeline is keyed by the contact CUID — the aggregate endpoint matches
           events + deal links by id, NOT by the numeric contactNo in the URL. The
@@ -210,6 +223,18 @@ export default function ContactDetail() {
           empty history (and hide the filed reservation-summary file event). This
           mirrors the same fix DealDetail applies (deal.id, not the orderNo). */}
       {contact?.id && <TimelineFeed subjectType="contact" subjectId={contact.id} aggregate />}
+
+      {/* THE canonical new-deal dialog (shared with the deals list), in
+          preset-contact mode: this contact becomes the deal's primary contact
+          (no duplicate contact), its primary org arrives preselected, and the
+          modal self-loads the small catalogs. Success → straight to the deal. */}
+      {showCreateDeal && (
+        <CreateDealModal
+          presetContact={contact}
+          onClose={() => setShowCreateDeal(false)}
+          onCreated={(deal) => navigate(dealPath(deal))}
+        />
+      )}
     </WorkspaceLayout>
   );
 }
