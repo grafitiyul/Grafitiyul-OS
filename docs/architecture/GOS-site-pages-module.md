@@ -4,6 +4,11 @@
 **Status:** shipped in GOS; the WordPress half needs one install step (§7).
 **First record:** `restaurant-recommendations` — המלצות למסעדות שוות, recovered
 from the previous website.
+**Second record:** `agent-price-list` — מחירון סוכנים, recovered from the legacy
+`/pricingagent/` + `/en/pricingagent-en/` pages, priced from the canonical
+agents-segment Pricing Cards. Introduced the generic `pricing` section type
+(§3a) and the drift endpoint. Deliberately **noindex,nofollow + out of the
+sitemap** — a B2B asset shared as a direct link, like its predecessor.
 
 ---
 
@@ -88,8 +93,30 @@ client — the editor cannot produce a shape the renderer does not know.
 ```
 
 Section types: `hero`, `richText`, `image`, `imageText`, `cards`, `faq`, `cta`,
-`divider`. `normalizeDocument` drops unknown types, so a stored document can
-never carry something the renderer would have to guess about.
+`pricing`, `divider`. `normalizeDocument` drops unknown types, so a stored
+document can never carry something the renderer would have to guess about.
+
+### 3a. The `pricing` section — frozen prices with drift detection
+
+A pricing section holds `rows` (one sellable item each: title/meta/notes He+En)
+whose `lines` are STRUCTURED prices — `{ kind: fixed|tier|extra|custom, upto,
+amountMinor, labelHe/En }`, integer minor units, never display strings. The
+renderer formats `1,400 ₪` / `1,400 NIS` per locale from the same number.
+
+A row may reference the canonical Pricing Card that priced it (`cardGroupId` +
+`variantId`). The rule of the model:
+
+- **Published amounts are frozen** in the `SitePageVersion` like all content —
+  a Pricing Card edit after publish changes nothing on the live page.
+- **Drift is surfaced, not auto-applied**: `GET /api/site-pages/:id/pricing-drift`
+  (`sitePages/pricingDrift.js`) compares the draft's frozen lines against the
+  live cards (`describeStructure`) and the editor shows a per-row badge with an
+  explicit "עדכון מהמחירון" action. Republishing new prices is deliberate.
+- The internal refs never render — asserted by test ("internal references never
+  leak into the payload").
+- Missing English on a row is flagged in the editor and summarized in the
+  publish confirmation (the approved channel fallback — Hebrew commercial
+  wording — is what renders meanwhile).
 
 A `cards` entry (the recommendation card) carries: name, description He/En,
 category, address, phone, hours, kosher, notes, website, mapUrl, image, plus
@@ -179,16 +206,28 @@ GOS cannot create WordPress pages: the only credential in the estate is a
 **WooCommerce** consumer key, which authenticates `wc/*` and returns
 `401 rest_cannot_create` on `POST /wp/v2/pages`. Someone with WP admin must:
 
-1. Copy `docs/wordpress/gos-site-pages.php` to
+1. Copy `docs/wordpress/gos-site-pages.php` (v1.1.0) to
    `wp-content/plugins/gos-site-pages/gos-site-pages.php` and activate it.
 2. Settings → GOS Site Pages → API base `https://app.grafitiyul.co.il/api/public`
    (and optionally a purge secret).
 3. Create a Page with slug **`restaurant-recommendations`**, title
    "המלצות למסעדות שוות", and leave its content **empty**.
-4. Publish it, then purge WP Rocket's cache.
+4. Create a Page with slug **`agent-price-list`**, title "מחירון סוכנים",
+   content **empty**. Do NOT add it to any menu — it is an unlisted direct-link
+   asset; the plugin serves its `noindex,nofollow` and keeps it out of the
+   Yoast sitemap automatically.
+5. Publish both, then purge the site cache.
+6. Optional (link continuity): 301-redirect the legacy URLs
+   `/pricingagent/` → `/agent-price-list/` and
+   `/en/pricingagent-en/` → `/agent-price-list/?lang=en`
+   (both currently 404 on the new store). Single hop, no chains.
 
-The page then serves at `https://grafitiyul.co.il/restaurant-recommendations/` —
-the exact URL GOS already sends customers.
+The pages then serve at `https://grafitiyul.co.il/restaurant-recommendations/`
+and `https://grafitiyul.co.il/agent-price-list/`.
+
+Verified 2026-08-05: the WooCommerce consumer key can READ `wp/v2/pages` on the
+new store but `POST` returns `401 rest_cannot_create` — GOS still cannot create
+the WP shells itself; the four steps above need a WP admin.
 
 ---
 
