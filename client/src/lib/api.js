@@ -515,6 +515,12 @@ export const api = {
       tourMutation(request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: JSON.stringify(data) })),
     discardTourUpdate: (id) =>
       request(`/api/deals/${id}/discard-tour-update`, { method: 'POST', body: '{}' }),
+    // WON recovery — create the missing tour for a deal that reached WON
+    // without one (the "השלם פרטי סיור וצור סיור" banner). Mutates a tour →
+    // emits the canonical tour-changed signal. data may carry { tourEventId,
+    // allowOverbook } for group deals joining a slot.
+    completeTourSetup: (id, data = {}) =>
+      tourMutation(request(`/api/deals/${id}/complete-tour-setup`, { method: 'POST', body: JSON.stringify(data) })),
     addContact: (id, data) =>
       request(`/api/deals/${id}/contacts`, {
         method: 'POST',

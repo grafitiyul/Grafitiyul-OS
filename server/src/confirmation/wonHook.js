@@ -26,20 +26,9 @@ import { createReviewItem, handleReviewItem } from '../reviewItems/service.js';
 import { CONFIRMATION_EMAIL_REVIEW_KIND } from '../reviewItems/kinds/confirmationEmailReview.js';
 import { hasActiveFillers } from './fillers.js';
 import { sendConfirmationEmail } from './sendService.js';
+import { autoSendFailureReasonHe } from './failureReason.js';
 import { GENERIC_CUSTOMER_HE } from '../displayFallbacks.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
-
-// Operator-facing Hebrew for auto-send failures (the review card's summary).
-const AUTO_FAIL_LABELS = {
-  send_blocked: 'חסר תוכן או משתנה בשפת השליחה',
-  no_recipient_email: 'לאיש הקשר אין כתובת מייל',
-  missing_subject: 'חסר נושא לשפת השליחה בתבנית',
-  no_confirmation_template: 'לא הוגדרה תבנית מייל אישור',
-  ambiguous_confirmation_template: 'תבניות חופפות בהגדרות מייל אישור',
-  no_connected_account: 'אין חשבון Gmail מחובר',
-  duplicate_send: 'מייל אישור נשלח ממש עכשיו',
-  empty_body: 'גוף המייל ריק',
-};
 
 // Canonical customer wording for the card: organization → contact → generic.
 // NEVER Deal.title (internal CRM wording — the gallery-incident invariant).
@@ -121,14 +110,22 @@ export async function runConfirmationOnWon(
         // NEVER a silent skip (production #26107: WON with no email, no card,
         // no trace). The failure becomes a review card + a deal-feed event.
         log?.warn?.(`[confirmation] WON auto-send skipped (${dealId}): ${out.error}`);
-        const reasonHe = AUTO_FAIL_LABELS[out.error] || out.error;
+        // The ACTUAL blocking reason (production #27074: the generic label sent
+        // the office hunting a translation problem when the tour was missing).
+        const reasonHe = autoSendFailureReasonHe(out.error, out.warnings);
         await createReviewItem(
           {
             kind: CONFIRMATION_EMAIL_REVIEW_KIND,
             dedupeKey: `${CONFIRMATION_EMAIL_REVIEW_KIND}:${transitionKey}`,
             title: `מייל אישור לא נשלח אוטומטית — ${customerLabel}${deal.orderNo ? ` (#${deal.orderNo})` : ''}`,
             summary: `השליחה האוטומטית נעצרה: ${reasonHe}. פתחו תצוגה מקדימה, השלימו ושלחו.`,
-            data: { orderNo: deal.orderNo, operatorDriven, autoSendError: out.error },
+            data: {
+              orderNo: deal.orderNo,
+              operatorDriven,
+              autoSendError: out.error,
+              // Raw composer warnings, frozen — the card UI can expose detail.
+              autoSendWarnings: out.warnings || null,
+            },
             entityRefs: [{ type: 'deal', id: deal.id, orderNo: deal.orderNo, label: customerLabel }],
             dealId: deal.id,
           },

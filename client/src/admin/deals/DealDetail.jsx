@@ -58,6 +58,7 @@ import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
+import WonRecoveryBar from './WonRecoveryBar.jsx';
 import { fmtTourDate } from '../tours/config.js';
 
 const INPUT =
@@ -571,16 +572,21 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   }
 
   // Slot picked in the picker — first WON sends the slot with the status
-  // change (one transaction server-side); שבץ/החלף uses the dedicated route.
+  // change (one transaction server-side); שבץ/החלף uses the dedicated route;
+  // 'recovery' completes a WON-without-tour deal via the canonical endpoint.
   async function pickTourSlot(tourEventId, allowOverbook = false) {
     try {
+      let res = null;
       if (slotPickerFor === 'won') {
         await api.deals.update(id, { status: 'won', tourEventId, allowOverbook });
+      } else if (slotPickerFor === 'recovery') {
+        res = await api.deals.completeTourSetup(id, { tourEventId, allowOverbook });
       } else {
         await api.tours.assignDeal(id, tourEventId, allowOverbook);
       }
       setSlotPickerFor(null);
       await refresh();
+      handleRecoveryEmailResult(res?.confirmationEmail);
     } catch (e) {
       // Capacity guard — offer the operator a deliberate overbook.
       if (e.payload?.error === 'tour_full' && !allowOverbook) {
@@ -616,6 +622,45 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       await refresh();
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
+  }
+
+  // The recovery/complete-tour-setup email verdict, one place — the same
+  // action vocabulary the apply-tour-update flow returns.
+  function handleRecoveryEmailResult(ce) {
+    if (!ce) return;
+    if (ce.action === 'preview') setConfirmEmailOpen(true);
+    else if (ce.action === 'sent') showToast('הסיור נוצר ומייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
+    else if (ce.action === 'failed') {
+      alert('הסיור נוצר, אך מייל האישור לא נשלח: ' + (ce.reasonHe || ce.error || '') + '\nאפשר לטפל ולשלוח מהתצוגה המקדימה.');
+    }
+  }
+
+  // WON recovery — "השלם פרטי סיור וצור סיור" (deal WON with no tour,
+  // production #27074). The 422 answers reuse the existing WON dialogs: the
+  // missing-fields checklist (the fields are editable right here in the card)
+  // and the group slot picker.
+  async function completeTourSetup(tourEventId = null, allowOverbook = false) {
+    setTourUpdateBusy(true);
+    try {
+      const res = await api.deals.completeTourSetup(id, { tourEventId, allowOverbook });
+      await refresh();
+      handleRecoveryEmailResult(res?.confirmationEmail);
+      return true;
+    } catch (e) {
+      const code = e.payload?.error;
+      if (code === 'won_requirements_missing') {
+        setWonMissing(e.payload.missing || []);
+        return false;
+      }
+      if (code === 'tour_slot_required') {
+        setSlotPickerFor('recovery');
+        return false;
+      }
+      alert('שגיאה: ' + (code || e.message));
+      return false;
+    } finally {
+      setTourUpdateBusy(false);
     }
   }
 
@@ -926,9 +971,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             )}
             {/* Pre-WON planning ("תכנון סיור") — the SAME card surface before a
                 real tour exists (private/business only). Internal planning; at
-                WON it materializes and the banner above takes over. */}
+                WON it materializes and the banner above takes over. Also open
+                during WON recovery (plan_tour) — the team/components planned
+                here materialize when the recovery creates the tour. */}
             {!activeBooking &&
-              deal.status === 'open' &&
+              (deal.status === 'open' || deal.wonRecovery?.state === 'plan_tour') &&
               (deal.activityType === 'private' || deal.activityType === 'business') && (
                 <DealTourPlanning deal={deal} />
               )}
@@ -1027,6 +1074,19 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
             )}
+
+            {/* WON operational recovery — the deal is commercially closed but
+                the operational chain is incomplete (no tour, or confirmation
+                email still pending). Server-derived state (deal.wonRecovery);
+                one obvious action until the whole chain succeeds. */}
+            <WonRecoveryBar
+              recovery={deal.wonRecovery}
+              busy={tourUpdateBusy}
+              onPlanTour={() =>
+                deal.wonRecovery?.needsSlot ? setSlotPickerFor('recovery') : completeTourSetup()
+              }
+              onOpenPreview={() => setConfirmEmailOpen(true)}
+            />
 
             {/* Pending Tour Update — full-width action bar ABOVE the customer
                 info. Rendered only while the deal differs from its live tour. */}
@@ -1376,7 +1436,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       <Dialog
         open={!!wonMissing}
         onClose={() => setWonMissing(null)}
-        title="הדיל עדיין לא מוכן ל-WON"
+        title={deal.status === 'won' ? 'חסרים פרטים ליצירת הסיור' : 'הדיל עדיין לא מוכן ל-WON'}
         size="sm"
         footer={
           <button
@@ -1389,7 +1449,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         }
       >
         <p className="mb-2 text-sm text-gray-600">
-          סגירת דיל כ-WON יוצרת סיור אמיתי — אין סיורי טיוטה. יש להשלים קודם:
+          {deal.status === 'won'
+            ? 'יצירת הסיור דורשת את כל פרטי התכנון — השלימו בכרטיס פרטי הסיור ולחצו שוב:'
+            : 'סגירת דיל כ-WON יוצרת סיור אמיתי — אין סיורי טיוטה. יש להשלים קודם:'}
         </p>
         <ul className="space-y-1.5">
           {(wonMissing || []).map((m) => (

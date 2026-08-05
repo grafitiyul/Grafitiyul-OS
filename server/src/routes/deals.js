@@ -48,6 +48,9 @@ import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import { sendConfirmationEmail } from '../confirmation/sendService.js';
 import { hasActiveFillers } from '../confirmation/fillers.js';
+import { retryConfirmationAfterTourSetup } from '../confirmation/recovery.js';
+import { wonRecoveryState } from '../deals/wonRecovery.js';
+import { resolveIssue } from '../control/issueService.js';
 import { marketingDto } from '../deals/marketing.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { fireAdminReport } from '../adminReports/dispatch.js';
@@ -325,6 +328,9 @@ async function loadDeal(id) {
     // Replace the raw row with the business-language DTO. The panel must never
     // receive leadSourceKey/attributionRaw — see the ownership map §4.6.
     deal.marketing = marketingDto(deal.marketing);
+    // "WON but operationally incomplete" — the canonical recovery banner state
+    // (deals/wonRecovery.js). Derived on read, like tourUpdatePending.
+    deal.wonRecovery = await wonRecoveryState(prisma, deal);
   }
   return deal;
 }
@@ -1163,6 +1169,86 @@ router.post(
     if (!deal) return res.json(await loadDeal(req.params.id));
     await recordDealChanges(prisma, { dealId: req.params.id, before, after: deal, origin });
     res.json(await loadDeal(req.params.id));
+  }),
+);
+
+// "השלם פרטי סיור וצור סיור" — the canonical recovery for a deal that reached
+// WON without its operational tour (payment-driven WON before planning was
+// complete; production #27074). Creates the missing TourEvent + Booking +
+// registration through the SAME creator the WON transition uses (private/
+// business builds the deal's own tour; group joins the slot in the body), then
+// completes the chain: changelog, payroll reconcile, automatic confirmation-
+// email retry, and resolving the בקרה issue. Fully idempotent — an existing
+// active booking short-circuits tour creation, the email retry is gated by
+// real-send history + the 10s duplicate window, and the issue resolve is a
+// no-op once closed. Repeat clicks only re-attempt what is still incomplete.
+router.post(
+  '/:id/complete-tour-setup',
+  handle(async (req, res) => {
+    const before = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true },
+    });
+    if (!before) return res.status(404).json({ error: 'not_found' });
+    if (before.status !== 'won') return res.status(409).json({ error: 'deal_not_won' });
+
+    const targetTourEventId = req.body?.tourEventId ? String(req.body.tourEventId) : null;
+    const gate = wonGate(before, targetTourEventId);
+    if (gate.missing.length) {
+      return res.status(422).json({ error: 'won_requirements_missing', missing: gate.missing });
+    }
+    if (gate.needsSlot) return res.status(422).json({ error: 'tour_slot_required' });
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    let created;
+    try {
+      created = await prisma.$transaction(async (tx) => {
+        const existing = await activeBookingFor(tx, req.params.id);
+        if (existing) return { tourEventId: existing.tourEventId, already: true, after: null };
+        const full = await tx.deal.findUnique({ where: { id: req.params.id } });
+        const { tourEvent, dealSync } = await createTourForWonDeal(tx, full, {
+          targetTourEventId,
+          origin,
+          allowOverbook: req.body?.allowOverbook === true,
+        });
+        const after = await tx.deal.update({
+          where: { id: req.params.id },
+          data: dealSync || {},
+        });
+        // The state is repaired — the בקרה card closes in the SAME commit.
+        await resolveIssue(tx, {
+          dedupeKey: `won_deal_without_tour:${req.params.id}`,
+          resolution: 'requirements_complete',
+          resolvedBy: req.adminAuth?.userId || null,
+        });
+        return { tourEventId: tourEvent.id, already: false, after };
+      });
+    } catch (e) {
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      if (e.code === 'tour_full') {
+        return res.status(409).json({ error: 'tour_full', ...e.details });
+      }
+      throw e;
+    }
+
+    if (!created.already) {
+      await recordDealChanges(prisma, {
+        dealId: req.params.id, before, after: created.after, origin,
+      });
+      // Draft payroll reconciles as a projection of the new tour (post-commit,
+      // the apply-tour-update convention).
+      kickPayrollReconcile('tour', created.tourEventId);
+    }
+    // Chain completion: the confirmation email. Runs on EVERY call (not only
+    // when the tour was just created) so a click that follows a half-finished
+    // earlier attempt still finishes the chain.
+    const confirmationEmail = await retryConfirmationAfterTourSetup({
+      dealId: req.params.id,
+      actorUserId: req.adminAuth?.userId || null,
+    });
+    res.json({ ...withTourUpdatePending(await loadDeal(req.params.id)), confirmationEmail });
   }),
 );
 
