@@ -301,6 +301,63 @@ test('multi-paragraph Word-style paste keeps separate paragraphs (regression)', 
   assert.match(out, /<b>הדגשה<\/b>|<strong>הדגשה<\/strong>/);
 });
 
+// ---- REAL Chrome clipboard shapes (captured via the browser rig) ----
+// Chrome's clipboard serializer wraps every text node in <span style="…">
+// with computed styles (color, font-family, white-space…) and emits Gmail
+// plain-text bodies as inline span+<br> runs with NO block element at all.
+// These fixtures reproduce the exact shapes that collapsed in production.
+
+test('REAL Gmail plain-text body (span+br runs, no blocks): paragraphs and blank lines survive (tight)', () => {
+  const out = sanitizePastedHtml(
+    '<span style="color: rgb(34, 34, 34); font-family: Arial, sans-serif; white-space: normal">שלום רב,</span><br style="color: rgb(34, 34, 34)"><span style="color: rgb(34, 34, 34)">רצינו לבדוק לגבי הסיור.</span><br><br><span style="color: rgb(34, 34, 34)">תודה רבה,</span><br><span style="color: rgb(34, 34, 34)">ורד</span>',
+    'tight',
+  );
+  const paras = (out.match(/<p[ >]/g) || []).length;
+  assert.equal(paras, 3, `two text paragraphs + one explicit blank: ${out}`);
+  assert.match(out, /<p><\/p>/, `the blank line survives as an empty paragraph: ${out}`);
+  // the paragraph-internal soft breaks survive; no top-level <br> run remains
+  assert.doesNotMatch(out, /<\/p><br/, `no stray top-level breaks: ${out}`);
+});
+
+test('REAL Gmail divs with TRAILING <br><br> blank markers do not collapse (tight)', () => {
+  const out = sanitizePastedHtml(
+    '<div style="color: rgb(34, 34, 34)">פסקה ראשונה בטקסט.<br><br></div><div style="color: rgb(34, 34, 34)">פסקה שנייה בטקסט.<br><br></div><div style="color: rgb(34, 34, 34)">פסקה שלישית.</div>',
+    'tight',
+  );
+  assert.equal(
+    out,
+    '<p>פסקה ראשונה בטקסט.</p><p></p><p>פסקה שנייה בטקסט.</p><p></p><p>פסקה שלישית.</p>',
+  );
+});
+
+test('segments rule: <br> runs INSIDE one div follow the plain-text contract', () => {
+  const src = '<div>שורה 1<br>שורה 2<br><br>פסקה 2</div>';
+  assert.equal(
+    sanitizePastedHtml(src, 'tight'),
+    '<p>שורה 1<br>שורה 2</p><p></p><p>פסקה 2</p>',
+  );
+  assert.equal(sanitizePastedHtml(src), '<p>שורה 1<br>שורה 2</p><p>פסקה 2</p>');
+});
+
+test('color style on a STRUCTURAL wrapper never wraps block children in a span (signature block)', () => {
+  const out = sanitizePastedHtml(
+    '<div dir="rtl" style="color: rgb(34, 34, 34)"><div>גרפיטיול סיורים</div><div><a href="https://grafitiyul.co.il/">grafitiyul.co.il</a></div></div>',
+    'tight',
+  );
+  assert.doesNotMatch(out, /<span[^>]*><(p|div)/, `no block inside span: ${out}`);
+  assert.match(out, /גרפיטיול סיורים<br><a[^>]*>grafitiyul\.co\.il<\/a>/, out);
+});
+
+test('bare inline first line next to blocks is a line (anonymous box), not stray inline', () => {
+  const out = sanitizePastedHtml('היי,<div><br></div><div>פסקה שנייה</div>', 'tight');
+  assert.equal(out, '<p>היי,</p><p></p><p>פסקה שנייה</p>');
+});
+
+test('a plain inline snippet (no blocks, no breaks) stays inline so it merges at the cursor', () => {
+  const out = sanitizePastedHtml('<span style="color: rgb(34, 34, 34)">שתי מילים</span>');
+  assert.doesNotMatch(out, /<p/, `inline paste must stay inline: ${out}`);
+});
+
 // ---- 'tight' rhythm (note face — zero paragraph margins) ----
 
 test('tight: paragraph-model blocks (ChatGPT/Word <p>s) get an explicit blank line between them', () => {

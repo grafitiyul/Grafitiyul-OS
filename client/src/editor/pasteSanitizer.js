@@ -226,23 +226,30 @@ export function sanitizePastedHtml(html, rhythm = 'spaced') {
     // text-decoration: underline). If we strip styles first, these
     // formats are lost entirely.
     convertSemanticStylesToTags(doc, doc.body);
+    // LINE-MODEL normalisation: unwrap structural <div>s, wrap bare inline
+    // runs (CSS anonymous boxes — Chrome's clipboard serializer emits Gmail
+    // plain-text bodies as `<span>…</span><br><span>…</span>` with no block
+    // at all), then rebuild the line runs into real paragraphs through the
+    // plain-text contract. MUST run while the topology is still the source's:
+    // in particular BEFORE promoteColorAndSizeToSpans, which used to wrap a
+    // div's children — including block children and blank-line <br><br>
+    // markers — in a <span>, destroying the very structure this pass reads
+    // (the real-Gmail paste-collapse bug).
+    convertDivsToParagraphs(doc, doc.body, rhythm);
     // Color and font-size are also commonly carried as inline styles,
     // but unlike weight/style/decoration they don't have semantic
     // tags — they map onto TipTap's TextStyle mark, which ONLY parses
     // from <span> elements. Transplant color/size from non-span
-    // elements (<p>, <li>, <div>, etc.) onto a wrapping <span> so
-    // TextStyle picks them up. The whitelist below then preserves the
-    // styles on the span and strips them from every other element.
+    // elements (<p>, <li>, etc.) onto a wrapping <span> so TextStyle
+    // picks them up. The whitelist below then preserves the styles on
+    // the span and strips them from every other element. (Line divs are
+    // already gone by now — their Chrome computed-style color noise is
+    // deliberately dropped with them.)
     promoteColorAndSizeToSpans(doc, doc.body);
     // StarterKit only supports h1–h3. Map pasted h4–h6 down to h3 so deep
     // headings stay headings ("reasonable headings") instead of being dropped
     // to plain paragraphs by the schema parser.
     downgradeHeadings(doc, doc.body);
-    // LINE-MODEL normalisation: unwrap structural <div>s, then rebuild runs
-    // of line-divs (Gmail compose et al) into real paragraphs through the
-    // plain-text contract. Runs after list and heading normalisation, so only
-    // genuine line divs remain.
-    convertDivsToParagraphs(doc, doc.body, rhythm);
     // 'tight' targets render paragraph margins as ZERO — the gap the author
     // saw between paragraph-model blocks must become an explicit blank line.
     if (rhythm === 'tight') insertTightGaps(doc, doc.body);
@@ -517,6 +524,19 @@ function convertDivsToParagraphs(doc, root, rhythm) {
     parent.removeChild(div);
   }
 
+  // Phase 1b — the body itself can carry bare line runs: Chrome's clipboard
+  // serializer emits a Gmail plain-text body as `<span>…</span><br><span>…`
+  // with NO block element at all, and a partially-selected first line arrives
+  // as bare inline content next to divs. The CSS box model renders such runs
+  // as anonymous block boxes — i.e. margin-less LINES — so wrap them like any
+  // other line. Only when the fragment actually HAS line structure (a block
+  // element or a top-level <br>); a plain inline snippet (a few copied words)
+  // must stay inline so it merges at the cursor on paste.
+  const bodyHasStructure = Array.from(root.children).some(
+    (c) => BLOCK_TAGS.has(c.tagName) || c.tagName === 'BR',
+  );
+  if (bodyHasStructure) wrapInlineRunsAsLines(doc, root);
+
   // Phase 2 — group each run of sibling leaf divs. Collect the runs' parents
   // (a leaf div can now only sit under body or a surviving block container).
   const parents = new Set();
@@ -527,9 +547,10 @@ function convertDivsToParagraphs(doc, root, rhythm) {
   for (const parent of parents) groupLineDivRuns(doc, parent, rhythm);
 }
 
-// Wrap every maximal run of inline children (text / spans / <b> / <a> / <br>…)
-// of a block-containing container into a synthetic <div>, so phase 2 treats it
-// as the line the browser rendered it as (anonymous block box).
+// Wrap every maximal run of inline children (text / spans / <b> / <a> and the
+// <br>s BETWEEN them) of a container into a synthetic <div>, so phase 2 treats
+// the run as the lines the browser rendered it as (anonymous block box). The
+// <br>s inside the run are handled by the segments rule in lineSegments().
 function wrapInlineRunsAsLines(doc, container) {
   const isInline = (n) =>
     (n.nodeType === 3 && n.nodeValue.trim()) ||
@@ -542,17 +563,65 @@ function wrapInlineRunsAsLines(doc, container) {
         container.insertBefore(run, node);
       }
       run.appendChild(node);
-    } else if (!(node.nodeType === 3 && !node.nodeValue.trim())) {
+    } else if (!isWhitespaceText(node)) {
       run = null; // block boundary (whitespace-only text doesn't break a run)
     }
   }
 }
 
-// A leaf div with no visible text and no meaningful content is a blank-line
-// marker (`<div><br></div>`, `<div>&nbsp;</div>`, empty divs).
-function isBlankLineDiv(div) {
-  if (div.querySelector('img, video, figure, iframe')) return false;
-  return !div.textContent.replace(/ /g, ' ').trim();
+function isWhitespaceText(node) {
+  return node.nodeType === 3 && !node.nodeValue.trim();
+}
+
+// Visible-content test for a set of nodes: any real text (NBSP is not
+// content), or any media element.
+function hasVisibleContent(nodes) {
+  for (const n of nodes) {
+    if (n.nodeType === 3 && n.nodeValue.replace(/ /g, ' ').trim()) return true;
+    if (n.nodeType === 1) {
+      if (n.matches?.('img, video, figure, iframe')) return true;
+      if (n.querySelector?.('img, video, figure, iframe')) return true;
+      if ((n.textContent || '').replace(/ /g, ' ').trim()) return true;
+    }
+  }
+  return false;
+}
+
+// THE SEGMENTS RULE — a line container's direct children, split on top-level
+// <br> runs, are its visual lines:
+//   • a single <br> separates two lines;
+//   • a run of n ≥ 2 <br>s renders (n-1) blank lines between the segments;
+//   • a trailing <br> run at the very end of the container renders nothing
+//     beyond its blank count (a single trailing <br> is a serialization
+//     artifact and disappears).
+// Returns [{ blank: true } | { nodes: [...] }] in visual order.
+// This is what makes `<div>p1<br><br></div><div>p2</div>` and
+// `<span>p1</span><br><br><span>p2</span>` (both real Chrome/Gmail clipboard
+// shapes) equal to the plain text "p1\n\np2".
+function lineSegments(container) {
+  const segments = [];
+  let cur = [];
+  let brRun = 0;
+  const flushSegment = () => {
+    segments.push({ nodes: cur, empty: !hasVisibleContent(cur) });
+    cur = [];
+  };
+  for (const child of Array.from(container.childNodes)) {
+    if (child.nodeType === 1 && child.tagName === 'BR') {
+      if (brRun === 0) flushSegment();
+      else segments.push({ nodes: [], empty: true }); // each extra <br> = one blank line
+      brRun += 1;
+      continue;
+    }
+    if (isWhitespaceText(child) && cur.length === 0) continue; // leading formatting whitespace
+    brRun = 0;
+    cur.push(child);
+  }
+  flushSegment();
+  // A trailing <br> run leaves one empty segment beyond its blanks — drop it.
+  if (brRun > 0 && segments.length && segments[segments.length - 1].empty) segments.pop();
+
+  return segments.map((s) => (s.empty ? { blank: true } : { nodes: s.nodes }));
 }
 
 function lineGroupKey(div) {
@@ -565,7 +634,6 @@ function lineGroupKey(div) {
 }
 
 function groupLineDivRuns(doc, parent, rhythm) {
-  // Snapshot: we splice replacements in while walking.
   let group = null; // current open <p>
   let groupKey = null;
   let pendingBlanks = 0;
@@ -574,15 +642,6 @@ function groupLineDivRuns(doc, parent, rhythm) {
   const closeGroup = () => {
     group = null;
     groupKey = null;
-  };
-  const openGroup = (afterNode, key) => {
-    group = doc.createElement('p');
-    group.setAttribute(LINE_MARK, '1');
-    const [dir, ta] = key.split('|');
-    if (dir) group.setAttribute('dir', dir);
-    if (ta) group.setAttribute('style', `text-align: ${ta}`);
-    parent.insertBefore(group, afterNode);
-    groupKey = key;
   };
   const emitBlanks = (beforeNode) => {
     if (!pendingBlanks) return;
@@ -601,6 +660,22 @@ function groupLineDivRuns(doc, parent, rhythm) {
     pendingBlanks = 0;
     closeGroup();
   };
+  const emitLine = (beforeNode, key, nodes) => {
+    emitBlanks(beforeNode);
+    if (!group || key !== groupKey) {
+      group = doc.createElement('p');
+      group.setAttribute(LINE_MARK, '1');
+      const [dir, ta] = key.split('|');
+      if (dir) group.setAttribute('dir', dir);
+      if (ta) group.setAttribute('style', `text-align: ${ta}`);
+      parent.insertBefore(group, beforeNode);
+      groupKey = key;
+    } else {
+      group.appendChild(doc.createElement('br'));
+    }
+    for (const n of nodes) group.appendChild(n);
+    runStarted = true;
+  };
 
   for (const node of Array.from(parent.childNodes)) {
     const isLeafLineDiv =
@@ -610,7 +685,7 @@ function groupLineDivRuns(doc, parent, rhythm) {
       !Array.from(node.children).some((c) => BLOCK_TAGS.has(c.tagName));
 
     if (!isLeafLineDiv) {
-      if (node.nodeType === 3 && !node.nodeValue.trim()) continue; // formatting whitespace
+      if (isWhitespaceText(node)) continue; // formatting whitespace between divs
       // Any real block/inline boundary ends the current line run.
       pendingBlanks = 0;
       runStarted = false;
@@ -618,22 +693,14 @@ function groupLineDivRuns(doc, parent, rhythm) {
       continue;
     }
 
-    if (isBlankLineDiv(node)) {
-      pendingBlanks += 1;
-      parent.removeChild(node);
-      continue;
-    }
-
-    emitBlanks(node);
+    // The div's visual lines per the segments rule; all share the div's
+    // dir/text-align group key.
     const key = lineGroupKey(node);
-    if (!group || key !== groupKey) openGroup(node, key);
-    else group.appendChild(doc.createElement('br'));
-    // Move the line's content in, dropping a purely-trailing <br> (it renders
-    // nothing at the end of a source line).
-    while (node.lastChild && node.lastChild.nodeName === 'BR') node.removeChild(node.lastChild);
-    while (node.firstChild) group.appendChild(node.firstChild);
+    for (const seg of lineSegments(node)) {
+      if (seg.blank) pendingBlanks += 1;
+      else emitLine(node, key, seg.nodes);
+    }
     parent.removeChild(node);
-    runStarted = true;
   }
 }
 
@@ -917,6 +984,15 @@ function promoteColorAndSizeToSpans(doc, root) {
   for (const el of elts) {
     if (el.tagName === 'SPAN') continue;
     if (!el.firstChild) continue;
+    // NEVER wrap block-level children in a <span>: that inverts the block/
+    // inline topology (span>div / span>p), which defeats the structural
+    // passes and produces invalid nesting the DOM parser then "fixes" into
+    // stray empty paragraphs. (Chrome's clipboard serializer puts a computed
+    // color style on EVERY copied element, including structural wrappers —
+    // the real-Gmail signature-block corruption.) Color/size on a block
+    // container isn't representable as a TextStyle mark anyway — descend to
+    // the inline level naturally via the children's own inline styles.
+    if (Array.from(el.children).some((c) => BLOCK_TAGS.has(c.tagName))) continue;
 
     const styles = parseInlineStyles(el.getAttribute('style') || '');
     const color = normalizeColor(styles['color']);

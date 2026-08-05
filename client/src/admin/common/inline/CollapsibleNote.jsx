@@ -134,11 +134,28 @@ export default function CollapsibleNote({ id, label, value, rich = false, placeh
           className="w-full rounded-md border border-blue-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200"
         />
       )}
+      {/* onMouseDown preventDefault (same fix as the TimelineFeed composer):
+          clicking a button blurs the collapsible editor, which collapses and
+          MOVES the buttons before mouseup — so the click never fired and שמור
+          appeared to need two clicks. Keeping focus during mousedown lets the
+          click land; commit() then saves once and closes. */}
       <div className="flex items-center gap-2 mt-2">
-        <button type="button" onClick={commit} disabled={saving} className="bg-emerald-600 text-white text-sm rounded-md px-4 py-1.5 hover:bg-emerald-700 disabled:opacity-50">
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={commit}
+          disabled={saving}
+          className="bg-emerald-600 text-white text-sm rounded-md px-4 py-1.5 hover:bg-emerald-700 disabled:opacity-50"
+        >
           {saving ? 'שומר…' : 'שמור'}
         </button>
-        <button type="button" onClick={cancel} disabled={saving} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={cancel}
+          disabled={saving}
+          className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50"
+        >
           ביטול
         </button>
         {error && <span className="text-[11px] text-red-600">{error}</span>}
