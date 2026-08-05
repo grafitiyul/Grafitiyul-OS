@@ -17,7 +17,12 @@
 //     (the caller fires ensureInitialCallTask post-commit).
 //   • Non-primary/archived offers + produced QuoteDocuments — immutable
 //     customer-facing audit of the original.
+//   • noPaymentWaiver — a WON/payment decision about the ORIGINAL's money,
+//     never commercial preparation. The copy's valueMinor is corrected back to
+//     the full Builder gross (waived value added back) so its total matches
+//     its own waiver-free Builder.
 import { prisma } from '../db.js';
+import { computeWaivedMinor } from './waiver.js';
 
 // Editable commercial scalars — the template. Lifecycle fields (status, stage,
 // won*/lost*, review/collection state, viewed/activity stamps) are explicitly
@@ -35,7 +40,6 @@ export const COPY_SCALARS = [
   'valueMinor',
   'currency',
   'discountMinor',
-  'noPaymentWaiver',
   'paymentTermId',
   'paymentMethodId',
   'dealSourceId',
@@ -75,8 +79,38 @@ export const LINE_FIELDS = [
   'sortOrder',
 ];
 
-export async function duplicateDeal(sourceDealId) {
-  const source = await prisma.deal.findUnique({
+// The ONE reusable-notes allowlist — copied timeline entries are EXACTLY the
+// notes a human operator typed on the deal (customer context, preparation,
+// commercial comments). Everything else on the timeline is history of the
+// original and never travels: changelog (kind='change'), system/pinned
+// lifecycle notes (actorType='system'), automation notes ('automation'),
+// integration notes ('api'), migrated Pipedrive notes ('import'), and
+// soft-deleted notes. This is an explicit type/source allowlist — never text
+// guessing. Exported for the behavior + shape tests.
+export const REUSABLE_NOTE_WHERE = {
+  kind: 'note',
+  actorType: 'user',
+  isSystem: false,
+  deletedAt: null,
+};
+
+// TimelineEntry fields that transfer onto the copy's note rows (plus the fresh
+// subjectId and a provenance marker in data). createdAt is preserved so the
+// copied notes keep their honest chronology inside the new deal's feed.
+export const NOTE_COPY_FIELDS = [
+  'kind',
+  'body',
+  'isPinned',
+  'pinSortOrder',
+  'isSystem',
+  'actorType',
+  'createdBy',
+  'createdByName',
+  'createdAt',
+];
+
+export async function duplicateDeal(sourceDealId, client = prisma) {
+  const source = await client.deal.findUnique({
     where: { id: sourceDealId },
     include: {
       contacts: true,
@@ -91,17 +125,24 @@ export async function duplicateDeal(sourceDealId) {
   // THAT as the new deal's WORKING version: on a copy it is a starting point,
   // not historical evidence (the original's frozen record stays untouched).
   const sourceVersion =
-    (await prisma.quoteVersion.findFirst({
+    (await client.quoteVersion.findFirst({
       where: { dealId: sourceDealId, isWorking: true },
       include: { lines: { orderBy: { sortOrder: 'asc' } } },
     })) ||
-    (await prisma.quoteVersion.findFirst({
+    (await client.quoteVersion.findFirst({
       where: { dealId: sourceDealId, sourceKind: 'pipedrive_import' },
       orderBy: { createdAt: 'desc' },
       include: { lines: { orderBy: { sortOrder: 'asc' } } },
     }));
 
-  const firstStage = await prisma.dealStage.findFirst({
+  // Reusable operator-authored notes (see REUSABLE_NOTE_WHERE). Read before
+  // the write transaction — pure reads of the source deal.
+  const reusableNotes = await client.timelineEntry.findMany({
+    where: { subjectType: 'deal', subjectId: sourceDealId, ...REUSABLE_NOTE_WHERE },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const firstStage = await client.dealStage.findFirst({
     orderBy: { sortOrder: 'asc' },
     select: { id: true },
   });
@@ -110,12 +151,29 @@ export async function duplicateDeal(sourceDealId) {
   const data = { title: `${source.title} (עותק)`, dealStageId: firstStage.id, status: 'open' };
   // Null values are skipped — every copied field is nullable-with-null-default
   // (or non-null anyway), and Prisma rejects a plain JS null on nullable Json
-  // columns (noPaymentWaiver) — it wants DbNull, which "not sent" also means.
+  // columns — it wants DbNull, which "not sent" also means.
   for (const f of COPY_SCALARS) {
     if (source[f] !== null && source[f] !== undefined) data[f] = source[f];
   }
 
-  const created = await prisma.$transaction(async (tx) => {
+  // The original's no-payment waiver does NOT copy (it is a payment decision
+  // about the original's money), so the copy's payable total must be the full
+  // Builder gross again: add the waived value (computed from the source's own
+  // waiver against the copied lines) back onto valueMinor.
+  if (source.noPaymentWaiver && sourceVersion) {
+    const groupLines = sourceVersion.lines
+      .filter((l) => l.sourceKind === 'group_ticket' && l.active)
+      .map((l) => ({
+        cardGroupId: l.sourceCardGroupId || null,
+        ticketTypeId: l.ticketTypeId || null,
+        quantity: l.quantity || 0,
+        unitPriceMinor: Number(l.unitPriceMinor) || 0,
+      }));
+    const waivedMinor = computeWaivedMinor(source.noPaymentWaiver, groupLines);
+    if (waivedMinor > 0) data.valueMinor = BigInt(source.valueMinor) + BigInt(waivedMinor);
+  }
+
+  const created = await client.$transaction(async (tx) => {
     const deal = await tx.deal.create({ data, select: { id: true } });
 
     if (source.contacts.length) {
@@ -194,6 +252,20 @@ export async function duplicateDeal(sourceDealId) {
       if (source.confirmation.fillers !== null) conf.fillers = source.confirmation.fillers;
       if (source.confirmation.overrideState !== null) conf.overrideState = source.confirmation.overrideState;
       await tx.dealConfirmation.create({ data: conf });
+    }
+
+    if (reusableNotes.length) {
+      await tx.timelineEntry.createMany({
+        data: reusableNotes.map((n) => {
+          const row = { subjectType: 'deal', subjectId: deal.id };
+          for (const f of NOTE_COPY_FIELDS) row[f] = n[f];
+          // Provenance marker on top of the note's own data (e.g. origin:
+          // 'inquiry' survives) — the copy never pretends the note was written
+          // here. Comments are conversation history and do NOT travel.
+          row.data = { ...(n.data && typeof n.data === 'object' ? n.data : {}), copiedFromDealId: sourceDealId };
+          return row;
+        }),
+      });
     }
 
     return deal;

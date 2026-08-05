@@ -98,6 +98,23 @@ export function dealPath(deal) {
   return `/admin/crm/deals/${deal?.orderNo ?? deal?.id}`;
 }
 
+// Stale-date reminder for the פרטי הסיור card: an OPEN deal whose set tour
+// date is already behind "today" (Israel calendar) and that has NO live tour
+// connection. Typical after Duplicate Deal (the copy deliberately keeps the
+// original's date) or a lead that went quiet. Visual warning only — the date
+// stays fully editable and is never cleared. Date strings are "YYYY-MM-DD",
+// so plain string comparison is correct and timezone-free.
+export function isTourDatePast(deal, hasActiveBooking, todayStr) {
+  return !!(
+    deal &&
+    deal.status === 'open' &&
+    !hasActiveBooking &&
+    deal.tourDate &&
+    todayStr &&
+    deal.tourDate < todayStr
+  );
+}
+
 // DealContact roles — a contact may hold multiple. The first three are the
 // operational quick-add vocabulary; the rest are the original roles, kept for
 // backward compatibility with existing data. (Single hardcoded catalog for now;

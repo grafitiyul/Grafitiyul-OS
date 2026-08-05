@@ -9,6 +9,7 @@ import {
   effectiveOrgTypeId,
   effectiveOrgTypeLabel,
   resolveActivityLabel,
+  isTourDatePast,
 } from './config.js';
 
 const orgDeal = (over = {}) => ({
@@ -86,4 +87,23 @@ test('header badge text follows the canonical effective type', () => {
     resolveActivityLabel({ activityType: 'business', orgTypeLabel: null, subtypeLabel: null }),
     'עסקי',
   );
+});
+
+// ── isTourDatePast — the stale-date reminder (Duplicate Deal keeps dates) ──
+
+test('past date on an OPEN deal without a tour → warning (test 13)', () => {
+  assert.equal(isTourDatePast({ status: 'open', tourDate: '2026-08-01' }, false, '2026-08-05'), true);
+});
+
+test('no warning when the date is today or in the future', () => {
+  assert.equal(isTourDatePast({ status: 'open', tourDate: '2026-08-05' }, false, '2026-08-05'), false);
+  assert.equal(isTourDatePast({ status: 'open', tourDate: '2026-09-01' }, false, '2026-08-05'), false);
+});
+
+test('no warning without a date, on non-OPEN deals, or with a live tour', () => {
+  assert.equal(isTourDatePast({ status: 'open', tourDate: null }, false, '2026-08-05'), false);
+  assert.equal(isTourDatePast({ status: 'won', tourDate: '2026-08-01' }, false, '2026-08-05'), false);
+  assert.equal(isTourDatePast({ status: 'lost', tourDate: '2026-08-01' }, false, '2026-08-05'), false);
+  assert.equal(isTourDatePast({ status: 'open', tourDate: '2026-08-01' }, true, '2026-08-05'), false);
+  assert.equal(isTourDatePast(null, false, '2026-08-05'), false);
 });

@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
-import { COPY_SCALARS, LINE_FIELDS } from './duplicateDeal.js';
+import { COPY_SCALARS, LINE_FIELDS, NOTE_COPY_FIELDS, REUSABLE_NOTE_WHERE } from './duplicateDeal.js';
 
 const model = (name) => Prisma.dmmf.datamodel.models.find((m) => m.name === name);
 
@@ -56,6 +56,23 @@ test('relation-copy writes only name real scalar fields', () => {
   assertScalarFields('DealConfirmation', ['fillers', 'overrideState']);
 });
 
+test('note-copy fields + allowlist only name real TimelineEntry fields', () => {
+  assertScalarFields('TimelineEntry', NOTE_COPY_FIELDS);
+  assertScalarFields('TimelineEntry', Object.keys(REUSABLE_NOTE_WHERE));
+});
+
+test('the reusable-note allowlist is the operator-authored contract', () => {
+  // The distinction the NOTES policy rests on: kind='note' + actorType='user'
+  // (+ not system, not soft-deleted). Loosening any of these would start
+  // copying system/automation/import/changelog history.
+  assert.deepEqual(REUSABLE_NOTE_WHERE, {
+    kind: 'note',
+    actorType: 'user',
+    isSystem: false,
+    deletedAt: null,
+  });
+});
+
 test('the lifecycle NEVER copies — the template must not smuggle outcome state', () => {
   const forbidden = [
     'status',
@@ -71,6 +88,9 @@ test('the lifecycle NEVER copies — the template must not smuggle outcome state
     'collectionReviewStatus',
     'paymentReviewStatus',
     'lastMeaningfulActivityAt',
+    // A WON/payment decision about the ORIGINAL's money — the copy starts at
+    // full Builder gross with no waiver (see the valueMinor correction).
+    'noPaymentWaiver',
   ];
   for (const key of forbidden) {
     assert.ok(!COPY_SCALARS.includes(key), `Deal.${key} must never be in COPY_SCALARS`);

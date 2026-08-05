@@ -39,7 +39,9 @@ import {
   resolveFinanceWorkspace,
   dealPath,
   DEAL_STATUS_LABELS,
+  isTourDatePast,
 } from './config.js';
+import { todayIL } from '../tours/calendar/dates.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
@@ -50,6 +52,7 @@ import DealCollectionCard from './DealCollectionCard.jsx';
 import DealFillersCard from './confirmation/DealFillersCard.jsx';
 import ConfirmationEmailModal from './confirmation/ConfirmationEmailModal.jsx';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
+import { clearTaskDraft } from './tasks/taskDraftStore.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
@@ -150,6 +153,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // "פתח דיל חדש לאותו איש קשר" (kebab) — the flow component owns the chooser
   // + the canonical CreateDealModal; this flag only opens/closes it.
   const [sameContactOpen, setSameContactOpen] = useState(false);
+  // שכפל דיל re-entry guard (ref, not state — no re-render needed).
+  const dupBusyRef = useRef(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
   const [sendDocEntry, setSendDocEntry] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -251,6 +256,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Pending Tour Update actions + the leave-with-pending confirmation target.
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
   const [leaveHref, setLeaveHref] = useState(null);
+
+  // The task-composer draft (taskDraftStore) is the deal's shared unsaved
+  // workspace: it survives every tab switch INSIDE the page, and dies exactly
+  // here — leaving the Deal page or navigating to another deal.
+  useEffect(() => {
+    const id = deal?.id;
+    if (!id) return undefined;
+    return () => clearTaskDraft(id);
+  }, [deal?.id]);
 
   // Monotonic request epoch — the STALE-RESPONSE guard. Every refresh (initial
   // load, deal→deal navigation, child onRefresh, realtime invalidation) claims
@@ -779,6 +793,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   }
 
   async function duplicateDeal() {
+    // Re-entry guard: a double-click (or a click while the request is in
+    // flight) must create ONE copy, not two.
+    if (dupBusyRef.current) return;
+    dupBusyRef.current = true;
     try {
       // ONE server-side transaction copies the full commercial template —
       // contacts, Builder lines, tour context/dates, notes, planning — and none
@@ -787,6 +805,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       navigate(dealPath(copy));
     } catch (e) {
       alert('שגיאה בשכפול: ' + (e.payload?.error || e.message));
+    } finally {
+      dupBusyRef.current = false;
     }
   }
 
@@ -831,6 +851,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const activeBooking = (deal.bookings || []).find((bk) => bk.status === 'active') || null;
   const orphanedBooking = (deal.bookings || []).find((bk) => bk.status === 'orphaned') || null;
   const onGroupSlot = activeBooking?.tourEvent?.kind === 'group_slot';
+  // Stale-date reminder (see isTourDatePast) — Israel calendar "today".
+  const tourDatePast = isTourDatePast(deal, !!activeBooking, todayIL());
   // Pending Tour Update — the server-derived deal-vs-tour diff (never stored).
   const pendingTour = deal.tourUpdatePending || [];
   const GROUP_LOCK_MSG = 'לא ניתן לשנות זמנים בדיל של סיור קבוצתי.';
@@ -1061,6 +1083,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             {locNotConfigured && (
               <p className="text-[12px] text-amber-600">
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
+              </p>
+            )}
+            {/* Stale-date reminder (typical after שכפל דיל, which keeps the
+                original's date on purpose). Warning only — the date stays
+                editable above and is never cleared automatically. */}
+            {tourDatePast && (
+              <p className="text-[12px] font-medium text-red-600">
+                ⚠️ תאריך הסיור שבדיל כבר עבר — עדכנו את התאריך (הוא נשמר מהדיל המקורי ולא נמחק אוטומטית).
               </p>
             )}
 
