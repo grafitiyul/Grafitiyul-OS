@@ -367,6 +367,29 @@ test('woo operational: iCount down → loud fallback; recovery replay issues ONC
   assert.equal(t(db).dealCollectionEvidence.length, 1);
 });
 
+test('woo operational: a concurrent double-issue (P2002 race) converges on the winner document — no evidence, no card', async () => {
+  const db = seed();
+  // The LOSER of a race: by the time its create runs, the winner's row exists.
+  const racingIssuer = async (client, _deal, input) => {
+    await client.icountDocument.create({
+      data: {
+        doctype: 'invrec', docnum: '7777', idempotencyKey: input.idempotencyKey,
+        amountMinor: 35000n, currency: 'ILS', status: 'issued', source: 'webhook', clientName: 'רונית לוי',
+      },
+    });
+    const e = new Error('Unique constraint failed');
+    e.code = 'P2002';
+    throw e;
+  };
+  const r = await deliver(db, wooOrder(), { issueDoc: racingIssuer });
+
+  assert.equal(t(db).icountDocument.length, 1, 'exactly one document survives the race');
+  assert.equal(r.operational.doc.ok, true, 'the loser converges on the winner');
+  assert.equal(r.operational.doc.reused, true);
+  assert.equal(t(db).dealCollectionEvidence.length, 0, 'no fallback evidence beside the winner document');
+  assert.deepEqual(r.operational.reasons, [], 'a converged race is not an attention case');
+});
+
 test('woo operational: a refund AFTER an issued invrec raises a credit-document card, never rewrites the document', async () => {
   const db = seed();
   await deliver(db, wooOrder());

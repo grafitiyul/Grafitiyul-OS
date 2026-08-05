@@ -124,6 +124,21 @@ export async function issueWooOrderInvrec({ dealId, normalized, storeKey }, { db
     );
     return { ok: true, doc, reused };
   } catch (err) {
+    // Concurrent double-issue (two processors raced the same order): the other
+    // writer's document IS this order's document — converge on it. NOTE: our
+    // own iCount doc/create may have gone through before the unique guard
+    // fired, leaving an orphan at iCount that GOS never recorded — say so
+    // loudly for the books.
+    if (err?.code === 'P2002') {
+      const winner = await db.icountDocument.findUnique({ where: { idempotencyKey } }).catch(() => null);
+      if (winner) {
+        console.error(
+          `[woo-doc] concurrent invrec issue for order ${orderId} — converged on docnum ${winner.docnum}; ` +
+          'check iCount for a same-amount orphan document',
+        );
+        return { ok: true, doc: winner, reused: true, concurrent: true };
+      }
+    }
     console.error(`[woo-doc] invrec issue failed for deal ${dealId} order ${orderId}: ${err?.code || err?.message}`);
     return { ok: false, reason: err?.code || 'doc_issue_failed' };
   }

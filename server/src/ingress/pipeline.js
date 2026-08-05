@@ -87,6 +87,17 @@ export async function receiveEvent(
         dryRun: forcedDryRun,
         rawPayload,
         rawHeaders,
+        // CLAIMED BY THE INLINE PROCESSOR at birth. The HTTP handler processes
+        // this event immediately after receipt — but the operational chain can
+        // take seconds (iCount HTTP), and an unclaimed 'pending' row is exactly
+        // what the retry worker's claimOne picks up, producing a PARALLEL run
+        // of the same event (observed live on order 2161: alreadyWon + P2002 —
+        // the guards converged, but a fallback evidence row landed beside the
+        // winner's document). The claim makes the worker wait CLAIM_TTL before
+        // touching it; a crash mid-flight is still recovered (stale claim),
+        // and a processing failure clears the claim for immediate retry.
+        claimedAt: new Date(),
+        claimedBy: 'inline',
       },
       select: { id: true, status: true, dealId: true, outcome: true },
     });

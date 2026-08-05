@@ -130,6 +130,10 @@ test('worker: a due pending event is claimed and processed', async () => {
   const db = workerDb();
   const { event } = await receiveEvent({ source: 'website_form', sourceKey: 'f', rawPayload: formPayload }, db);
   db._tables.ingressEvent[0].nextRetryAt = new Date(Date.now() - 1000);
+  // A fresh event is claimed by its INLINE processor (worker-race fix); the
+  // worker takes over only once that claim is stale — the crashed-mid-flight
+  // scenario this test proves.
+  db._tables.ingressEvent[0].claimedAt = new Date(Date.now() - CLAIM_TTL_MS - 1000);
 
   const n = await runIngressRetryTick(db, { log() {}, error() {} });
   assert.equal(n, 1);
@@ -184,6 +188,8 @@ test('worker: a duplicate-suppressed repeat lead still resolves through the work
   const contactId = seedContact(db, { phone: '050-123-4567' });
   const dealId = seedOpenDeal(db, contactId);
   await receiveEvent({ source: 'website_form', sourceKey: 'f', rawPayload: formPayload }, db);
+  // Stale inline claim → the worker may recover it (see the claim-at-birth fix).
+  db._tables.ingressEvent[0].claimedAt = new Date(Date.now() - CLAIM_TTL_MS - 1000);
 
   await runIngressRetryTick(db, { log() {}, error() {} });
   assert.equal(db._tables.ingressEvent[0].outcome, 'annotated_deal');
