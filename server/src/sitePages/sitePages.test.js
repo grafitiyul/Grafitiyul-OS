@@ -6,6 +6,7 @@ import { renderPage, pageSeo, pageStructuredData, pageStylesheet } from './rende
 import {
   normalizeDocument, visibleDocument, makeSection, makeCard, emptyDocument,
   normalizeSlug, SECTION_TYPE_KEYS, documentSummary,
+  makePricingRow, makePricingLine,
 } from '../../../shared/sitePage.mjs';
 import { PUBLIC_LINKS, SITE_PAGE_SLUGS, sitePageUrl } from '../publicLinks.js';
 
@@ -227,6 +228,128 @@ test('#12 no customer-facing link points at THEGUY or the app origin', () => {
     assert.ok(!url.includes('app.grafitiyul'), `${url} is a website page, not a GOS app route`);
     assert.match(url, /^https:\/\//);
   }
+});
+
+// ── pricing sections (agents price list & any future price page) ───────────
+function pricingSection(rows, heading = 'מחירון') {
+  const s = makeSection('pricing');
+  s.headingHe = heading;
+  s.rows = rows.map((r) => ({ ...makePricingRow(), ...r }));
+  return s;
+}
+
+const priceLine = (patch) => ({ ...makePricingLine(), ...patch });
+
+test('pricing amounts survive normalize+sanitize as NUMBERS, junk becomes null', () => {
+  const doc = sanitizeDocument(
+    docWith(
+      pricingSection([
+        {
+          titleHe: 'סיור גרפיטי',
+          lines: [
+            priceLine({ kind: 'tier', upto: 10, amountMinor: 165000 }),
+            priceLine({ kind: 'extra', amountMinor: '12000' }),
+            priceLine({ kind: 'made-up-kind', amountMinor: 'lots', upto: -3 }),
+          ],
+          variantId: 'var_1',
+          cardGroupId: 'card_1',
+        },
+      ]),
+    ),
+  );
+  const row = doc.sections[0].rows[0];
+  assert.equal(row.lines[0].amountMinor, 165000);
+  assert.equal(row.lines[0].upto, 10);
+  assert.equal(row.lines[1].amountMinor, 12000, 'numeric strings are coerced');
+  assert.equal(row.lines[2].kind, 'custom', 'unknown kinds degrade to custom');
+  assert.equal(row.lines[2].amountMinor, null, 'non-numeric amount becomes null');
+  assert.equal(row.lines[2].upto, null, 'negative thresholds are rejected');
+  assert.equal(row.cardGroupId, 'card_1', 'the canonical card reference is retained for drift checks');
+});
+
+test('pricing text fields are sanitized like every other plain field', () => {
+  const doc = sanitizeDocument(
+    docWith(pricingSection([{ titleHe: '<script>x</script>סיור', notesHe: '<b>עד 45</b>' }])),
+  );
+  const row = doc.sections[0].rows[0];
+  assert.equal(row.titleHe, 'סיור');
+  assert.equal(row.notesHe, 'עד 45');
+});
+
+test('hidden pricing rows never reach the public document or the rendered page', () => {
+  const s = pricingSection([
+    { titleHe: 'פריט גלוי', lines: [priceLine({ kind: 'fixed', amountMinor: 130000 })] },
+    { titleHe: 'פריט מוסתר', hidden: true, lines: [priceLine({ kind: 'fixed', amountMinor: 99900 })] },
+  ]);
+  const pub = visibleDocument(docWith(s));
+  assert.equal(pub.sections[0].rows.length, 1);
+  assert.ok(!JSON.stringify(pub).includes('מוסתר'));
+  const { html } = renderPage(docWith(s), { locale: 'he' });
+  assert.ok(html.includes('פריט גלוי'));
+  assert.ok(!html.includes('פריט מוסתר'));
+  assert.ok(!html.includes('999'), 'a hidden row’s price is not in the page');
+});
+
+test('pricing renders Hebrew ₪ and English NIS from the SAME stored number', () => {
+  const s = pricingSection([
+    {
+      titleHe: 'סיור וסדנת גרפיטי',
+      titleEn: 'Graffiti Tour & Workshop',
+      lines: [
+        priceLine({ kind: 'tier', upto: 5, amountMinor: 140000 }),
+        priceLine({ kind: 'tier', upto: 10, amountMinor: 165000 }),
+        priceLine({ kind: 'extra', amountMinor: 12000 }),
+      ],
+    },
+  ]);
+  const he = renderPage(docWith(s), { locale: 'he' }).html;
+  assert.ok(he.includes('עד 5 משתתפים'));
+  assert.ok(he.includes('1,400 ₪'));
+  assert.ok(he.includes('כל משתתף נוסף'));
+  assert.ok(he.includes('120 ₪'));
+
+  const en = renderPage(docWith(s), { locale: 'en' }).html;
+  assert.ok(en.includes('Up to 10 participants'));
+  assert.ok(en.includes('1,650 NIS'));
+  assert.ok(en.includes('Each additional participant'));
+  assert.ok(en.includes('Graffiti Tour &amp; Workshop'));
+  // amounts are LTR-isolated so RTL context cannot reorder them
+  assert.match(he, /<span class="gos-price__amount" dir="ltr">/);
+});
+
+test('pricing internal references (variantId/cardGroupId) never leak into the payload', () => {
+  const s = pricingSection([
+    {
+      titleHe: 'סיור',
+      lines: [priceLine({ kind: 'fixed', amountMinor: 130000 })],
+      variantId: 'cmquk1dau001nqcpmqf5lgeic',
+      cardGroupId: 'card_4d4c8116-197c-41a7-9be9-d222a0f69d22',
+    },
+  ]);
+  for (const locale of ['he', 'en']) {
+    const { html, seo } = renderPage(docWith(s), { locale });
+    const blob = JSON.stringify({ html, seo });
+    assert.ok(!blob.includes('cmquk1dau'), 'variant id must not render');
+    assert.ok(!blob.includes('card_4d4c8116'), 'card group id must not render');
+  }
+});
+
+test('a custom pricing line renders its own label per locale', () => {
+  const s = pricingSection([
+    {
+      titleHe: 'תוספות',
+      titleEn: 'Add-ons',
+      lines: [priceLine({ kind: 'custom', labelHe: 'טעימה כשרה', labelEn: 'Kosher tasting', amountMinor: 20000 })],
+    },
+  ]);
+  assert.ok(renderPage(docWith(s), { locale: 'he' }).html.includes('טעימה כשרה'));
+  assert.ok(renderPage(docWith(s), { locale: 'en' }).html.includes('Kosher tasting'));
+});
+
+test('a pricing row with no title renders nothing (no orphan price fragments)', () => {
+  const s = pricingSection([{ titleHe: '', lines: [priceLine({ kind: 'fixed', amountMinor: 55500 })] }]);
+  const { html } = renderPage(docWith(s), { locale: 'he' });
+  assert.ok(!html.includes('555'));
 });
 
 // ── contract guards ────────────────────────────────────────────────────────

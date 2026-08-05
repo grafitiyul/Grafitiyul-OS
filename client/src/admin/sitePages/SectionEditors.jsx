@@ -2,7 +2,7 @@ import React from 'react';
 import RichEditor from '../../editor/RichEditor.jsx';
 import TranslateButton from '../common/TranslateButton.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
-import { makeCard, newId } from '../../../../shared/sitePage.mjs';
+import { makeCard, makePricingRow, makePricingLine, PRICING_LINE_KINDS, newId } from '../../../../shared/sitePage.mjs';
 
 // Per-type section editors for "דפי אתר".
 //
@@ -245,6 +245,239 @@ function FaqEditor({ section, onChange }) {
   );
 }
 
+// ── Pricing section ────────────────────────────────────────────────────────
+// A row is one sellable item; its lines are STRUCTURED prices (frozen numbers,
+// not free text). A row that references a Pricing Card shows a drift badge when
+// the live card no longer matches — updating from the card is a deliberate
+// click, and nothing changes on the live site until the next publish.
+
+const LINE_KIND_LABELS = {
+  fixed: 'מחיר לקבוצה',
+  tier: 'עד X משתתפים',
+  extra: 'משתתף נוסף',
+  custom: 'שורה חופשית',
+};
+
+function AmountInput({ amountMinor, onChange }) {
+  return (
+    <input
+      className={I}
+      dir="ltr"
+      inputMode="decimal"
+      placeholder="₪"
+      value={amountMinor == null ? '' : String(amountMinor / 100)}
+      onChange={(e) => {
+        const raw = e.target.value.trim();
+        if (raw === '') return onChange(null);
+        const n = Number(raw);
+        onChange(Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null);
+      }}
+    />
+  );
+}
+
+function PricingLineRow({ line, onChange, onRemove }) {
+  const patch = (p) => onChange({ ...line, ...p });
+  return (
+    <div className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-100 bg-slate-50/60 p-2">
+      <div className="w-36">
+        <label className={L}>סוג שורה</label>
+        <select className={I} value={line.kind} onChange={(e) => patch({ kind: e.target.value })}>
+          {PRICING_LINE_KINDS.map((k) => <option key={k} value={k}>{LINE_KIND_LABELS[k]}</option>)}
+        </select>
+      </div>
+      {line.kind === 'tier' ? (
+        <div className="w-28">
+          <label className={L}>עד כמה משתתפים</label>
+          <input
+            className={I}
+            dir="ltr"
+            inputMode="numeric"
+            value={line.upto == null ? '' : String(line.upto)}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              patch({ upto: Number.isInteger(n) && n > 0 ? n : null });
+            }}
+          />
+        </div>
+      ) : null}
+      <div className="w-28">
+        <label className={L}>מחיר בש"ח</label>
+        <AmountInput amountMinor={line.amountMinor} onChange={(v) => patch({ amountMinor: v })} />
+      </div>
+      {line.kind === 'custom' ? (
+        <>
+          <div className="min-w-40 flex-1">
+            <label className={L}>תיאור (עברית)</label>
+            <TextInput value={line.labelHe} onChange={(v) => patch({ labelHe: v })} dir="rtl" />
+          </div>
+          <div className="min-w-40 flex-1">
+            <label className={L}>תיאור (English)</label>
+            <TextInput value={line.labelEn} onChange={(v) => patch({ labelEn: v })} dir="ltr" />
+          </div>
+        </>
+      ) : null}
+      <button type="button" className="mb-1 text-xs text-rose-600 hover:text-rose-800" onClick={onRemove}>מחיקה</button>
+    </div>
+  );
+}
+
+/** A row's missing-English facts — surfaced BEFORE publish, not discovered after. */
+export function pricingRowMissingEnglish(row) {
+  if (!row.titleEn) return true;
+  return (row.lines || []).some((l) => l.kind === 'custom' && l.labelHe && !l.labelEn);
+}
+
+function PricingRowEditor({ row, onChange, onRemove, onDuplicate, drift }) {
+  const patch = (p) => onChange({ ...row, ...p });
+  const lines = row.lines || [];
+  const replaceLines = (next) => patch({ lines: next });
+  const missingEn = pricingRowMissingEnglish(row);
+  return (
+    <div className={`rounded-xl border p-3 ${row.hidden ? 'border-slate-200 bg-slate-50 opacity-70' : 'border-slate-200 bg-white'}`}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="cursor-grab select-none text-slate-400" title="גררו לשינוי סדר">⠿</span>
+        <span className="flex-1 text-sm font-medium text-slate-800">{row.titleHe || 'פריט חדש'}</span>
+        {missingEn ? (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">חסר תרגום לאנגלית</span>
+        ) : null}
+        {drift?.status === 'drift' ? (
+          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">המחירון הקנוני השתנה</span>
+        ) : null}
+        {drift?.status === 'missing_card' ? (
+          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">כרטיס התמחור לא נמצא</span>
+        ) : null}
+        <button type="button" className="text-xs text-slate-500 hover:text-slate-800" onClick={onDuplicate}>שכפול</button>
+        <button type="button" className="text-xs text-slate-500 hover:text-slate-800" onClick={() => patch({ hidden: !row.hidden })}>
+          {row.hidden ? 'הצג' : 'הסתר'}
+        </button>
+        <button type="button" className="text-xs text-rose-600 hover:text-rose-800" onClick={onRemove}>מחיקה</button>
+      </div>
+      {drift?.status === 'drift' && drift.live ? (
+        <div className="mb-3 flex items-center gap-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span>המחירים בכרטיס התמחור שונים מהמחירים שבעמוד. עדכון מחליף את השורות המובנות (שורות חופשיות נשמרות).</span>
+          <button
+            type="button"
+            className="rounded-md border border-rose-300 bg-white px-2 py-1 font-medium hover:border-rose-400"
+            onClick={() => {
+              const custom = lines.filter((l) => l.kind === 'custom');
+              const fresh = drift.live.lines.map((l) => ({ ...makePricingLine(l.kind), ...l, id: newId('pl') }));
+              replaceLines([...fresh, ...custom]);
+            }}
+          >
+            עדכון מהמחירון
+          </button>
+        </div>
+      ) : null}
+      <Bilingual
+        label="שם הפריט"
+        he={row.titleHe}
+        en={row.titleEn}
+        onHe={(v) => patch({ titleHe: v })}
+        onEn={(v) => patch({ titleEn: v })}
+      />
+      <Bilingual
+        label="שורת הקשר (משך / מיקום)"
+        he={row.metaHe}
+        en={row.metaEn}
+        onHe={(v) => patch({ metaHe: v })}
+        onEn={(v) => patch({ metaEn: v })}
+      />
+      <div className="mb-3">
+        <div className="mb-1 flex items-center justify-between">
+          <label className={L + ' mb-0'}>שורות מחיר</label>
+          <button
+            type="button"
+            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs hover:border-slate-400"
+            onClick={() => replaceLines([...lines, makePricingLine(lines.length ? 'extra' : 'tier')])}
+          >
+            + שורת מחיר
+          </button>
+        </div>
+        <div className="grid gap-2">
+          {lines.map((line) => (
+            <PricingLineRow
+              key={line.id}
+              line={line}
+              onChange={(next) => replaceLines(lines.map((l) => (l.id === line.id ? next : l)))}
+              onRemove={() => replaceLines(lines.filter((l) => l.id !== line.id))}
+            />
+          ))}
+          {!lines.length ? <p className="text-xs text-slate-400">אין עדיין שורות מחיר לפריט.</p> : null}
+        </div>
+      </div>
+      <Bilingual
+        label="הערות לפריט (אופציונלי)"
+        he={row.notesHe}
+        en={row.notesEn}
+        onHe={(v) => patch({ notesHe: v })}
+        onEn={(v) => patch({ notesEn: v })}
+      />
+      {row.cardGroupId ? (
+        <p className="text-[11px] text-slate-400">
+          מקושר לכרטיס תמחור קנוני — המחירים המפורסמים קפואים; שינוי במחירון יסומן כאן ולא ישתנה בעמוד עד פרסום מחדש.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PricingEditor({ section, onChange, drift }) {
+  const rows = section.rows || [];
+  const replace = (next) => set(section, onChange, { rows: next });
+  const driftFor = (rowId) => (drift || []).find((d) => d.rowId === rowId) || null;
+  return (
+    <>
+      <Bilingual
+        label="כותרת המקטע"
+        he={section.headingHe}
+        en={section.headingEn}
+        onHe={(v) => set(section, onChange, { headingHe: v })}
+        onEn={(v) => set(section, onChange, { headingEn: v })}
+      />
+      <Bilingual
+        label="טקסט מקדים (אופציונלי)"
+        he={section.noteHe}
+        en={section.noteEn}
+        onHe={(v) => set(section, onChange, { noteHe: v })}
+        onEn={(v) => set(section, onChange, { noteEn: v })}
+      />
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm text-slate-500">{rows.length} פריטים</p>
+        <button
+          type="button"
+          className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+          onClick={() => replace([...rows, makePricingRow()])}
+        >
+          + פריט מחירון
+        </button>
+      </div>
+      <ReorderableList
+        items={rows}
+        emptyText="אין עדיין פריטים במקטע המחירון."
+        onReorder={(ids) => replace(ids.map((id) => rows.find((r) => r.id === id)))}
+        renderRow={(row) => (
+          <PricingRowEditor
+            row={row}
+            drift={driftFor(row.id)}
+            onChange={(next) => replace(rows.map((r) => (r.id === row.id ? next : r)))}
+            onRemove={() => replace(rows.filter((r) => r.id !== row.id))}
+            onDuplicate={() => {
+              const copy = {
+                ...row,
+                id: newId('pr'),
+                lines: (row.lines || []).map((l) => ({ ...l, id: newId('pl') })),
+              };
+              const i = rows.findIndex((r) => r.id === row.id);
+              replace([...rows.slice(0, i + 1), copy, ...rows.slice(i + 1)]);
+            }}
+          />
+        )}
+      />
+    </>
+  );
+}
+
 /** type key -> editor component. Mirrors SECTION_TYPES in shared/sitePage.mjs. */
 export const SECTION_EDITORS = {
   hero: ({ section, onChange }) => (
@@ -347,6 +580,7 @@ export const SECTION_EDITORS = {
 
   cards: CardsEditor,
   faq: FaqEditor,
+  pricing: PricingEditor,
 
   cta: ({ section, onChange }) => (
     <>

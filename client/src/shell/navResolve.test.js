@@ -87,8 +87,8 @@ test('the real registry ships the intended default rail', () => {
   assert.deepEqual(
     settingsModules(r).map((m) => m.key),
     [
-      // The six management modules lead — Settings is their home…
-      'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people',
+      // The management modules lead — Settings is their home…
+      'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people', 'site-pages',
       // …then every operational module, which also gets a permanent card.
       'control', 'management-tasks', 'crm', 'tours', 'whatsapp', 'email', 'finance',
     ],

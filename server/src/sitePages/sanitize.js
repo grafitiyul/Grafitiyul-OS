@@ -151,6 +151,31 @@ export function sanitizeDocument(raw) {
             answerHe: sanitizeSiteHtml(i.answerHe),
             answerEn: sanitizeSiteHtml(i.answerEn),
           }));
+        } else if (f === 'rows') {
+          // Pricing rows: text is plain, amounts stay NUMBERS (the normalizer
+          // already coerced them to integer-minor-or-null; stringifying here
+          // would corrupt them). variantId/cardGroupId are internal refs the
+          // renderer never emits — plain text is enough.
+          out.rows = s.rows.map((r) => ({
+            id: r.id,
+            hidden: r.hidden,
+            titleHe: plainText(r.titleHe),
+            titleEn: plainText(r.titleEn),
+            metaHe: plainText(r.metaHe),
+            metaEn: plainText(r.metaEn),
+            notesHe: plainText(r.notesHe),
+            notesEn: plainText(r.notesEn),
+            lines: r.lines.map((l) => ({
+              id: l.id,
+              kind: l.kind,
+              upto: l.upto,
+              amountMinor: l.amountMinor,
+              labelHe: plainText(l.labelHe),
+              labelEn: plainText(l.labelEn),
+            })),
+            variantId: plainText(r.variantId),
+            cardGroupId: plainText(r.cardGroupId),
+          }));
         } else if (f === 'imageSide') {
           out.imageSide = s.imageSide;
         } else {

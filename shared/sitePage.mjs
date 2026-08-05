@@ -19,6 +19,7 @@ export const PAGE_TYPES = [
   { key: 'faq', label: 'שאלות ותשובות' },
   { key: 'campaign', label: 'עמוד קמפיין' },
   { key: 'seo', label: 'עמוד תוכן / SEO' },
+  { key: 'price_list', label: 'מחירון' },
 ];
 export const PAGE_TYPE_KEYS = PAGE_TYPES.map((t) => t.key);
 
@@ -34,6 +35,7 @@ export const SECTION_TYPES = [
   { key: 'cards', label: 'כרטיסי המלצה', glyph: '⭐', fields: ['headingHe', 'headingEn', 'noteHe', 'noteEn', 'cards'] },
   { key: 'faq', label: 'שאלות נפוצות', glyph: '❓', fields: ['headingHe', 'headingEn', 'items'] },
   { key: 'cta', label: 'קריאה לפעולה', glyph: '🔔', fields: ['headingHe', 'headingEn', 'bodyHe', 'bodyEn', 'buttonLabelHe', 'buttonLabelEn', 'buttonUrl'] },
+  { key: 'pricing', label: 'מחירון', glyph: '💰', fields: ['headingHe', 'headingEn', 'noteHe', 'noteEn', 'rows'] },
   { key: 'divider', label: 'קו מפריד', glyph: '➖', fields: [] },
 ];
 export const SECTION_TYPE_KEYS = SECTION_TYPES.map((t) => t.key);
@@ -45,8 +47,26 @@ export const CARD_FIELDS = [
   'address', 'phone', 'hours', 'kosher', 'notes', 'website', 'mapUrl', 'image',
 ];
 
+/**
+ * Fields of ONE pricing row (a sellable item on a price-list page) and its
+ * price lines. Amounts are integer minor units (agorot) — numbers, never
+ * strings, so the renderer/comparators never parse display text.
+ *
+ * `variantId` / `cardGroupId` are INTERNAL references to the canonical
+ * ProductVariant / Pricing Card used only for drift detection in the editor;
+ * the public renderer never emits them. Published amounts are the frozen
+ * `lines` values — a Pricing Card edit after publish changes nothing until an
+ * operator deliberately republishes (the editor shows the drift).
+ */
+export const PRICING_LINE_KINDS = ['fixed', 'tier', 'extra', 'custom'];
+
 const str = (v) => (typeof v === 'string' ? v : v == null ? '' : String(v));
 const bool = (v) => v === true;
+const intOrNull = (v) => {
+  if (v == null || v === '') return null; // Number(null) is 0 — never invent a price
+  const n = Number(v);
+  return Number.isFinite(n) && Number.isInteger(n) && n >= 0 ? n : null;
+};
 
 let seq = 0;
 /** Stable-enough id for a new section/card created in the editor. */
@@ -71,6 +91,33 @@ export function makeCard() {
   const c = { id: newId('card'), hidden: false };
   for (const f of CARD_FIELDS) c[f] = '';
   return c;
+}
+
+export function makePricingLine(kind = 'tier') {
+  return {
+    id: newId('pl'),
+    kind: PRICING_LINE_KINDS.includes(kind) ? kind : 'custom',
+    upto: null,
+    amountMinor: null,
+    labelHe: '',
+    labelEn: '',
+  };
+}
+
+export function makePricingRow() {
+  return {
+    id: newId('pr'),
+    hidden: false,
+    titleHe: '',
+    titleEn: '',
+    metaHe: '',
+    metaEn: '',
+    notesHe: '',
+    notesEn: '',
+    lines: [],
+    variantId: '',
+    cardGroupId: '',
+  };
 }
 
 export function emptyDocument() {
@@ -107,6 +154,33 @@ function normalizeFaqItem(raw) {
   };
 }
 
+function normalizePricingLine(raw) {
+  return {
+    id: str(raw?.id) || newId('pl'),
+    kind: PRICING_LINE_KINDS.includes(raw?.kind) ? raw.kind : 'custom',
+    upto: intOrNull(raw?.upto),
+    amountMinor: intOrNull(raw?.amountMinor),
+    labelHe: str(raw?.labelHe).trim(),
+    labelEn: str(raw?.labelEn).trim(),
+  };
+}
+
+function normalizePricingRow(raw) {
+  return {
+    id: str(raw?.id) || newId('pr'),
+    hidden: bool(raw?.hidden),
+    titleHe: str(raw?.titleHe).trim(),
+    titleEn: str(raw?.titleEn).trim(),
+    metaHe: str(raw?.metaHe).trim(),
+    metaEn: str(raw?.metaEn).trim(),
+    notesHe: str(raw?.notesHe).trim(),
+    notesEn: str(raw?.notesEn).trim(),
+    lines: Array.isArray(raw?.lines) ? raw.lines.map(normalizePricingLine) : [],
+    variantId: str(raw?.variantId).trim(),
+    cardGroupId: str(raw?.cardGroupId).trim(),
+  };
+}
+
 function normalizeSection(raw) {
   const type = str(raw?.type);
   const t = sectionType(type);
@@ -115,6 +189,7 @@ function normalizeSection(raw) {
   for (const f of t.fields) {
     if (f === 'cards') s.cards = Array.isArray(raw?.cards) ? raw.cards.map(normalizeCard) : [];
     else if (f === 'items') s.items = Array.isArray(raw?.items) ? raw.items.map(normalizeFaqItem) : [];
+    else if (f === 'rows') s.rows = Array.isArray(raw?.rows) ? raw.rows.map(normalizePricingRow) : [];
     else if (f === 'imageSide') s.imageSide = raw?.imageSide === 'end' ? 'end' : 'start';
     else s[f] = str(raw?.[f]);
   }
@@ -155,6 +230,7 @@ export function visibleDocument(doc) {
         ...s,
         ...(s.cards ? { cards: s.cards.filter((c) => !c.hidden) } : {}),
         ...(s.items ? { items: s.items.filter((i) => !i.hidden) } : {}),
+        ...(s.rows ? { rows: s.rows.filter((r) => !r.hidden) } : {}),
       })),
   };
 }

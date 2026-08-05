@@ -1,0 +1,203 @@
+{
+  "_provenance": {
+    "sources": [
+      "https://web.archive.org/web/20251111112504/https://grafitiyul.co.il/pricingagent/ (HE, page 7635, last modified 2025-11-07 — STALE prices)",
+      "https://web.archive.org/web/20260413111743/https://grafitiyul.co.il/en/pricingagent-en/ (EN, page 11680, last modified 2026-02-19 — the newest owner-authored version)",
+      "GOS production Pricing Cards, segment 'agents' (the commercial authority for referenced rows)"
+    ],
+    "note": "Rows WITH cardGroupId get their amounts resolved LIVE from the canonical Pricing Card at import time (fallbackLines are only a safety net). Rows WITHOUT cardGroupId are editorial prices recovered from the EN page (2026-02-19) — no agents-segment card models them yet."
+  },
+  "titleHe": "מחירון סוכנים",
+  "titleEn": "Agents Price List",
+  "hero": {
+    "titleHe": "מחירון סוכנים – סיורי וסדנאות גרפיטי",
+    "titleEn": "B2B Pricing – Graffiti Tours & Workshops",
+    "subtitleHe": "מחירון מוזל לסוכני נסיעות. כל המחירים לפני מע\"מ.",
+    "subtitleEn": "Discounted price list for travel agents. All prices do not include VAT.",
+    "image": "https://grafitiyul.co.il/wp-content/uploads/2022/07/2jerusalem-pictures-1024x768.jpg"
+  },
+  "pricingSections": [
+    {
+      "headingHe": "סיורי גרפיטי – ירושלים / חיפה",
+      "headingEn": "Jerusalem / Haifa – Graffiti Tours",
+      "noteHe": "",
+      "noteEn": "",
+      "rows": [
+        {
+          "titleHe": "סיור גרפיטי - שעה וחצי",
+          "titleEn": "Graffiti Tour – 1.5 Hours",
+          "metaHe": "סיור גרפיטי מחתרתי",
+          "metaEn": "Underground Graffiti Tour",
+          "cardGroupId": "card_4abac60c-0389-41ae-b6a2-ff553de09504",
+          "variantId": "cmquk1oyv001tqcpmimyb0v1q",
+          "fallbackLines": [{ "kind": "fixed", "amountMinor": 150000 }]
+        },
+        {
+          "titleHe": "סיור גרפיטי מקוצר - שעה",
+          "titleEn": "Short Graffiti Tour – One Hour",
+          "metaHe": "",
+          "metaEn": "",
+          "lines": [{ "kind": "fixed", "amountMinor": 120000 }]
+        }
+      ]
+    },
+    {
+      "headingHe": "סיורי גרפיטי – תל אביב",
+      "headingEn": "Tel Aviv – Graffiti Tours",
+      "noteHe": "",
+      "noteEn": "",
+      "rows": [
+        {
+          "titleHe": "סיור גרפיטי - קלאסי - שעה וחצי",
+          "titleEn": "Graffiti Tour – Classic – 1.5 hours",
+          "metaHe": "סיור גרפיטי מחתרתי בפלורנטין",
+          "metaEn": "Underground Graffiti Tour, Florentin",
+          "cardGroupId": "card_4d4c8116-197c-41a7-9be9-d222a0f69d22",
+          "variantId": "cmquk1dau001nqcpmqf5lgeic",
+          "fallbackLines": [{ "kind": "fixed", "amountMinor": 130000 }]
+        },
+        {
+          "titleHe": "סיור גרפיטי ממוקד 7/10 - שעה וחצי",
+          "titleEn": "Graffiti Tour Focused on 7/10 - 1.5 hours",
+          "metaHe": "קרית המלאכה",
+          "metaEn": "Kiryat Hamelacha",
+          "cardGroupId": "card_4d4c8116-197c-41a7-9be9-d222a0f69d22",
+          "variantId": "cmquk1j12001pqcpmq31p8g64",
+          "fallbackLines": [{ "kind": "fixed", "amountMinor": 130000 }]
+        },
+        {
+          "titleHe": "סיור גרפיטי מקוצר - שעה",
+          "titleEn": "Short Graffiti Tour – One Hour",
+          "metaHe": "",
+          "metaEn": "",
+          "lines": [{ "kind": "fixed", "amountMinor": 100000 }]
+        }
+      ]
+    },
+    {
+      "headingHe": "תל אביב בלבד – סיורים וסדנאות גרפיטי",
+      "headingEn": "Tel Aviv Only – Graffiti Tours & Workshops",
+      "noteHe": "",
+      "noteEn": "",
+      "rows": [
+        {
+          "titleHe": "סיור וסדנת גרפיטי - קלאסי - שעתיים וחצי",
+          "titleEn": "Graffiti Tour & Workshop – Classic – Two and a Half Hours",
+          "metaHe": "",
+          "metaEn": "",
+          "cardGroupId": "card_875fca37-7485-40d9-acc5-26e4009bfec2",
+          "variantId": "cmquk0ejl001lqcpmg1xj5cbf",
+          "fallbackLines": [
+            { "kind": "tier", "upto": 5, "amountMinor": 140000 },
+            { "kind": "tier", "upto": 10, "amountMinor": 165000 },
+            { "kind": "extra", "amountMinor": 12000 }
+          ]
+        },
+        {
+          "titleHe": "תוספת טעימת אוכל כשרה לסיור והסדנה",
+          "titleEn": "Kosher Food Tasting Add-On (for the tour & workshop)",
+          "metaHe": "טעימה כשרה אחת במהלך הפעילות",
+          "metaEn": "Includes ONE kosher food tasting stop",
+          "lines": [
+            { "kind": "tier", "upto": 5, "amountMinor": 20000 },
+            { "kind": "tier", "upto": 10, "amountMinor": 30000 }
+          ]
+        },
+        {
+          "titleHe": "קירות של תקווה - סיור גרפיטי בנושא 7/10 - כולל התנסות מעשית - כשעתיים",
+          "titleEn": "Graffiti Tour Focused on 7/10, Including a Hands-On Experience – 2 hours",
+          "metaHe": "סיור וסדנת גרפיטי בעקבות יצירות הגרפיטי מהמלחמה",
+          "metaEn": "A graffiti tour focused on artistic responses to the October 7 war",
+          "cardGroupId": "card_a3017097-2c25-49a6-b642-21eabadf728d",
+          "variantId": "cmquk4o2e0021qcpmkyuzuhdk",
+          "fallbackLines": [
+            { "kind": "tier", "upto": 5, "amountMinor": 140000 },
+            { "kind": "tier", "upto": 10, "amountMinor": 165000 },
+            { "kind": "extra", "amountMinor": 12000 }
+          ]
+        },
+        {
+          "titleHe": "סיור וסדנת גרפיטי משודרגת על תקליטים וגם על קיר - 3 שעות",
+          "titleEn": "Graffiti Tour & Upgraded Workshop on Vinyl Records and on a Wall – 3 hours",
+          "metaHe": "",
+          "metaEn": "",
+          "cardGroupId": "card_03586e1e-e728-4f34-b41a-519ae00f9b3f",
+          "variantId": "cmqw74rca000je407muw0kh5z",
+          "fallbackLines": [
+            { "kind": "tier", "upto": 10, "amountMinor": 280000 },
+            { "kind": "extra", "amountMinor": 15000 }
+          ]
+        }
+      ]
+    },
+    {
+      "headingHe": "גרפודיז – שילוב של אוכל וגרפיטי",
+      "headingEn": "Grafoodiez – Food & Graffiti Experience",
+      "noteHe": "מקסימום 20 משתתפים בקבוצה. במקרים חריגים, לקבוצות מעל 20 משתתפים – תוספת של 500 ש\"ח.",
+      "noteEn": "Maximum group size: up to 20 participants. In exceptional cases, groups over 20 participants – additional 500 NIS.",
+      "rows": [
+        {
+          "titleHe": "סיור גרפודיז – סיור גרפיטי עם 3 טעימות אוכל - כשעתיים וחצי",
+          "titleEn": "Grafoodiez – Food & Graffiti Tour (3 food tastings) – Approx. 2.5 hours",
+          "metaHe": "",
+          "metaEn": "",
+          "lines": [
+            { "kind": "tier", "upto": 10, "amountMinor": 280000 },
+            { "kind": "extra", "amountMinor": 18000 }
+          ]
+        },
+        {
+          "titleHe": "החוויה המלאה – סיור גרפיטי, 3 טעימות אוכל וסדנת גרפיטי - כ-3.5 שעות",
+          "titleEn": "Full Experience – Graffiti tour + 3 food tastings + graffiti workshop – Approx. 3.5 hours",
+          "metaHe": "",
+          "metaEn": "",
+          "lines": [
+            { "kind": "tier", "upto": 10, "amountMinor": 345000 },
+            { "kind": "extra", "amountMinor": 25000 }
+          ]
+        }
+      ]
+    }
+  ],
+  "kosherStory": {
+    "headingHe": "אפשר גם כשר",
+    "headingEn": "Can be Kosher",
+    "htmlHe": "<p>טעימות האוכל שלנו הן לא רק ביס על הדרך – כל תחנה מספרת סיפור.</p><p>ממאפייה משפחתית רב-דורית, דרך פטיסרי בוטיק שמוכר בזכות הקינוחים המדויקים שלו, ועד אוכל רחוב ישראלי איקוני בפרשנות מחודשת.</p><p>הטעימות יכולות לכלול מאפי פילו בעבודת יד, לחם ללא גלוטן, מקרונים צבעוניים או עוגות בוטיק, וקלאסיקות מקומיות כמו סביח, טסביח או וריאציות של חומוס.</p><p>הבחירה המדויקת עשויה להשתנות מעט לפי גודל הקבוצה והזמינות – אבל החוויה תמיד טעימה ומשמעותית.</p>",
+    "htmlEn": "<p>Our food tastings are not just quick bites – each stop tells a story.</p><p>From a multi-generation family bakery, to a boutique patisserie known for its precision desserts, to iconic Israeli street food reinvented.</p><p>Tastings may include handmade phyllo pastries, artisan gluten-free bread, colorful macarons or boutique cakes, and authentic local favorites like Sabich, Tesabich or Hummus variations.</p><p>The exact selection may vary slightly based on group size and availability – but the experience is always delicious and meaningful.</p>"
+  },
+  "generalNotes": {
+    "headingHe": "הערות כלליות ❤️",
+    "headingEn": "General Notes ❤️",
+    "htmlHe": "<p>כל המחירים לפני מע\"מ.</p><ul><li>הסיורים מתקיימים בעברית ובאנגלית במחירי המחירון.</li><li>בחלק מהמקרים ניתן לקיים את הפעילות בשפות נוספות (ספרדית, צרפתית, רוסית) – יש לתאם מראש. בכפוף לזמינות, תחול תוספת של 200 ש\"ח.</li><li>אנחנו מוציאים סיורים כל שעה עגולה, בכפוף לזמינות.</li></ul><h3>תוספת שבת</h3><p>פעילות בשבת כוללת תוספת חד-פעמית של 250 ש\"ח לקבוצה, לפי העיר והפעילות. התוספת חלה החל מיום שישי ב-15:00.</p><h3>איסוף הקבוצה (אופציונלי)</h3><ul><li>עד 15 דקות הליכה מנקודת המפגש המקורית – 120 ש\"ח.</li><li>מעל 15 דקות הליכה או איסוף מהמלון – 250 ש\"ח (לא כולל עלויות תחבורה).</li></ul>",
+    "htmlEn": "<p>All prices do not include VAT.</p><ul><li>Tours are conducted in Hebrew and English at the listed prices.</li><li>In some cases, additional languages may be available (Spanish, French, Russian). Please contact us in advance. If available, an additional 200 NIS fee will apply.</li><li>Tours operate every hour, subject to availability.</li></ul><h3>Saturday surcharge</h3><p>Saturday activities include an additional fee of 250 NIS, as listed per city and activity. This surcharge applies from Friday at 15:00.</p><h3>Group pick-up (optional)</h3><ul><li>Up to 15 minutes walking distance from the original meeting point – 120 NIS.</li><li>More than 15 minutes walking distance or hotel pick-up – 250 NIS (transportation costs are not included).</li></ul>"
+  },
+  "groupSize": {
+    "headingHe": "גודל קבוצה – חשוב לדעת",
+    "headingEn": "Group Size – Important Notes",
+    "htmlHe": "<ul><li>גודל הקבוצה האידיאלי לחוויה הטובה ביותר הוא עד 25 משתתפים.</li><li>לקבוצות של 30 משתתפים ומעלה אנחנו בדרך כלל ממליצים להתפצל לשתי קבוצות, עם התאמת מחיר בהתאם.</li><li>במקרים חריגים בלבד ניתן לקיים פעילות לקבוצות גדולות (עד 45 משתתפים), בעיקר לקבוצות נוער או סטודנטים עם תקציב מוגבל.</li><li>קבוצות גדולות (30–45 משתתפים) אפשריות לסיורים בלבד.</li><li>הסדנאות מיועדות לקבוצות קטנות יותר; קבוצות גדולות יחולקו למספר סדנאות.</li></ul>",
+    "htmlEn": "<ul><li>The ideal group size for the best experience is up to 25 participants.</li><li>For groups of 30+ participants, we usually recommend splitting into two groups, with pricing adjusted accordingly.</li><li>In exceptional cases only, larger groups (up to 45 participants) can be accommodated, mainly for youth or student groups with limited budgets.</li><li>Large groups (30–45 participants) are possible for tours only.</li><li>Workshops are designed for smaller groups. Larger groups will be split into multiple workshops.</li></ul>"
+  },
+  "galleryImage": {
+    "image": "https://grafitiyul.co.il/wp-content/uploads/2025/02/גרפיטי-עולמי-ציורי-גרפיטי-מפורסמים-מכל-העולם.jpg",
+    "altHe": "ציורי גרפיטי",
+    "altEn": "Graffiti murals",
+    "captionHe": "",
+    "captionEn": ""
+  },
+  "cta": {
+    "headingHe": "יש שאלה או בקשה מיוחדת?",
+    "headingEn": "Questions or special requests?",
+    "bodyHe": "דברו איתנו בוואטסאפ ונשמח לעזור.",
+    "bodyEn": "Talk to us on WhatsApp — we are happy to help.",
+    "buttonLabelHe": "לוואטסאפ של Grafitiyul",
+    "buttonLabelEn": "WhatsApp Grafitiyul",
+    "buttonUrl": "https://api.whatsapp.com/send?phone=9720556638970"
+  },
+  "seo": {
+    "titleHe": "מחירון סוכנים - גרפיטיול",
+    "titleEn": "Agents Price List - Grafitiyul",
+    "descriptionHe": "מחירון מוזל לסוכני נסיעות – סיורי גרפיטי, סדנאות וחוויות אוכל של גרפיטיול בתל אביב, ירושלים וחיפה. כל המחירים לפני מע\"מ.",
+    "descriptionEn": "Discounted B2B price list for travel agents – Grafitiyul graffiti tours, workshops and food experiences in Tel Aviv, Jerusalem and Haifa. All prices exclude VAT.",
+    "noindex": true
+  }
+}

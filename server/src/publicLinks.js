@@ -27,6 +27,9 @@ const SITE = (process.env.PUBLIC_WEBSITE_ORIGIN || 'https://grafitiyul.co.il').r
 /** logical name -> the SitePage slug that owns it. */
 export const SITE_PAGE_SLUGS = {
   restaurantRecommendations: 'restaurant-recommendations',
+  // Deliberately unlisted (noindex,nofollow + out of the sitemap) — a B2B sales
+  // asset shared as a direct link, like its /pricingagent/ predecessor.
+  agentPriceList: 'agent-price-list',
 };
 
 /** Absolute public URL of a website page, by slug. Always a trailing slash. */

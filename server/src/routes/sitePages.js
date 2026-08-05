@@ -5,6 +5,7 @@ import {
   rollbackPage, unpublishPage, deletePage, getVersion,
 } from '../sitePages/service.js';
 import { renderPage, pageStylesheet } from '../sitePages/render.js';
+import { computePricingDrift } from '../sitePages/pricingDrift.js';
 import { PAGE_TYPES, SECTION_TYPES } from '../../../shared/sitePage.mjs';
 
 // ADMIN surface for "דפי אתר". Mounted behind requireAdminAuth in index.js —
@@ -66,6 +67,17 @@ router.get('/:id/versions/:versionId', handle(async (req, res) => {
   const v = await getVersion(req.params.id, req.params.versionId);
   if (!v) return res.status(404).json({ error: 'not_found' });
   res.json({ version: v });
+}));
+
+/**
+ * Pricing drift for the DRAFT: which referenced pricing rows no longer match
+ * the live Pricing Cards. Read-only — publishing fresh values stays a
+ * deliberate editor action.
+ */
+router.get('/:id/pricing-drift', handle(async (req, res) => {
+  const page = await getPage(req.params.id);
+  if (!page) return res.status(404).json({ error: 'not_found' });
+  res.json(await computePricingDrift(page.draft));
 }));
 
 /**

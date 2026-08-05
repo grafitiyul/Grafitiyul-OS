@@ -211,6 +211,37 @@ test('a script pasted into the draft is stripped before it is ever stored', asyn
   assert.ok(!JSON.stringify(live.content).includes('<script'));
 });
 
+// ── frozen pricing: no silent price change after publish ───────────────────
+test('a published price list keeps its frozen amounts when the draft price changes', async () => {
+  const priceDoc = (amountMinor) => {
+    const s = makeSection('pricing');
+    s.headingHe = 'מחירון';
+    s.rows = [{
+      id: 'pr_test', hidden: false,
+      titleHe: 'סיור גרפיטי', titleEn: 'Graffiti Tour',
+      metaHe: '', metaEn: '', notesHe: '', notesEn: '',
+      lines: [{ id: 'pl_test', kind: 'fixed', upto: null, amountMinor, labelHe: '', labelEn: '' }],
+      variantId: 'var_x', cardGroupId: 'card_x',
+    }];
+    return { ...emptyDocument(), sections: [s] };
+  };
+
+  const page = await createPage({ internalName: 'מחירון סוכנים', pageType: 'price_list', slug: 'agent-price-list' });
+  await saveDraft(page.id, { document: priceDoc(130000) });
+  await publishPage(page.id, {});
+
+  // The canonical Pricing Card moved (or an operator retyped) — draft updates…
+  await saveDraft(page.id, { document: priceDoc(150000) });
+
+  // …but the LIVE page still carries the frozen amount until a new publish.
+  const live = await getPublishedBySlug('agent-price-list');
+  assert.equal(live.content.sections[0].rows[0].lines[0].amountMinor, 130000);
+
+  const { version } = await publishPage(page.id, {});
+  assert.equal(version.versionNo, 2);
+  assert.equal((await getPublishedBySlug('agent-price-list')).content.sections[0].rows[0].lines[0].amountMinor, 150000);
+});
+
 test('a duplicate slug is rejected rather than silently overwriting a page', async () => {
   await createPage({ internalName: 'a', pageType: 'info', slug: 'same-slug' });
   await assert.rejects(

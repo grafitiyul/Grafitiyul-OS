@@ -100,6 +100,65 @@ function renderCard(card, locale) {
   );
 }
 
+// ── Pricing rendering ───────────────────────────────────────────────────────
+// A pricing row is one sellable item: name, an optional duration/context line,
+// structured price lines, optional notes. Amounts are integer minor units and
+// are FORMATTED here — the stored document never carries display strings, so
+// He and En rendering can never disagree about the number itself.
+const PRICING_LINE_LABELS = {
+  fixed: ['מחיר לקבוצה', 'Price per group'],
+  extra: ['כל משתתף נוסף', 'Each additional participant'],
+};
+
+function formatAmount(amountMinor, locale) {
+  const major = amountMinor / 100;
+  const digits = Number.isInteger(major) ? 0 : 2;
+  const num = major.toLocaleString(locale === 'en' ? 'en-US' : 'he-IL', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return locale === 'en' ? `${num} NIS` : `${num} ₪`;
+}
+
+function pricingLineLabel(line, locale) {
+  if (line.kind === 'tier' && line.upto != null) {
+    return locale === 'en' ? `Up to ${line.upto} participants` : `עד ${line.upto} משתתפים`;
+  }
+  const fixed = PRICING_LINE_LABELS[line.kind];
+  const custom = pickOr(line, 'label', locale);
+  // A custom label always wins (even on fixed/extra); registry label otherwise.
+  return custom || (fixed ? (locale === 'en' ? fixed[1] : fixed[0]) : '');
+}
+
+function renderPricingRow(row, locale) {
+  const title = pickOr(row, 'title', locale);
+  if (!title) return '';
+  const meta = pickOr(row, 'meta', locale);
+  const notes = pickOr(row, 'notes', locale);
+  const lines = (row.lines || [])
+    .map((l) => {
+      const label = pricingLineLabel(l, locale);
+      if (!label && l.amountMinor == null) return '';
+      const amount = l.amountMinor == null ? '' : `<span class="gos-price__amount" dir="ltr">${esc(formatAmount(l.amountMinor, locale))}</span>`;
+      return (
+        `<li class="gos-price__line">` +
+        `<span class="gos-price__label" dir="${dirFor(label)}">${esc(label)}</span>` +
+        amount +
+        `</li>`
+      );
+    })
+    .filter(Boolean)
+    .join('');
+  return (
+    `<article class="gos-price">` +
+    `<h3 class="gos-price__name" dir="${dirFor(title)}">${esc(title)}</h3>` +
+    (meta ? `<p class="gos-price__meta" dir="${dirFor(meta)}">${esc(meta)}</p>` : '') +
+    (lines ? `<ul class="gos-price__lines">${lines}</ul>` : '') +
+    (notes ? `<p class="gos-price__notes" dir="${dirFor(notes)}">${esc(notes).split('\n').join('<br>')}</p>` : '') +
+    `</article>`
+  );
+}
+
 function renderSection(section, locale) {
   switch (section.type) {
     case 'hero': {
@@ -187,6 +246,19 @@ function renderSection(section, locale) {
         (label && section.buttonUrl
           ? `<p><a class="gos-page__btn" href="${esc(section.buttonUrl)}" rel="noopener noreferrer">${esc(label)}</a></p>`
           : '') +
+        `</section>`
+      );
+    }
+    case 'pricing': {
+      const head = pickOr(section, 'heading', locale);
+      const note = pickOr(section, 'note', locale);
+      const rows = (section.rows || []).map((r) => renderPricingRow(r, locale)).filter(Boolean).join('');
+      if (!rows && !head) return '';
+      return (
+        `<section class="gos-page__section gos-page__section--pricing">` +
+        heading(head) +
+        (note ? `<p class="gos-page__note" dir="${dirFor(note)}">${esc(note)}</p>` : '') +
+        `<div class="gos-pricing">${rows}</div>` +
         `</section>`
       );
     }
@@ -290,6 +362,16 @@ export const pageStylesheet = `
 .gos-faq__item{border:1px solid rgba(128,128,128,.28);border-radius:12px;padding:12px 16px}
 .gos-faq__q{cursor:pointer;font-weight:600}
 .gos-faq__a{margin-top:.6em}
+.gos-pricing{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.gos-price{display:flex;flex-direction:column;border:1px solid rgba(128,128,128,.28);border-radius:16px;padding:16px 18px;background:rgba(127,127,127,.04)}
+.gos-price__name{font-size:1.12rem;margin:0 0 .25em}
+.gos-price__meta{margin:0 0 .7em;font-size:.9rem;opacity:.75}
+.gos-price__lines{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.gos-price__line{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed rgba(128,128,128,.25)}
+.gos-price__line:last-child{border-bottom:0}
+.gos-price__label{min-width:0}
+.gos-price__amount{font-weight:700;white-space:nowrap}
+.gos-price__notes{margin:.7em 0 0;font-size:.9rem;opacity:.8}
 .gos-page__cta{text-align:center}
 .gos-page__btn{display:inline-block;padding:12px 26px;border-radius:999px;background:#111;color:#fff;text-decoration:none;font-weight:600}
 @media(max-width:520px){.gos-page{padding:0 12px 32px}.gos-cards{grid-template-columns:1fr}}

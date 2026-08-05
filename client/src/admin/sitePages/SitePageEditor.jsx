@@ -4,7 +4,7 @@ import { api } from '../../lib/api.js';
 import ReorderableList from '../common/ReorderableList.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import BackButton from '../common/BackButton.jsx';
-import { SECTION_EDITORS, Field, TextInput, Bilingual } from './SectionEditors.jsx';
+import { SECTION_EDITORS, Field, TextInput, Bilingual, pricingRowMissingEnglish } from './SectionEditors.jsx';
 import {
   SECTION_TYPES, PAGE_TYPES, makeSection, newId, normalizeDocument,
 } from '../../../../shared/sitePage.mjs';
@@ -35,15 +35,23 @@ export default function SitePageEditor() {
   const [confirm, setConfirm] = useState(null);
   const [preview, setPreview] = useState(null); // { html, locale, device }
   const [openSection, setOpenSection] = useState(null);
+  const [drift, setDrift] = useState([]); // pricing rows whose live card moved
   const loadedRef = useRef(false);
 
   const load = useCallback(async () => {
     const { page: p } = await api.sitePages.get(id);
     setPage(p);
-    setDoc(normalizeDocument(p.draft));
+    const d = normalizeDocument(p.draft);
+    setDoc(d);
     setMeta({ internalName: p.internalName, pageType: p.pageType, slug: p.slug });
     setDirty(false);
     loadedRef.current = true;
+    // Drift is advisory: a failure to compute it must never block editing.
+    if (d.sections.some((s) => s.type === 'pricing')) {
+      api.sitePages.pricingDrift(id).then((r) => setDrift(r.rows || [])).catch(() => setDrift([]));
+    } else {
+      setDrift([]);
+    }
   }, [id]);
 
   useEffect(() => { load().catch((e) => setError(String(e.message || e))); }, [load]);
@@ -195,6 +203,10 @@ export default function SitePageEditor() {
                       <span className="ml-2 text-slate-400">{t?.glyph}</span>
                       {title}
                       {section.cards ? <span className="mr-2 text-xs text-slate-400">({section.cards.length})</span> : null}
+                      {section.rows ? <span className="mr-2 text-xs text-slate-400">({section.rows.length})</span> : null}
+                      {drift.some((d) => d.sectionId === section.id && d.status !== 'match') ? (
+                        <span className="mr-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">מחירון השתנה</span>
+                      ) : null}
                     </button>
                     <button
                       type="button"
@@ -204,6 +216,11 @@ export default function SitePageEditor() {
                         copy.id = newId('sec');
                         if (copy.cards) copy.cards = copy.cards.map((c) => ({ ...c, id: newId('card') }));
                         if (copy.items) copy.items = copy.items.map((i) => ({ ...i, id: newId('faq') }));
+                        if (copy.rows) copy.rows = copy.rows.map((r) => ({
+                          ...r,
+                          id: newId('pr'),
+                          lines: (r.lines || []).map((l) => ({ ...l, id: newId('pl') })),
+                        }));
                         const i = sections.findIndex((s) => s.id === section.id);
                         setSections([...sections.slice(0, i + 1), copy, ...sections.slice(i + 1)]);
                       }}
@@ -235,6 +252,7 @@ export default function SitePageEditor() {
                     <div className="border-t border-slate-100 p-4">
                       <Editor
                         section={section}
+                        drift={drift.filter((d) => d.sectionId === section.id)}
                         onChange={(next) => setSections(sections.map((s) => (s.id === section.id ? next : s)))}
                       />
                     </div>
@@ -370,13 +388,24 @@ export default function SitePageEditor() {
           <button
             type="button"
             disabled={saving}
-            onClick={() =>
+            onClick={() => {
+              const warnings = [];
+              const driftCount = drift.filter((d) => d.status !== 'match').length;
+              if (driftCount) warnings.push(`שימו לב: ${driftCount} פריטי מחירון בעמוד שונים מכרטיסי התמחור הקנוניים.`);
+              const missingEn = (doc.sections || [])
+                .filter((s) => s.type === 'pricing' && !s.hidden)
+                .flatMap((s) => s.rows || [])
+                .filter((r) => !r.hidden && pricingRowMissingEnglish(r)).length;
+              if (missingEn) warnings.push(`${missingEn} פריטי מחירון חסרים תרגום לאנגלית — באנגלית יוצג הנוסח העברי.`);
               setConfirm({
                 title: 'לפרסם את העמוד?',
-                body: 'הגרסה הזו תיווצר כגרסה חדשה וקפואה, והאתר יציג אותה. אפשר לחזור לגרסה קודמת בכל רגע.',
+                body: [
+                  'הגרסה הזו תיווצר כגרסה חדשה וקפואה, והאתר יציג אותה. אפשר לחזור לגרסה קודמת בכל רגע.',
+                  ...warnings,
+                ].join('\n'),
                 onConfirm: publish,
-              })
-            }
+              });
+            }}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
             פרסום

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GOS Site Pages
  * Description: Renders website pages that are authored and published in GOS ("דפי אתר"). WordPress displays; GOS owns the content.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      Grafitiyul OS
  *
  * ── What this does ─────────────────────────────────────────────────────────
@@ -151,8 +151,10 @@ add_action('wp_head', function () {
     if (!$payload || empty($payload['seo'])) { return; }
     $seo = $payload['seo'];
 
+    // A GOS page flagged noindex is a deliberately unlisted asset (e.g. a B2B
+    // price list shared as a direct link): keep crawlers out entirely.
     if (!empty($seo['noindex'])) {
-        echo '<meta name="robots" content="noindex,follow">' . "\n";
+        echo '<meta name="robots" content="noindex,nofollow">' . "\n";
     }
     if (!empty($seo['description'])) {
         echo '<meta name="description" content="' . esc_attr($seo['description']) . '">' . "\n";
@@ -199,6 +201,29 @@ add_filter('wpseo_metadesc', function ($desc) {
     $payload = gos_sp_current();
     if ($payload && !empty($payload['seo']['description'])) { return $payload['seo']['description']; }
     return $desc;
+}, 20);
+
+// Yoast must agree with GOS about indexability, or the page would carry two
+// conflicting robots directives. GOS's noindex wins and implies nofollow.
+add_filter('wpseo_robots', function ($robots) {
+    $payload = gos_sp_current();
+    if ($payload && !empty($payload['seo']['noindex'])) { return 'noindex, nofollow'; }
+    return $robots;
+}, 20);
+
+// Keep noindex GOS pages OUT of the Yoast XML sitemap. Only pages with empty
+// WP content (i.e. GOS-owned pages) are ever considered, and the payload is
+// read from the local cache/backup first — sitemap generation stays cheap.
+add_filter('wpseo_exclude_from_sitemap_by_post_ids', function ($excluded) {
+    $pages = get_pages(array('post_status' => 'publish'));
+    foreach ($pages as $p) {
+        if (trim(strip_tags($p->post_content)) !== '') { continue; }
+        $payload = gos_sp_fetch($p->post_name, 'he');
+        if (is_array($payload) && !empty($payload['seo']['noindex'])) {
+            $excluded[] = $p->ID;
+        }
+    }
+    return $excluded;
 }, 20);
 
 // ── Cache purge endpoint ───────────────────────────────────────────────────

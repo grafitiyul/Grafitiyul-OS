@@ -2030,6 +2030,7 @@ export const api = {
     rollback: (id, versionId) =>
       request(`/api/site-pages/${id}/rollback/${versionId}`, { method: 'POST' }),
     version: (id, versionId) => request(`/api/site-pages/${id}/versions/${versionId}`),
+    pricingDrift: (id) => request(`/api/site-pages/${id}/pricing-drift`),
     preview: (id, document, locale) =>
       request(`/api/site-pages/${id}/preview${qs({ locale })}`, {
         method: 'POST',
