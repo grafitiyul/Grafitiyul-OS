@@ -10,6 +10,8 @@ import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
+import SameContactNewDealFlow from './SameContactNewDealFlow.jsx';
+import { sameContactActionState } from './sameContactNewDeal.js';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
 import HistoricalPricingDialog from './HistoricalPricingDialog.jsx';
@@ -145,6 +147,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Header editing surfaces.
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
+  // "פתח דיל חדש לאותו איש קשר" (kebab) — the flow component owns the chooser
+  // + the canonical CreateDealModal; this flag only opens/closes it.
+  const [sameContactOpen, setSameContactOpen] = useState(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
   const [sendDocEntry, setSendDocEntry] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -1337,13 +1342,30 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             >
               ⋮
             </button>
-            <AnchoredMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={184}>
+            <AnchoredMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={224}>
               <button
                 onClick={() => { setMenuOpen(false); duplicateDeal(); }}
                 className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
               >
                 שכפל דיל
               </button>
+              {/* New deal for the SAME contact — NOT a duplicate: only the
+                  contact/org context carries over, via the canonical
+                  CreateDealModal. Disabled (with the reason inline) when the
+                  deal has no linked contact — never guessed from the title. */}
+              {sameContactActionState(deal).mode === 'none' ? (
+                <div className="w-full text-right px-3 py-2 text-sm text-gray-400 cursor-not-allowed select-none">
+                  <div>פתח דיל חדש לאותו איש קשר</div>
+                  <div className="text-[11px]">אין איש קשר מקושר לדיל</div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setMenuOpen(false); setSameContactOpen(true); }}
+                  className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+                >
+                  פתח דיל חדש לאותו איש קשר
+                </button>
+              )}
               <button
                 onClick={() => { setMenuOpen(false); copyDealUrl(); }}
                 className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
@@ -1609,6 +1631,13 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         open={contactsDialogOpen}
         onClose={() => setContactsDialogOpen(false)}
         onChanged={refresh}
+      />
+      {/* Kebab → "פתח דיל חדש לאותו איש קשר": chooser (multi-contact) + the
+          canonical CreateDealModal; success navigates to the new deal. */}
+      <SameContactNewDealFlow
+        deal={deal}
+        open={sameContactOpen}
+        onClose={() => setSameContactOpen(false)}
       />
       <OrganizationEditDialog
         deal={deal}
