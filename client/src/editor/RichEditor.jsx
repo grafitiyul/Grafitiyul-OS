@@ -9,6 +9,10 @@ import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import FontFamily from '@tiptap/extension-font-family';
 import Highlight from '@tiptap/extension-highlight';
+import Table from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableHeader from '@tiptap/extension-table-header';
+import TableCell from '@tiptap/extension-table-cell';
 import { useEffect, useRef, useState } from 'react';
 import { Slice, Fragment } from '@tiptap/pm/model';
 import { plainTextToParagraphs } from './pastePlainText.js';
@@ -152,6 +156,16 @@ export default function RichEditor({
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize,
       Highlight.configure({ multicolor: true }),
+      // Canonical table capability (shared by every RichEditor): DATA tables
+      // pasted from emails/sheets survive as real tables (the paste sanitizer
+      // decides data-vs-layout structurally and strips styling; editor.css
+      // renders them in the GOS look with their own horizontal scroll).
+      // Display parity: .gos-prose carries the same table styles, so the
+      // NoteCard / read surfaces render exactly what the editor shows.
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       MediaImage.configure({ inline: false, allowBase64: false }),
       MediaVideo,
       MediaEmbed,

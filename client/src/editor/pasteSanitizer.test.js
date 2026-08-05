@@ -358,9 +358,53 @@ test('a plain inline snippet (no blocks, no breaks) stays inline so it merges at
   assert.doesNotMatch(out, /<p/, `inline paste must stay inline: ${out}`);
 });
 
-// ---- table-layout emails (transactional/marketing — the dense-block collapse) ----
-// The editor schema has no tables; ProseMirror CONCATENATES unknown cells'
-// text into one paragraph. Cells must be linearized into block flow instead.
+// ---- DATA tables are preserved as clean canonical tables ----
+// Structural test (no source-name heuristics): ≥2 rows × ≥2 columns after
+// spacer pruning, not role="presentation", no nested table.
+
+test('a real data table survives: rows, columns, header cells, spans — styling stripped', () => {
+  const out = sanitizePastedHtml(
+    '<table border="1" width="600" style="border-collapse:collapse"><thead><tr><th style="background:#eee">מוצר</th><th>כמות</th><th>מחיר</th></tr></thead><tbody><tr><td>סיור גרפיטי</td><td>20</td><td>₪1,500</td></tr><tr><td colspan="2">סה"כ</td><td><b>₪1,500</b></td></tr></tbody></table>',
+    'tight',
+  );
+  assert.match(out, /^<table><tbody>/, out);
+  assert.equal((out.match(/<tr>/g) || []).length, 3, `three rows: ${out}`);
+  assert.match(out, /<th>מוצר<\/th><th>כמות<\/th><th>מחיר<\/th>/, out);
+  assert.match(out, /<td colspan="2">סה"כ<\/td>/, out);
+  assert.match(out, /<b>₪1,500<\/b>|<strong>₪1,500<\/strong>/, out);
+  assert.doesNotMatch(out, /width=|style=|border=/, `email styling stripped: ${out}`);
+});
+
+test('spacer rows are pruned from a data table; links survive in cells', () => {
+  const out = sanitizePastedHtml(
+    '<table><tbody><tr><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>שם</td><td>קישור</td></tr><tr><td>גרפיטיול</td><td><a href="https://grafitiyul.co.il">אתר</a></td></tr></tbody></table>',
+  );
+  assert.equal((out.match(/<tr>/g) || []).length, 2, `spacer row pruned: ${out}`);
+  assert.match(out, /<a[^>]*href="https:\/\/grafitiyul\.co\.il"[^>]*>אתר<\/a>/, out);
+});
+
+test('role="presentation" grid is LAYOUT even at 2x2 — linearized, never preserved', () => {
+  const out = sanitizePastedHtml(
+    '<table role="presentation"><tbody><tr><td>א</td><td>ב</td></tr><tr><td>ג</td><td>ד</td></tr></tbody></table>',
+  );
+  assert.doesNotMatch(out, /<table/);
+  assert.match(out, /<p>א<\/p>/);
+});
+
+test('nested: outer layout wrapper linearized, inner DATA table preserved intact', () => {
+  const out = sanitizePastedHtml(
+    '<table width="600"><tbody><tr><td>הזמנה חדשה התקבלה</td></tr><tr><td><table><tbody><tr><th>מוצר</th><th>כמות</th></tr><tr><td>סיור</td><td>20</td></tr></tbody></table></td></tr><tr><td>תודה שקניתם</td></tr></tbody></table>',
+    'tight',
+  );
+  assert.equal((out.match(/<table/g) || []).length, 1, `exactly the inner table: ${out}`);
+  assert.match(out, /<p>הזמנה חדשה התקבלה<\/p>/, out);
+  assert.match(out, /<th>מוצר<\/th><th>כמות<\/th>/, out);
+  assert.match(out, /<p>תודה שקניתם<\/p>/, out);
+});
+
+// ---- LAYOUT tables (transactional/marketing — the dense-block collapse) ----
+// Single-column/row grids position content; ProseMirror would CONCATENATE
+// their cells' text into one paragraph. Cells are linearized into block flow.
 
 test('table cells become separate paragraphs — never one run-together block (tight)', () => {
   const out = sanitizePastedHtml(

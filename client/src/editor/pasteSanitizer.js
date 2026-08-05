@@ -175,6 +175,10 @@ const KEEP_ATTRS_BY_TAG = {
     'data-align',
   ]),
   SOURCE: new Set(['src', 'type']),
+  // Canonical data tables (see normalizeTables): only meaningful spans
+  // survive; all sizing/styling comes from GOS's own table CSS.
+  TD: new Set(['colspan', 'rowspan']),
+  TH: new Set(['colspan', 'rowspan']),
   // Ordered lists: keep `start`/`type` so a pasted numbered list that begins at
   // 3, or uses letters/roman numerals, survives instead of resetting to "1.".
   OL: new Set(['start', 'type']),
@@ -226,14 +230,15 @@ export function sanitizePastedHtml(html, rhythm = 'spaced') {
     // text-decoration: underline). If we strip styles first, these
     // formats are lost entirely.
     convertSemanticStylesToTags(doc, doc.body);
-    // TABLE LINEARIZATION — the editor schema has no tables, and ProseMirror's
-    // parser drops unknown table elements and CONCATENATES every cell's text
-    // into one paragraph (proven live: a table-layout email pasted into a Deal
-    // note became one dense run-together block — the production collapse bug).
-    // Faithful degradation instead: each cell's content becomes block flow
-    // (cells are block boxes), spacer cells vanish. Runs BEFORE the line-model
-    // pass so cell content joins the normal block machinery.
-    linearizeTables(doc, doc.body);
+    // TABLE NORMALISATION — structural data-vs-layout split (see
+    // normalizeTables): a real DATA table (≥2 rows × ≥2 columns after spacer
+    // pruning, not role="presentation", no nested table) is preserved as a
+    // clean canonical table for the schema's Table nodes; everything else is
+    // an email LAYOUT table and is linearized into block flow (each cell is
+    // a block box — the previous behavior, which fixed the dense run-together
+    // collapse). Runs BEFORE the line-model pass so cell content joins the
+    // normal block machinery either way.
+    normalizeTables(doc, doc.body);
     // LINE-MODEL normalisation: unwrap structural <div>s, wrap bare inline
     // runs (CSS anonymous boxes — Chrome's clipboard serializer emits Gmail
     // plain-text bodies as `<span>…</span><br><span>…</span>` with no block
@@ -583,33 +588,117 @@ function isMarginlessLineP(el) {
   return zero(top) && zero(bottom);
 }
 
-// Email layouts are tables; the editor schema has none, and ProseMirror's
-// parser CONCATENATES unknown table cells' text into one paragraph (the
-// dense-block collapse). Faithful degradation: each cell is a block box —
-// lift every cell's content into block flow (inline-only cells become a
-// paragraph-model <p>; cells with block children keep their own blocks),
-// drop text-empty spacer cells, deepest-first so nested layout tables
-// resolve inside-out.
-function linearizeTables(doc, root) {
+// ── Tables: structural data-vs-layout split ─────────────────────────────────
+// Deepest-first (nested layout tables resolve inside-out; a nested DATA table
+// survives as a table inside the outer cell's lifted content). Per table:
+//   1. prune spacer rows (no visible content in any cell);
+//   2. DATA test — purely structural, no source-name heuristics:
+//        • not role="presentation"/"none" (the source's own declaration),
+//        • contains no <table> descendant (data tables don't nest layouts),
+//        • after pruning: ≥2 rows AND ≥2 columns (single-column/single-row
+//          grids are positioning, not data);
+//   3. DATA → rebuild as a clean canonical table (tbody rows of th/td with
+//      only meaningful colspan/rowspan kept; caption text becomes a leading
+//      paragraph). The schema's Table nodes parse it; editor.css renders it
+//      in the GOS look.
+//      LAYOUT → linearize into block flow: each cell is a block box
+//      (inline-only cells become a paragraph, block-bearing cells keep their
+//      blocks), text-empty spacer cells vanish. Never a dense text blob.
+function normalizeTables(doc, root) {
   for (const table of Array.from(root.querySelectorAll('table')).reverse()) {
     if (table.closest('[data-type]')) continue;
-    const parent = table.parentNode;
-    if (!parent) continue;
-    const frag = doc.createDocumentFragment();
-    for (const cell of table.querySelectorAll('td, th')) {
-      if (!hasVisibleContent(Array.from(cell.childNodes))) continue; // spacer cell
-      const hasBlockChild = Array.from(cell.children).some((c) => BLOCK_TAGS.has(c.tagName));
-      if (hasBlockChild) {
-        wrapInlineRunsAsLines(doc, cell);
-        while (cell.firstChild) frag.appendChild(cell.firstChild);
-      } else {
-        const p = doc.createElement('p');
-        while (cell.firstChild) p.appendChild(cell.firstChild);
-        frag.appendChild(p);
-      }
-    }
-    parent.replaceChild(frag, table);
+    if (!table.parentNode) continue;
+    pruneSpacerRows(table);
+    if (isDataTable(table)) rebuildCleanTable(doc, table);
+    else linearizeSingleTable(doc, table);
   }
+}
+
+function pruneSpacerRows(table) {
+  for (const tr of Array.from(table.querySelectorAll('tr'))) {
+    if (tr.closest('table') !== table) continue; // row of a nested (preserved) table
+    const cells = Array.from(tr.children).filter((c) => c.tagName === 'TD' || c.tagName === 'TH');
+    const hasContent = cells.some(
+      (c) => hasVisibleContent(Array.from(c.childNodes)) || c.querySelector('table'),
+    );
+    if (!hasContent) tr.remove();
+  }
+}
+
+function isDataTable(table) {
+  const role = (table.getAttribute('role') || '').toLowerCase();
+  if (role === 'presentation' || role === 'none') return false;
+  if (table.querySelector('table')) return false; // nesting = layout wrapper
+  const rows = Array.from(table.querySelectorAll('tr'));
+  if (rows.length < 2) return false;
+  let maxCols = 0;
+  for (const tr of rows) {
+    let cols = 0;
+    for (const c of tr.children) {
+      if (c.tagName !== 'TD' && c.tagName !== 'TH') continue;
+      const span = parseInt(c.getAttribute('colspan') || '1', 10);
+      cols += Number.isFinite(span) && span > 1 ? span : 1;
+    }
+    maxCols = Math.max(maxCols, cols);
+  }
+  return maxCols >= 2;
+}
+
+function rebuildCleanTable(doc, table) {
+  const clean = doc.createElement('table');
+  const tbody = doc.createElement('tbody');
+  clean.appendChild(tbody);
+  for (const tr of table.querySelectorAll('tr')) {
+    const row = doc.createElement('tr');
+    for (const cell of Array.from(tr.children)) {
+      if (cell.tagName !== 'TD' && cell.tagName !== 'TH') continue;
+      const out = doc.createElement(cell.tagName.toLowerCase());
+      for (const attr of ['colspan', 'rowspan']) {
+        const v = parseInt(cell.getAttribute(attr) || '1', 10);
+        if (Number.isFinite(v) && v > 1 && v <= 50) out.setAttribute(attr, String(v));
+      }
+      while (cell.firstChild) out.appendChild(cell.firstChild);
+      row.appendChild(out);
+    }
+    if (row.children.length) tbody.appendChild(row);
+  }
+  const parent = table.parentNode;
+  // Caption text is content — keep it as a paragraph above the table.
+  const caption = table.querySelector('caption');
+  if (caption && hasVisibleContent(Array.from(caption.childNodes))) {
+    const p = doc.createElement('p');
+    while (caption.firstChild) p.appendChild(caption.firstChild);
+    parent.insertBefore(p, table);
+  }
+  // A rebuild that lost every row degrades to linearization, never a blob.
+  if (!tbody.children.length) {
+    linearizeSingleTable(doc, table);
+    return;
+  }
+  parent.replaceChild(clean, table);
+}
+
+function linearizeSingleTable(doc, table) {
+  const parent = table.parentNode;
+  if (!parent) return;
+  const frag = doc.createDocumentFragment();
+  for (const cell of table.querySelectorAll('td, th')) {
+    if (cell.closest('table') !== table) continue; // cell of a nested (preserved) table
+    // A nested (already-preserved) data table inside this cell must survive
+    // the cell test and the lift — it counts as visible content.
+    const kids = Array.from(cell.childNodes);
+    if (!hasVisibleContent(kids) && !cell.querySelector('table')) continue; // spacer cell
+    const hasBlockChild = Array.from(cell.children).some((c) => BLOCK_TAGS.has(c.tagName));
+    if (hasBlockChild) {
+      wrapInlineRunsAsLines(doc, cell);
+      while (cell.firstChild) frag.appendChild(cell.firstChild);
+    } else {
+      const p = doc.createElement('p');
+      while (cell.firstChild) p.appendChild(cell.firstChild);
+      frag.appendChild(p);
+    }
+  }
+  parent.replaceChild(frag, table);
 }
 
 // Wrap every maximal run of inline children (text / spans / <b> / <a> and the

@@ -158,6 +158,54 @@
   border-radius: 2px;
 }
 
+/* ── Canonical tables (pasted DATA tables — see pasteSanitizer) ─────────────
+   One clean GOS look on every surface; the email's own widths/colors are
+   stripped at paste. `display:block + overflow-x:auto` gives each table its
+   OWN horizontal scroll (mobile stays readable; the page never scrolls
+   sideways). Editing and display parity: identical rules for .gos-prose. */
+.rt-editor-prose table,
+.gos-prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.6em 0;
+  font-size: 0.95em;
+}
+/* With the table box demoted to a scroll container, the tbody carries the
+   actual table layout (and the border collapsing). */
+.rt-editor-prose table tbody,
+.gos-prose table tbody {
+  display: table;
+  border-collapse: collapse;
+  min-width: 60%;
+}
+.rt-editor-prose th,
+.rt-editor-prose td,
+.gos-prose th,
+.gos-prose td {
+  border: 1px solid rgb(229 231 235);
+  padding: 6px 10px;
+  text-align: start;
+  vertical-align: top;
+}
+.rt-editor-prose th,
+.gos-prose th {
+  background: rgb(249 250 251);
+  font-weight: 600;
+}
+.rt-editor-prose td > p,
+.rt-editor-prose th > p,
+.gos-prose td > p,
+.gos-prose th > p {
+  margin: 0;
+}
+/* The tight note face zeroes sibling margins (`> * + *`) — restore the
+   table's breathing room there with a same-or-higher specificity rule. */
+.rt-editor-compact .rt-editor-prose table,
+.gos-prose.gos-prose-tight table {
+  margin: 0.6em 0;
+}
+
 /* Preformatted / code blocks — don't force page-level horizontal scroll. */
 .rt-editor-prose pre {
   max-width: 100%;
