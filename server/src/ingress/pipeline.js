@@ -109,7 +109,9 @@ export async function receiveEvent(
  * Stages 2-6 — process one already-received event.
  * Pure orchestration: every decision is delegated to the shared modules.
  */
-export async function processEvent(eventId, { db = prisma, canonicalEvent = null, stageKey = null } = {}) {
+// `issueDoc` — test injection for the invrec issuer (same pattern as the
+// Cardcom flow's deps.issueDoc); production always uses the canonical service.
+export async function processEvent(eventId, { db = prisma, canonicalEvent = null, stageKey = null, issueDoc = undefined } = {}) {
   const row = await db.ingressEvent.findUnique({ where: { id: eventId } });
   if (!row) throw new IngressError('event_not_found', { stage: STAGES.RECEIVE, retryable: false });
   if (row.status === 'processed' || row.status === 'duplicate') {
@@ -295,7 +297,7 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
       await db.ingressEvent.update({ where: { id: eventId }, data: { dealId: result.dealId } });
       operational = await runWooOrderOperational(
         { dealId: result.dealId, normalized, storeKey: row.sourceKey },
-        { db },
+        { db, issue: issueDoc },
       );
     }
 
@@ -369,7 +371,7 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
  * payload — the worker will pick it up.
  */
 export async function ingest(
-  { source, sourceKey, externalId, rawPayload, rawHeaders, idempotencyKey, dryRun, canonicalEvent, stageKey },
+  { source, sourceKey, externalId, rawPayload, rawHeaders, idempotencyKey, dryRun, canonicalEvent, stageKey, issueDoc },
   db = prisma,
 ) {
   const { event, duplicate } = await receiveEvent(
@@ -379,6 +381,6 @@ export async function ingest(
   if (duplicate) {
     return { eventId: event.id, status: 'duplicate', dealId: event.dealId, outcome: event.outcome };
   }
-  const result = await processEvent(event.id, { db, canonicalEvent, stageKey });
+  const result = await processEvent(event.id, { db, canonicalEvent, stageKey, issueDoc });
   return { eventId: event.id, ...result };
 }

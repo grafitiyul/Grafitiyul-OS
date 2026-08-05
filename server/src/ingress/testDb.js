@@ -26,6 +26,14 @@ const applyPatch = (row, data) => {
   }
 };
 
+const evidenceMatch = (e, where) => {
+  if (where.dealId && e.dealId !== where.dealId) return false;
+  if (where.kind && e.kind !== where.kind) return false;
+  if (where.reference && e.reference !== where.reference) return false;
+  if (where.status && e.status !== where.status) return false;
+  return true;
+};
+
 // The where-shapes the registration chain uses, in one matcher. The relation
 // filter (`tourEvent: { kind }`) is resolved via the row's own tourEventId by
 // the caller-supplied resolver so the matcher stays table-agnostic.
@@ -82,6 +90,7 @@ export function createTestDb(seed = {}) {
     ticketRegistration: [],
     dealCollectionEvidence: [],
     reviewItem: [],
+    icountDocument: [],
   };
 
   // Deliberately explicit: a P2002 is raised on the real unique constraint so
@@ -280,9 +289,47 @@ export function createTestDb(seed = {}) {
         }
         return row;
       },
-      findUnique: async ({ where, select }) => {
+      findUnique: async ({ where, select, include }) => {
         const row = db.deal.find((d) => d.id === where.id) || null;
-        if (!row || !select) return row;
+        if (!row) return null;
+        // The document path loads the deal with ICOUNT_DEAL_INCLUDE — model the
+        // relations it reads (primary contact + working version lines) so
+        // buildDocumentDefaults derives rows from the REAL composed quote.
+        if (include) {
+          const contacts = db.dealContact
+            .filter((dc) => dc.dealId === row.id)
+            .map((dc) => {
+              const c = db.contact.find((x) => x.id === dc.contactId) || {};
+              return {
+                ...dc,
+                contact: {
+                  ...c,
+                  phones: db.contactPhone.filter((p) => p.contactId === c.id).slice(0, 1),
+                  emails: db.contactEmail.filter((e) => e.contactId === c.id).slice(0, 1),
+                },
+              };
+            });
+          const quoteVersions = db.quoteVersion
+            .filter((v) => v.dealId === row.id && v.isWorking)
+            .slice(0, 1)
+            .map((v) => ({
+              ...v,
+              lines: db.quoteLine
+                .filter((l) => l.quoteVersionId === v.id && l.active !== false)
+                .sort((a, b) => a.sortOrder - b.sortOrder),
+            }));
+          return {
+            ...row,
+            contacts,
+            quoteVersions,
+            organization: null,
+            organizationUnit: null,
+            product: null,
+            paymentMethodRef: null,
+            paymentTerm: null,
+          };
+        }
+        if (!select) return row;
         return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
       },
       update: async ({ where, data }) => {
@@ -507,16 +554,30 @@ export function createTestDb(seed = {}) {
 
     dealCollectionEvidence: {
       findFirst: async ({ where = {} } = {}) =>
-        db.dealCollectionEvidence.find(
-          (e) =>
-            (where.dealId ? e.dealId === where.dealId : true) &&
-            (where.kind ? e.kind === where.kind : true) &&
-            (where.reference ? e.reference === where.reference : true) &&
-            (where.status ? e.status === where.status : true),
-        ) || null,
+        db.dealCollectionEvidence.find((e) => evidenceMatch(e, where)) || null,
+      findMany: async ({ where = {} } = {}) => db.dealCollectionEvidence.filter((e) => evidenceMatch(e, where)),
       create: async ({ data }) => {
         const row = { id: nextId('ev$'), status: 'active', createdAt: new Date(), ...data };
         db.dealCollectionEvidence.push(row);
+        return row;
+      },
+      update: async ({ where, data }) => {
+        const row = db.dealCollectionEvidence.find((e) => e.id === where.id);
+        if (!row) throw new Error('testDb: dealCollectionEvidence.update missing row');
+        Object.assign(row, data);
+        return row;
+      },
+    },
+
+    icountDocument: {
+      findUnique: async ({ where }) =>
+        db.icountDocument.find((d) => d.idempotencyKey === where.idempotencyKey) || null,
+      create: async ({ data }) => {
+        if (data.idempotencyKey && db.icountDocument.some((d) => d.idempotencyKey === data.idempotencyKey)) {
+          throw uniqueViolation();
+        }
+        const row = { id: nextId('doc'), status: 'issued', createdAt: new Date(), ...data };
+        db.icountDocument.push(row);
         return row;
       },
     },

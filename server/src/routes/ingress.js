@@ -153,6 +153,15 @@ router.post(
       return res.status(err.status || 409).json({ ok: false, error: err.code || 'source_not_cut_over' });
     }
 
+    // Woo's webhook-creation ping is the ONE documented unsigned shape — it is
+    // acknowledged (200, Woo requires exactly 200) and performs no work at all.
+    // Real deliveries are always signed and verified below; any other unsigned
+    // request is rejected exactly as before.
+    if (wooAdapter.isWebhookPing({ rawBody: req.rawBody, headers: req.headers })) {
+      console.log(`[ingress:woo:${storeKey}] webhook creation ping acknowledged`);
+      return res.status(200).json({ ok: true, ping: true });
+    }
+
     try {
       wooAdapter.verify({ rawBody: req.rawBody, headers: req.headers, storeKey });
     } catch (err) {

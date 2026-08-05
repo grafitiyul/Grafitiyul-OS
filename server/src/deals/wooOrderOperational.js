@@ -29,6 +29,7 @@ import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { createReviewItem } from '../reviewItems/service.js';
 import { WOO_ORDER_ATTENTION_KIND } from '../reviewItems/kinds/wooOrderAttention.js';
+import { issueWooOrderInvrec, supersedeWooEvidence, wooInvrecKey } from './wooOrderDocument.js';
 
 // Provenance stamp for the money-reconciliation line (coupon / price drift).
 // Deliberately NOT 'group_ticket': the offering/registration derivation must
@@ -405,7 +406,7 @@ const JOIN_FAILURE_CODES = new Set(['tour_slot_invalid', 'tour_slot_not_schedule
 // Post-commit step of the ingress pipeline for every Woo ORDER event.
 // Throwing here marks the ingress event pending → the worker retries with
 // backoff; every sub-step converges, so a replay can never duplicate anything.
-export async function runWooOrderOperational({ dealId, normalized, storeKey }, { db = prisma } = {}) {
+export async function runWooOrderOperational({ dealId, normalized, storeKey }, { db = prisma, issue } = {}) {
   if (!dealId || normalized?.kind !== 'order') return { skipped: 'not_order' };
   const origin = systemOrigin();
   const reasons = [];
@@ -428,8 +429,22 @@ export async function runWooOrderOperational({ dealId, normalized, storeKey }, {
 
   const paid = Boolean(normalized.order?.paid);
   let settle = null;
+  let doc = null;
   if (paid) {
-    await recordWooPaymentEvidence(db, { dealId, normalized, storeKey });
+    // ── Accounting: exactly one חשבונית מס קבלה per paid order ─────────────
+    // The invrec (canonical issueDocument, idempotent on woo:<store>:<order>:
+    // invrec) IS the money proof when it exists. Only when issuance is refused
+    // or fails does the woo_payment evidence stand in — loud review card, and
+    // the next successful issuance supersedes (reverses) the evidence so the
+    // money never counts twice.
+    doc = await issueWooOrderInvrec({ dealId, normalized, storeKey }, { db, ...(issue ? { issue } : {}) });
+    const paymentReference = `woo:${storeKey || 'primary'}:${normalized.externalId}`;
+    if (doc.ok) {
+      await supersedeWooEvidence(db, { dealId, reference: paymentReference, docnum: doc.doc?.docnum });
+    } else {
+      reasons.push(`doc_issue_failed:${doc.reason}`);
+      await recordWooPaymentEvidence(db, { dealId, normalized, storeKey });
+    }
     const paymentAmountMinor = Number(toMinor(normalized.order?.total)) || null;
     const settleOpts = {
       dealId,
@@ -448,6 +463,14 @@ export async function runWooOrderOperational({ dealId, normalized, storeKey }, {
       settle = await settleDealWon(db, { ...settleOpts, targetTourEventId: null });
     }
     if (settle?.wonNow && !settle.tourCreated) reasons.push('won_without_tour');
+  } else if (normalized.order?.status && String(normalized.order.status).toLowerCase().includes('refund')) {
+    // A refund AFTER a paid order that already carries an invrec: the original
+    // document is NEVER rewritten (accounting fact) — the credit-document flow
+    // is a separate, explicitly manual process, so the office gets a card.
+    const issued = await db.icountDocument.findUnique({
+      where: { idempotencyKey: wooInvrecKey(storeKey, normalized.externalId) },
+    });
+    if (issued) reasons.push('refund_credit_document_needed');
   }
 
   // Compose-only changes (unpaid order created/edited) get their own changelog;
@@ -484,7 +507,7 @@ export async function runWooOrderOperational({ dealId, normalized, storeKey }, {
     );
   }
 
-  return { resolution, compose, settle, reasons };
+  return { resolution, compose, settle, doc, reasons };
 }
 
 // Business-language summary for the review card — no enum names, no IDs.
@@ -500,5 +523,11 @@ function attentionSummaryHe(reasons, resolution) {
   if (reasons.includes('builder_human_edited')) parts.push('הצעת המחיר נערכה ידנית — יש לוודא שהיא תואמת את ההזמנה');
   if (reasons.some((r) => r.startsWith('tour_join_failed'))) parts.push('לא ניתן היה לשבץ את העסקה לסיור (הסיור בוטל או אינו זמין)');
   if (reasons.includes('won_without_tour')) parts.push('העסקה נסגרה מהתשלום אך ללא שיבוץ לסיור');
+  if (reasons.some((r) => r.startsWith('doc_issue_failed'))) {
+    parts.push('חשבונית מס קבלה לא הונפקה אוטומטית — התשלום נרשם ידנית בגבייה ויש להפיק מסמך מהעסקה');
+  }
+  if (reasons.includes('refund_credit_document_needed')) {
+    parts.push('ההזמנה זוכתה באתר אחרי שהונפקה חשבונית מס קבלה — נדרש טיפול ידני בחשבונית זיכוי');
+  }
   return parts.join(' · ') || 'נדרשת בדיקה ידנית של ההזמנה';
 }

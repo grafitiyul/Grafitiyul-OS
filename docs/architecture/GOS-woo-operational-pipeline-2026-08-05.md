@@ -33,8 +33,19 @@ Woo webhook (paid order, HMAC-verified)
                     card prices, card VAT, card first-line notes, composeBuilderLines
                     totals; coupon delta = explicit discount line) → working
                     QuoteVersion + Deal.valueMinor/participants/product
-       3. MONEY     DealCollectionEvidence kind 'woo_payment' (origin 'woo',
-                    reference woo:<store>:<orderId>) — collection reads PAID
+       3. MONEY     חשבונית מס קבלה (invrec) via the canonical issueDocument
+                    (idempotencyKey woo:<store>:<orderId>:invrec, source
+                    'webhook'/'woo', rows = the composed Builder lines via
+                    buildDocumentDefaults, payments block from the Woo gateway,
+                    sendEmail:false). Refused/failed issuance falls back to
+                    DealCollectionEvidence kind 'woo_payment' (origin 'woo',
+                    reference woo:<store>:<orderId>) + attention card; a later
+                    successful issuance REVERSES the evidence — the money
+                    counts exactly once at every moment. An invrec is never
+                    issued when the Builder total ≠ the paid total
+                    (doc_amount_mismatch), and never for unpaid statuses.
+                    Refund after an issued invrec → credit-document review
+                    card; the original document is never rewritten.
        4. SETTLE    settleDealWon(targetTourEventId, allowOverbook, cause:'woo_order')
                     → transitionDealToWon (atomic) → Booking → syncDealRegistration
                     (source:'deal' row + ticketBreakdown) → capacity/occupancy →
@@ -108,6 +119,17 @@ steps 3-4.
 | Registration | `syncDealRegistration` upsert by bookingId + hold adoption |
 | Confirmation email | `wonTransitionKey` + 10s window + review-card dedupe |
 | Review card | `woo_order_attention:<store>:<orderId>` dedupeKey |
+
+## Webhook creation ping (the 401 of 2026-08-05)
+
+WooCommerce's `WC_Webhook::deliver_ping()` POSTs the form body
+`webhook_id=<id>` with NO `X-WC-Webhook-Signature` header and requires exactly
+HTTP 200 — our HMAC gate correctly rejected it, which surfaced in wp-admin as
+"Delivery URL returned response code: 401" and left the webhook in pending
+delivery. The route now acknowledges EXACTLY that documented shape (no
+signature header AND raw body matching `^webhook_id=\d+$`) with 200 while
+performing no work at all; every real delivery is signed and byte-exact
+HMAC-verified as before, and any other unsigned request still 401s.
 
 ## Activation runbook (production)
 

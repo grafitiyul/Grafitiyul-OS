@@ -31,6 +31,22 @@ export function verify({ rawBody, headers, storeKey }) {
   return true;
 }
 
+// WooCommerce's webhook-creation ping (WC_Webhook::deliver_ping) POSTs the
+// form body `webhook_id=<id>` with NO X-WC-Webhook-Signature header, and
+// requires exactly HTTP 200 — anything else surfaces "Delivery URL returned
+// response code: NNN" in wp-admin and leaves the webhook stuck in pending
+// delivery. The ping cannot be HMAC-verified (Woo signs only real deliveries),
+// so the ONE unauthenticated shape we acknowledge is exactly that documented
+// body with no signature header — and acknowledging performs NO work: nothing
+// is fetched, ingested or written, so a forged ping gains nothing. A signed
+// request never reaches this path, and any other unsigned request still 401s.
+export function isWebhookPing({ rawBody, headers }) {
+  const signed = headers?.['x-wc-webhook-signature'] || headers?.['X-WC-Webhook-Signature'];
+  if (signed) return false;
+  const body = rawBody == null ? '' : String(rawBody);
+  return /^webhook_id=\d+$/.test(body.trim());
+}
+
 // A payload is "complete" when it carries the customer and the lines; anything
 // less (Woo's `{id: N}` ping, or a legacy id-only post) needs a fetch.
 export function isCompleteOrder(payload) {
@@ -305,6 +321,7 @@ export const wooAdapter = Object.freeze({
   key: SOURCE,
   label: 'WooCommerce',
   verify,
+  isWebhookPing,
   isCompleteOrder,
   orderIdOf,
   fetchOrder,

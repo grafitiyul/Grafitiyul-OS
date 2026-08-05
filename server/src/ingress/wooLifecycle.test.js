@@ -81,6 +81,21 @@ test('woo: on-hold is NOT paid — it is "awaiting payment"', () => {
   }
 });
 
+test('woo: the webhook-creation ping is recognized ONLY in its exact documented shape', () => {
+  const ping = (rawBody, headers = {}) => wooAdapter.isWebhookPing({ rawBody, headers });
+  // WC_Webhook::deliver_ping — form body, no signature header, requires HTTP 200.
+  assert.equal(ping('webhook_id=123'), true);
+  assert.equal(ping(Buffer.from('webhook_id=45')), true, 'raw Buffer body (the real middleware shape)');
+  // A signature header means a REAL delivery — it must be verified, never ping-passed.
+  assert.equal(ping('webhook_id=123', { 'x-wc-webhook-signature': 'abc' }), false);
+  // Anything that is not exactly the documented ping body stays authenticated.
+  assert.equal(ping(''), false);
+  assert.equal(ping('webhook_id='), false);
+  assert.equal(ping('webhook_id=12&order=1'), false);
+  assert.equal(ping('{"id":5001}'), false);
+  assert.equal(ping('webhook_id=abc'), false);
+});
+
 test('woo: statuses normalize, and an unknown status is reported verbatim', () => {
   assert.equal(normalizeStatus('wc-processing'), 'processing');
   assert.equal(normalizeStatus(' Completed '), 'completed');

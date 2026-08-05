@@ -40,7 +40,33 @@ const wooOrder = (over = {}) => ({
   ...over,
 });
 
-const deliver = (db, order) => ingest({
+// A faithful stand-in for the canonical issueDocument: idempotent on the key,
+// persists an IcountDocument row, records the exact input for assertions.
+// `fail` makes it throw a coded error (the iCount-down scenario).
+const fakeIssuer = ({ fail = null } = {}) => async (client, _deal, input) => {
+  const existing = await client.icountDocument.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  if (existing) return { doc: existing, reused: true };
+  if (fail) {
+    const e = new Error(fail);
+    e.code = fail;
+    throw e;
+  }
+  const grossIls = (input.rows || []).reduce((s, r) => s + (r.quantity || 0) * (r.unitPriceIls || 0), 0);
+  const doc = await client.icountDocument.create({
+    data: {
+      provider: 'icount', source: input.source || 'user', doctype: input.doctype,
+      docnum: String(9000 + (client._tables?.icountDocument.length || 0)),
+      idempotencyKey: input.idempotencyKey,
+      amountMinor: BigInt(Math.round(grossIls * 100)),
+      currency: input.currency || 'ILS',
+      clientName: input.client?.name || '', status: 'issued', issuedAt: new Date(),
+      _input: input,
+    },
+  });
+  return { doc, reused: false };
+};
+
+const deliver = (db, order, { issueDoc = fakeIssuer() } = {}) => ingest({
   source: wooAdapter.key,
   sourceKey: STORE,
   externalId: wooAdapter.orderIdOf(order),
@@ -51,6 +77,7 @@ const deliver = (db, order) => ingest({
   }),
   rawPayload: { order },
   canonicalEvent: wooAdapter.toCanonicalEvent(order, { storeKey: STORE }),
+  issueDoc,
 }, db);
 
 const seed = () => {
@@ -120,14 +147,25 @@ test('woo operational: a paid order becomes a complete operational deal', async 
     'the purchased composition is frozen on the registration',
   );
 
-  // Money — the Woo payment is real collection evidence.
-  assert.equal(t(db).dealCollectionEvidence.length, 1);
-  const ev = t(db).dealCollectionEvidence[0];
-  assert.equal(ev.kind, 'woo_payment');
-  assert.equal(ev.direction, 'in');
-  assert.equal(ev.amountMinor, 35000n);
-  assert.equal(ev.reference, 'woo:primary:6001');
-  assert.equal(ev.origin, 'woo');
+  // Money — exactly ONE חשבונית מס קבלה, derived from the composed quote,
+  // equal to the paid amount; the fallback evidence row is never written when
+  // the document exists (money counts once).
+  assert.equal(t(db).icountDocument.length, 1);
+  const doc = t(db).icountDocument[0];
+  assert.equal(doc.doctype, 'invrec');
+  assert.equal(doc.idempotencyKey, 'woo:primary:6001:invrec');
+  assert.equal(doc.amountMinor, 35000n, 'document total = paid total');
+  assert.equal(doc.source, 'webhook');
+  const input = doc._input;
+  assert.equal(input.sendEmail, false, 'no auto email — operator sends explicitly');
+  assert.equal(input.lang, 'he');
+  assert.equal(input.vatMode, 'included');
+  assert.equal(input.payments.length, 1);
+  assert.equal(input.payments[0].method, 'cc');
+  assert.equal(input.payments[0].amount, 350);
+  assert.equal(input.rows.length, 2, 'document rows = the composed Builder lines');
+  assert.match(input.rows[0].description, /מבוגר/);
+  assert.equal(t(db).dealCollectionEvidence.length, 0, 'no double money row beside the document');
 
   // Nothing needed attention.
   assert.equal(t(db).reviewItem.length, 0);
@@ -151,7 +189,9 @@ test('woo operational: replaying the paid webhook duplicates NOTHING', async () 
   assert.equal(t(db).deal.length, 1, 'one deal');
   assert.equal(t(db).booking.length, 1, 'one booking');
   assert.equal(t(db).ticketRegistration.length, 1, 'one registration');
-  assert.equal(t(db).dealCollectionEvidence.length, 1, 'one payment evidence');
+  assert.equal(t(db).icountDocument.length, 1, 'one invrec — processing → completed never issues twice');
+  assert.equal(r.operational.doc.reused, true, 'the replay reuses the SAME document');
+  assert.equal(t(db).dealCollectionEvidence.length, 0);
   assert.equal(groupLines(db).length, 2, 'quote not duplicated');
   assert.equal(r.operational.settle.alreadyWon, true, 'WON exactly once');
 });
@@ -172,7 +212,8 @@ test('woo operational: a coupon becomes an explicit discount line and the totals
   assert.equal(adjustment.unitPriceMinor, 5000n);
   assert.match(adjustment.label, /SUMMER50/);
 
-  assert.equal(t(db).dealCollectionEvidence[0].amountMinor, 30000n, 'evidence = paid amount → collection settles to zero');
+  assert.equal(t(db).icountDocument[0].amountMinor, 30000n, 'document = paid amount → collection settles to zero');
+  assert.equal(t(db).icountDocument[0]._input.rows.length, 3, 'the discount line is ON the document');
   assert.equal(t(db).reviewItem.length, 0, 'a coupon is normal business, not an attention card');
 });
 
@@ -190,6 +231,7 @@ test('woo operational: an unpaid order composes the quote but stays open with no
   assert.equal(t(db).booking.length, 0);
   assert.equal(t(db).ticketRegistration.length, 0);
   assert.equal(t(db).dealCollectionEvidence.length, 0);
+  assert.equal(t(db).icountDocument.length, 0, 'no document before money moved');
 });
 
 test('woo operational: an order edit before payment recomposes; payment then settles the FINAL state', async () => {
@@ -233,7 +275,11 @@ test('woo operational: an unresolvable line WONs the paid deal WITHOUT a tour an
   assert.equal(t(db).booking.length, 0, 'no guessed tour');
   assert.equal(t(db).ticketRegistration.length, 0);
   assert.equal(groupLines(db).length, 0, 'no guessed quote');
-  assert.equal(t(db).dealCollectionEvidence.length, 1, 'the payment is still recorded');
+  // The invrec still issues — same as an operator would: the generic single
+  // row (deal value = paid total), never Deal.title, never invented tickets.
+  assert.equal(t(db).icountDocument.length, 1, 'the payment is still documented');
+  assert.equal(t(db).icountDocument[0].amountMinor, 35000n);
+  assert.equal(t(db).dealCollectionEvidence.length, 0);
   assert.ok(r.operational.reasons.includes('lines_unresolved'));
 
   const cards = t(db).reviewItem;
@@ -285,7 +331,53 @@ test('woo operational: a Builder a human already edited is NEVER clobbered', asy
   assert.equal(t(db).quoteLine[0].label, 'מחיר מיוחד שסוכם טלפונית');
   assert.equal(theDeal(db).valueMinor, manualValue, 'the human value survives');
   assert.ok(r.operational.reasons.includes('builder_human_edited'));
+  // The edited Builder (₪999) no longer describes the ₪350 that moved — a
+  // document would state a false accounting fact, so NONE is issued; the money
+  // lands as fallback evidence and the card tells the office.
+  assert.equal(t(db).icountDocument.length, 0, 'no document whose total ≠ the paid amount');
+  assert.ok(r.operational.reasons.some((x) => x === 'doc_issue_failed:doc_amount_mismatch'));
+  assert.equal(t(db).dealCollectionEvidence.length, 1, 'the money is still recorded');
   assert.equal(t(db).reviewItem.length, 1, 'the office is told to verify the quote matches the order');
+});
+
+// ── Document idempotency + failure recovery ─────────────────────────────────
+
+test('woo operational: iCount down → loud fallback; recovery replay issues ONCE and supersedes the evidence', async () => {
+  const db = seed();
+  const r1 = await deliver(db, wooOrder(), { issueDoc: fakeIssuer({ fail: 'icount_timeout' }) });
+
+  // Failure is loud, money is safe, WON is not blocked.
+  assert.equal(theDeal(db).status, 'won');
+  assert.equal(t(db).icountDocument.length, 0);
+  assert.equal(t(db).dealCollectionEvidence.length, 1, 'fallback evidence keeps the balance truthful');
+  assert.equal(t(db).dealCollectionEvidence[0].status, 'active');
+  assert.ok(r1.operational.reasons.some((x) => x.startsWith('doc_issue_failed')));
+  assert.equal(t(db).reviewItem.length, 1, 'doc failure raises a review card');
+
+  // iCount recovers; the next REAL transition replays the chain.
+  const r2 = await deliver(db, wooOrder({ status: 'completed' }));
+  assert.equal(t(db).icountDocument.length, 1, 'the document is issued exactly once');
+  assert.equal(r2.operational.doc.ok, true);
+  assert.equal(t(db).dealCollectionEvidence[0].status, 'reversed', 'the evidence is superseded — money counts once');
+  assert.match(t(db).dealCollectionEvidence[0].reversalReason, /חשבונית מס קבלה/);
+
+  // And a further replay changes nothing.
+  await deliver(db, wooOrder({ status: 'completed', date_completed: '2026-08-06T09:00:00' }));
+  assert.equal(t(db).icountDocument.length, 1);
+  assert.equal(t(db).dealCollectionEvidence.length, 1);
+});
+
+test('woo operational: a refund AFTER an issued invrec raises a credit-document card, never rewrites the document', async () => {
+  const db = seed();
+  await deliver(db, wooOrder());
+  assert.equal(t(db).icountDocument.length, 1);
+
+  const r = await deliver(db, wooOrder({ status: 'refunded' }));
+  assert.equal(theDeal(db).status, 'won', 'a refund never silently reverses a win');
+  assert.equal(t(db).icountDocument.length, 1, 'the original document is untouched');
+  assert.ok(r.operational.reasons.includes('refund_credit_document_needed'));
+  const card = t(db).reviewItem.find((c) => c.dedupeKey.includes('refund_credit_document_needed'));
+  assert.ok(card, 'the office is told to handle the credit document');
 });
 
 // ── The slot vanished: money wins, tour goes to a human ─────────────────────
