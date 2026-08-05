@@ -2367,6 +2367,16 @@ model QuoteVersion {
   // line mode overrides it. NULL = never chosen → the PriceList default.
   // Resolution lives in ONE place: shared/vatMode.mjs.
   vatMode        String?
+  // Deal-level discount — the operator's INTENT for the Builder-summary
+  // discount row: percent (e.g. 10 / 7.5) OR a fixed builder-basis amount in
+  // minor units. AT MOST ONE is set (the save path clears the other). The
+  // resolved MONEY artifact is always a stored kind:'discount' line with
+  // sourceKind='deal_discount' (regenerated on every save by
+  // pricing/builderCompose.js), so documents/iCount/payments read lines as
+  // ever — these two fields exist only so the summary row round-trips the
+  // operator's mode+value instead of text-guessing the line label.
+  dealDiscountPercent    Float?
+  dealDiscountFixedMinor BigInt?
   isWorking      Boolean         @default(true) // the version the builder/panel edits (exactly one per deal for now)
   isSelected     Boolean         @default(false) // the accepted/main version (unused until the quote workflow)
   // Provenance for imported/immutable versions. Null = a native GOS version.

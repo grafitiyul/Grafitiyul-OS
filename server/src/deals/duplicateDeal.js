@@ -202,6 +202,11 @@ export async function duplicateDeal(sourceDealId, client = prisma) {
           isWorking: true,
           status: 'draft',
           vatMode: sourceVersion.vatMode,
+          // Deal-discount INTENT rides with its resolved line (in LINE_FIELDS
+          // via the copied sourceKind='deal_discount' row) — the copy's summary
+          // row must round-trip the same mode+value.
+          dealDiscountPercent: sourceVersion.dealDiscountPercent,
+          dealDiscountFixedMinor: sourceVersion.dealDiscountFixedMinor,
         },
       });
       if (sourceVersion.lines.length) {

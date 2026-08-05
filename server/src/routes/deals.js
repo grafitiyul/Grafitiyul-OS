@@ -1806,7 +1806,17 @@ router.get(
     }
 
     // The order-level VAT mode travels WITH the lines — it is what they mean.
-    res.json({ versionId: version.id, created, vatMode: version.vatMode || null, lines: lines.map(toClientLine) });
+    // The deal-discount INTENT (summary row) rides along the same way; the
+    // resolved money is one of the lines (sourceKind 'deal_discount').
+    res.json({
+      versionId: version.id,
+      created,
+      vatMode: version.vatMode || null,
+      dealDiscountPercent: version.dealDiscountPercent ?? null,
+      dealDiscountFixedMinor:
+        version.dealDiscountFixedMinor != null ? Number(version.dealDiscountFixedMinor) : null,
+      lines: lines.map(toClientLine),
+    });
   }),
 );
 
@@ -1928,9 +1938,25 @@ router.put(
       // transaction: the amounts and their interpretation can never be
       // persisted apart, so a reload always reads back the same money.
       const nextVatMode = normalizeBuilderVatMode(b.vatMode);
-      if (nextVatMode !== (version.vatMode || null)) {
-        await tx.quoteVersion.update({ where: { id: version.id }, data: { vatMode: nextVatMode } });
-      }
+      // Deal-discount INTENT — normalized to at most ONE positive value
+      // (percent wins when both somehow arrive). Saved with the lines in the
+      // same transaction, exactly like vatMode: the resolved discount line and
+      // the intent that produced it can never be persisted apart.
+      const pctRaw = Number(b.dealDiscountPercent);
+      const fixedRaw = Number(b.dealDiscountFixedMinor);
+      const nextPct = Number.isFinite(pctRaw) && pctRaw > 0 && pctRaw <= 100 ? pctRaw : null;
+      const nextFixed =
+        nextPct == null && Number.isFinite(fixedRaw) && fixedRaw > 0
+          ? BigInt(Math.round(fixedRaw))
+          : null;
+      await tx.quoteVersion.update({
+        where: { id: version.id },
+        data: {
+          vatMode: nextVatMode,
+          dealDiscountPercent: nextPct,
+          dealDiscountFixedMinor: nextFixed,
+        },
+      });
       // Replace-sync: the working version's lines are fully owned by the builder.
       await tx.quoteLine.deleteMany({ where: { quoteVersionId: version.id } });
       if (rows.length) {

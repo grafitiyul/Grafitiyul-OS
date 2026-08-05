@@ -19,10 +19,22 @@ export function composeBuilderLines({
   vatDefault,
   applyCardNotes = false,
   noteByCard = new Map(),
+  // Deal-level discount INTENT from the Builder summary row:
+  // { percent } (e.g. 10 / 7.5) or { fixedMinor } (builder-basis minor units).
+  // Resolved HERE — the one calculation — into a synthetic kind:'discount'
+  // line (sourceKind 'deal_discount') appended before the totals reduce. The
+  // client persists that resolved line with the others on save, so documents/
+  // iCount/payments keep reading stored lines untouched.
+  dealDiscount = null,
 }) {
   // Compose every line into net/vat/gross. The product line uses the engine's
   // own split when resolved & not overridden; otherwise splitVat the line amount.
-  let lines = (inputLines || []).map((ln) => {
+  // Any incoming deal_discount line is dropped first — it is OUTPUT of this
+  // function (regenerated fresh below), never input; keeping it would
+  // double-count the discount when a stored line round-trips.
+  let lines = (inputLines || [])
+    .filter((ln) => ln.sourceKind !== 'deal_discount')
+    .map((ln) => {
     const kind = ln.kind || 'manual';
     const isProduct = kind === 'product';
     const active = ln.active !== false;
@@ -109,6 +121,53 @@ export function composeBuilderLines({
   // Canonical note rebuild — ONLY when the caller is (re)generating lines.
   // Plain recomputes (typing in the builder) echo user notes untouched.
   if (applyCardNotes) lines = applyCardFirstLineNotes(lines, noteByCard);
+
+  // Deal-level discount resolution. Percent applies to the SIGNED builder-basis
+  // sum of the active lines (engine-resolved unit prices included), so its
+  // net/vat/gross are exactly percent% of theirs under a uniform VAT mode; a
+  // fixed amount is taken in the same basis operators type every other price
+  // in. VAT 'inherit' — the discount follows the order like any other line.
+  if (dealDiscount) {
+    const pct = Number(dealDiscount.percent);
+    const fixed = Number(dealDiscount.fixedMinor);
+    const usePct = Number.isFinite(pct) && pct > 0;
+    const base = lines.reduce(
+      (s, l) => (l.active ? s + SIGN(l.kind) * l.unitPriceMinor * l.quantity : s),
+      0,
+    );
+    const amount = usePct
+      ? Math.round((base * pct) / 100)
+      : Number.isFinite(fixed) && fixed > 0
+        ? Math.round(fixed)
+        : 0;
+    if (amount > 0) {
+      const effMode = effectiveLineVatMode('inherit', vatDefault.mode);
+      const effRate = effMode === 'exempt' ? 0 : vatDefault.rate;
+      const s = splitVat(-amount, effMode, effRate);
+      lines.push({
+        id: 'deal_discount',
+        kind: 'discount',
+        label: usePct ? `הנחה ${pct}%` : 'הנחה',
+        refId: null,
+        note: '',
+        active: true,
+        overridden: false,
+        quantity: 1,
+        unitPriceMinor: amount,
+        vatMode: 'inherit',
+        vatRate: null,
+        effectiveVatMode: effMode,
+        effectiveVatRate: effRate,
+        netMinor: s.netMinor,
+        vatMinor: s.vatMinor,
+        grossMinor: s.grossMinor,
+        sourceKind: 'deal_discount',
+        sourceCardGroupId: null,
+        ticketTypeId: null,
+        pinnedCardGroupId: null,
+      });
+    }
+  }
 
   const totals = lines.reduce(
     (t, l) => ({

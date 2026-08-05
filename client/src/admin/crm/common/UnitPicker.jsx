@@ -12,6 +12,12 @@ const INPUT =
 // place. Almost every organization has no units yet, so the picker renders
 // (and creates) even when the list is empty — never a locked dropdown.
 //
+// LEAVING the field COMMITS the typed value (modern-combobox behavior): an
+// exact (case-insensitive) match selects the existing unit; anything else
+// creates it — the same single create path as the explicit row, guarded so a
+// blur can never create twice or create a duplicate of an existing name.
+// Escape explicitly cancels the typed value (no commit).
+//
 // The suggestion list is portaled through AnchoredMenu because this picker
 // lives inside Dialogs whose scrolling content clips in-flow absolute panels.
 // A foreign unit is impossible by construction (options come from the selected
@@ -66,7 +72,26 @@ export default function UnitPicker({
     }
   }
 
+  // Leaving the field = committing it. Runs from the blur timeout, so it works
+  // off the values captured at blur time (choose/createUnit both clear the
+  // query themselves; a failed create keeps it so the error reads in context).
+  function commitTyped() {
+    if (!typed || creating) return;
+    if (exactMatch) {
+      choose(exactMatch);
+      return;
+    }
+    if (allowCreate && orgId) createUnit();
+  }
+
   function onKeyDown(e) {
+    if (e.key === 'Escape') {
+      // Explicit cancel — the typed value is discarded, never committed.
+      setQuery('');
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
     if (!listOpen) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -75,13 +100,11 @@ export default function UnitPicker({
       e.preventDefault();
       setActiveIndex((i) => (i <= 0 ? rowCount - 1 : i - 1));
     } else if (e.key === 'Enter') {
-      if (activeIndex < 0) return;
       e.preventDefault();
-      if (activeIndex < filtered.length) choose(filtered[activeIndex]);
-      else if (showCreateRow) createUnit();
-    } else if (e.key === 'Escape') {
-      setOpen(false);
-      setActiveIndex(-1);
+      if (activeIndex >= 0 && activeIndex < filtered.length) choose(filtered[activeIndex]);
+      else if (activeIndex >= 0 && showCreateRow) createUnit();
+      // Enter with no highlighted row commits the typed value directly.
+      else commitTyped();
     }
   }
 
@@ -94,7 +117,7 @@ export default function UnitPicker({
             value={open ? query : selected?.name || ''}
             onChange={(e) => { setQuery(e.target.value); setActiveIndex(-1); }}
             onFocus={() => { setOpen(true); setQuery(''); setActiveIndex(-1); }}
-            onBlur={() => setTimeout(() => { setOpen(false); setQuery(''); }, 120)}
+            onBlur={() => setTimeout(() => { setOpen(false); commitTyped(); }, 120)}
             onKeyDown={onKeyDown}
             placeholder={selected ? selected.name : 'חיפוש או יצירת יחידה…'}
             autoComplete="off"

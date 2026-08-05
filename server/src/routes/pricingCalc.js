@@ -483,6 +483,17 @@ router.post(
       });
     }
 
+    // Deal-level discount intent from the Builder summary row — validated to
+    // ONE positive value ({percent} XOR {fixedMinor}); resolution happens in
+    // composeBuilderLines (the one calculation).
+    let dealDiscount = null;
+    if (c.dealDiscount && typeof c.dealDiscount === 'object') {
+      const pct = Number(c.dealDiscount.percent);
+      const fixed = Number(c.dealDiscount.fixedMinor);
+      if (Number.isFinite(pct) && pct > 0 && pct <= 100) dealDiscount = { percent: pct };
+      else if (Number.isFinite(fixed) && fixed > 0) dealDiscount = { fixedMinor: Math.round(fixed) };
+    }
+
     // ONE composition for every caller (Deal builders + pricing simulator).
     const { lines, totals } = composeBuilderLines({
       inputLines: composeInput,
@@ -490,6 +501,7 @@ router.post(
       vatDefault,
       applyCardNotes,
       noteByCard,
+      dealDiscount,
     });
 
     res.json({ ok: true, vatDefault, productResolution, cardOptions, lines, totals });

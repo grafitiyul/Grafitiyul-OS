@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
+import { readTaskDraft, writeTaskDraft, clearTaskDraft } from './taskDraftStore.js';
 import { PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
@@ -23,15 +24,25 @@ export default function TaskComposer({ dealId, onCreated }) {
   const [types, setTypes] = useState([]);
   const [users, setUsers] = useState([]);
   const [meId, setMeId] = useState('');
-  const [selectedTypeId, setSelectedTypeId] = useState('');
-  const [text, setText] = useState('');
-  const [dueDate, setDueDate] = useState(defaultDueDate(null));
-  const [dueTime, setDueTime] = useState('');
-  const [dueTouched, setDueTouched] = useState(false);
-  const [priority, setPriority] = useState('none');
-  const [ownerUserId, setOwnerUserId] = useState('');
+  // The draft is the ONE deal-scoped unsaved workspace (taskDraftStore): this
+  // component unmounts on every composer-tab switch, so its state hydrates
+  // from the store and writes back through on every change. Cleared by save
+  // and by DealDetail when the Deal page closes / switches deal.
+  const draftRef = useRef(readTaskDraft(dealId));
+  const draft = draftRef.current;
+  const [selectedTypeId, setSelectedTypeId] = useState(draft?.selectedTypeId || '');
+  const [text, setText] = useState(draft?.text || '');
+  const [dueDate, setDueDate] = useState(draft?.dueDate ?? defaultDueDate(null));
+  const [dueTime, setDueTime] = useState(draft?.dueTime || '');
+  const [dueTouched, setDueTouched] = useState(draft?.dueTouched || false);
+  const [priority, setPriority] = useState(draft?.priority || 'none');
+  const [ownerUserId, setOwnerUserId] = useState(draft?.ownerUserId || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    writeTaskDraft(dealId, { selectedTypeId, text, dueDate, dueTime, dueTouched, priority, ownerUserId });
+  }, [dealId, selectedTypeId, text, dueDate, dueTime, dueTouched, priority, ownerUserId]);
 
   const selectedType = useMemo(
     () => types.find((t) => t.id === selectedTypeId) || null,
@@ -74,8 +85,11 @@ export default function TaskComposer({ dealId, onCreated }) {
         setUsers(active);
         const me = active.find((u) => u.username === status?.username);
         setMeId(me?.id || '');
-        setOwnerUserId(me?.id || active[0]?.id || '');
-        if (tt[0]) applyType(tt[0]);
+        // A restored draft owns the owner/type — the defaults only fill blanks.
+        setOwnerUserId((prev) => prev || me?.id || active[0]?.id || '');
+        const draftTypeStillValid =
+          draftRef.current?.selectedTypeId && tt.some((t) => t.id === draftRef.current.selectedTypeId);
+        if (!draftTypeStillValid && tt[0]) applyType(tt[0]);
       } catch (e) {
         if (alive) setError(e.payload?.error || e.message);
       }
@@ -127,6 +141,7 @@ export default function TaskComposer({ dealId, onCreated }) {
       await api.dealTasks.create(dealId, payload);
       // Reset text but keep the type/owner for quick successive entry. The
       // saved task consumed the draft — the next one starts untouched again.
+      clearTaskDraft(dealId);
       setText('');
       setDueTouched(false);
       onCreated?.();
