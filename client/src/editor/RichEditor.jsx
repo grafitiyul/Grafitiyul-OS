@@ -10,6 +10,8 @@ import Color from '@tiptap/extension-color';
 import FontFamily from '@tiptap/extension-font-family';
 import Highlight from '@tiptap/extension-highlight';
 import { useEffect, useState } from 'react';
+import { Slice, Fragment } from '@tiptap/pm/model';
+import { plainTextToParagraphs } from './pastePlainText.js';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import { FontSize } from './FontSize.js';
 import { MediaImage } from './MediaImage.jsx';
@@ -138,6 +140,27 @@ export default function RichEditor({
     },
     editorProps: {
       transformPastedHTML: sanitizePastedHtml,
+      // text/plain pastes (WhatsApp, Notepad, terminals…): ProseMirror's
+      // default splits EVERY line into its own paragraph and drops blank
+      // lines — a pasted message became one-paragraph-per-visual-line with no
+      // paragraph structure. The canonical contract (pastePlainText.js):
+      // blank line = paragraph break (extras preserved as empty paragraphs),
+      // single newline = soft break, edges trimmed.
+      clipboardTextParser: (text, $context) => {
+        const schema = $context.doc.type.schema;
+        const paragraphs = plainTextToParagraphs(text);
+        const nodes = paragraphs.map((lines) => {
+          const content = [];
+          lines.forEach((line, i) => {
+            if (i) content.push(schema.nodes.hardBreak.create());
+            content.push(schema.text(line));
+          });
+          return schema.nodes.paragraph.create(null, Fragment.from(content));
+        });
+        // Open depth 1 so a single-paragraph paste merges inline at the cursor
+        // instead of forcing a new block.
+        return new Slice(Fragment.from(nodes), 1, 1);
+      },
       attributes: {
         class: 'rt-editor-prose',
         dir: 'rtl',

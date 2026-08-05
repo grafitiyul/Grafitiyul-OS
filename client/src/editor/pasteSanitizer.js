@@ -284,19 +284,28 @@ function normalizeEmojiImages(body) {
 //   1. INLINE-ONLY fragment: the paste contains no block elements and no <br>
 //      at all (e.g. WhatsApp Web copies a multi-line message as one
 //      <span class="copyable-text">line1\nline2</span>). The literal newlines
-//      ARE the only structure — convert each \n to a <br>.
+//      ARE the only structure.
 //
-//   2. An element whose INLINE style declares white-space: pre / pre-wrap /
-//      pre-line (Gmail plain-text bodies, some code/console copies): its own
-//      newlines are meaningful by declaration — convert within that element.
+//   2. A BLOCK element whose INLINE style declares white-space: pre / pre-wrap
+//      / pre-line (Gmail plain-text bodies): its own newlines are meaningful
+//      by declaration. An INLINE pre-wrap element only gets soft breaks (a
+//      span mid-paragraph must not spawn paragraphs).
 //
-// Word / Google Docs / web-page pastes always contain block elements, so rule 1
-// never touches them, and they don't declare pre-wrap inline, so neither does
-// rule 2. Runs before every other pass; the later passes never touch text
-// nodes, and ProseMirror renders consecutive <br>s as the blank lines they are.
+// The restored STRUCTURE follows the same plain-text contract as the editor's
+// clipboardTextParser (client/src/editor/pastePlainText.js): a blank line is a
+// PARAGRAPH break (extra blank lines become intentional empty paragraphs), a
+// single newline is a soft <br>, and leading/trailing blank content is
+// trimmed. Inline formatting (<b>, <a>, spans…) is carried into the rebuilt
+// paragraphs untouched.
+//
+// Word / Google Docs / web-page pastes always contain block elements, so rule
+// 1 never touches them, and they don't declare pre-wrap inline, so neither
+// does rule 2. Runs before every other pass.
 const NEWLINE_BLOCKISH_SELECTOR =
   'p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, br, blockquote, pre, table, figure, section, article';
 
+// Soft-break-only conversion (inline contexts): every \n run inside text nodes
+// becomes exactly one <br> per newline.
 function textToBreaks(doc, container) {
   // SHOW_TEXT = 4. Snapshot first — we replace nodes while iterating.
   const walker = doc.createTreeWalker(container, 4);
@@ -315,6 +324,59 @@ function textToBreaks(doc, container) {
   }
 }
 
+// Rebuild a container whose only structure is literal newlines into real
+// paragraphs. Child nodes are walked in order: text nodes split the flow
+// (\n\n+ = paragraph boundary, extras = empty paragraphs, \n = <br>); inline
+// ELEMENTS are moved whole into the current paragraph (their own inner
+// newlines become soft breaks). Edge-empty paragraphs are dropped.
+function restructureIntoParagraphs(doc, container) {
+  const paragraphs = [];
+  let current = doc.createElement('p');
+  const flush = () => {
+    paragraphs.push(current);
+    current = doc.createElement('p');
+  };
+  for (const node of Array.from(container.childNodes)) {
+    if (node.nodeType === 3 && node.nodeValue.includes('\n')) {
+      const segments = node.nodeValue.split(/(\n{2,})/);
+      for (const seg of segments) {
+        if (!seg) continue;
+        if (/^\n{2,}$/.test(seg)) {
+          flush();
+          // Each blank line beyond the separator is an intentional empty line.
+          for (let i = 2; i < seg.length; i += 1) flush();
+          continue;
+        }
+        const lines = seg.split('\n');
+        lines.forEach((line, i) => {
+          if (i) current.appendChild(doc.createElement('br'));
+          if (line) current.appendChild(doc.createTextNode(line));
+        });
+      }
+    } else {
+      if (node.nodeType === 1) textToBreaks(doc, node); // inner newlines → soft breaks
+      current.appendChild(node);
+    }
+  }
+  paragraphs.push(current);
+
+  const isEmptyPara = (p) => !p.textContent.trim() && !p.querySelector('img, video, br');
+  while (paragraphs.length && isEmptyPara(paragraphs[0])) paragraphs.shift();
+  while (paragraphs.length && isEmptyPara(paragraphs[paragraphs.length - 1])) paragraphs.pop();
+  // Trim stray edge <br>s inside the first/last paragraphs (no empty lines at
+  // the start or end of the note).
+  for (const p of [paragraphs[0], paragraphs[paragraphs.length - 1]]) {
+    if (!p) continue;
+    while (p.firstChild && p.firstChild.nodeName === 'BR') p.removeChild(p.firstChild);
+    while (p.lastChild && p.lastChild.nodeName === 'BR') p.removeChild(p.lastChild);
+  }
+
+  container.textContent = '';
+  for (const p of paragraphs) container.appendChild(p);
+}
+
+const BLOCK_LEVEL = new Set(['DIV', 'P', 'BLOCKQUOTE', 'TD', 'LI', 'BODY']);
+
 function restoreLiteralNewlines(doc, body) {
   // Rule 2 first: explicit inline pre-wrap declarations (checked before the
   // attribute stripper removes them). <pre> itself is left to the schema.
@@ -322,12 +384,36 @@ function restoreLiteralNewlines(doc, body) {
     if (el.tagName === 'PRE') continue;
     const ws = parseInlineStyles(el.getAttribute('style') || '')['white-space'] || '';
     if (/^pre(-wrap|-line)?$/.test(ws) && el.textContent.includes('\n')) {
-      textToBreaks(doc, el);
+      if (BLOCK_LEVEL.has(el.tagName)) restructureIntoParagraphs(doc, el);
+      else textToBreaks(doc, el);
     }
   }
   // Rule 1: the whole fragment is inline-only — the newlines are the structure.
   if (!body.querySelector(NEWLINE_BLOCKISH_SELECTOR) && body.textContent.includes('\n')) {
-    textToBreaks(doc, body);
+    // WhatsApp wraps the whole message in one neutral <span> — descend through
+    // single-span wrappers so the paragraphs are built from the actual text,
+    // then hoist them out of the wrapper (carrying its dir).
+    let target = body;
+    for (;;) {
+      const kids = Array.from(target.childNodes).filter(
+        (n) => !(n.nodeType === 3 && !n.nodeValue.trim()),
+      );
+      if (kids.length === 1 && kids[0].nodeType === 1 && kids[0].tagName === 'SPAN') {
+        target = kids[0];
+        continue;
+      }
+      break;
+    }
+    restructureIntoParagraphs(doc, target);
+    if (target !== body) {
+      const dir = (target.getAttribute('dir') || '').toLowerCase();
+      for (const p of Array.from(target.children)) {
+        if ((dir === 'ltr' || dir === 'rtl') && !p.getAttribute('dir')) p.setAttribute('dir', dir);
+      }
+      const parent = target.parentNode;
+      while (target.firstChild) parent.insertBefore(target.firstChild, target);
+      parent.removeChild(target);
+    }
   }
 }
 

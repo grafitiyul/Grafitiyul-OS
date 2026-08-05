@@ -222,22 +222,37 @@ test('plain digits in alt are NOT mistaken for emoji', () => {
 // ONE unformatted block, because the source carried its line structure as
 // literal \n characters inside inline markup and the DOM collapsed them.
 
-test('WhatsApp Web message span (inline-only, literal newlines) keeps its lines', () => {
+test('WhatsApp Web message span: paragraphs stay PARAGRAPHS, single newlines stay soft breaks', () => {
   const out = sanitizePastedHtml(
     '<span dir="auto" class="copyable-text">שלום רב,\nרצינו לבדוק לגבי הסיור.\n\nתודה,\nורד</span>',
   );
+  const paras = (out.match(/<p[ >]/g) || []).length;
   const breaks = (out.match(/<br\s*\/?>/g) || []).length;
-  assert.ok(breaks >= 4, `line structure preserved as breaks (got ${breaks}): ${out}`);
+  assert.equal(paras, 2, `the blank line is a paragraph break, not a <br>: ${out}`);
+  assert.equal(breaks, 2, `one soft break inside each paragraph: ${out}`);
   assert.match(out, /שלום רב,/);
   assert.match(out, /ורד/);
 });
 
-test('Gmail plain-text body (white-space:pre-wrap div) keeps its paragraphs', () => {
+test('Gmail plain-text body (white-space:pre-wrap div) rebuilds real paragraphs', () => {
   const out = sanitizePastedHtml(
     '<div style="white-space:pre-wrap">פסקה ראשונה עם תוכן.\n\nפסקה שנייה אחרי שורה ריקה.\nשורה נוספת.</div>',
   );
+  const paras = (out.match(/<p[ >]/g) || []).length;
   const breaks = (out.match(/<br\s*\/?>/g) || []).length;
-  assert.ok(breaks >= 3, `blank line + soft breaks preserved (got ${breaks}): ${out}`);
+  assert.equal(paras, 2, `two paragraphs: ${out}`);
+  assert.equal(breaks, 1, `one soft break in the second paragraph: ${out}`);
+});
+
+test('leading/trailing blank lines are trimmed; extra inner blank lines survive as empty paragraphs', () => {
+  const out = sanitizePastedHtml('<span>\n\nראשון\n\n\nשני\n\n</span>');
+  assert.match(out, /^<p>ראשון<\/p><p><\/p><p>שני<\/p>$/, out);
+});
+
+test('inline formatting survives the paragraph rebuild', () => {
+  const out = sanitizePastedHtml('<span>לפני <b>מודגש</b> אחרי\n\nפסקה שנייה</span>');
+  assert.match(out, /<p>לפני <b>מודגש<\/b> אחרי<\/p>/, out);
+  assert.match(out, /<p>פסקה שנייה<\/p>/, out);
 });
 
 test('pretty-printed HTML newlines between tags are NOT turned into breaks', () => {
