@@ -913,6 +913,10 @@ router.put(
           wonOutcome = await transitionDealToWon(tx, {
             dealId: req.params.id,
             publicOrigin: resolvePublicOrigin(req),
+            // Frozen into Deal.wonActor: the authenticated operator closing
+            // the deal NOW — the immutable closer, not the deal's assignee.
+            actorUserId: req.adminAuth?.userId || null,
+            cause: 'manual',
           });
           if (wonOutcome.wonNow) {
             // Overlay the transition's lifecycle fields onto the loaded row

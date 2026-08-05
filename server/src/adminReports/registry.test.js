@@ -68,17 +68,60 @@ test('#1 reports the COMPLETED payment amount, never the deal total', () => {
   const text = renderReport(1, {
     contact: { firstNameHe: 'רון', lastNameHe: 'ברק' },
     org: null,
-    deal: { orderNo: 27001, valueMinor: 900000 }, // deal total — must NOT appear
+    deal: {
+      orderNo: 27001, valueMinor: 900000, // deal total — must NOT appear
+      wonActor: { type: 'user', userId: 'u9', displayName: 'יעל', username: 'yael', cause: 'manual' },
+    },
     tour: { date: '2026-09-14', startTime: '10:30' },
     payment: { completedAmountMinor: 150000, currency: 'ILS' },
-    owner: { displayName: 'יעל' },
     links: { origin: 'https://x' },
   });
   assert.match(text, /סכום ששילם: ₪1,500/);
   assert.ok(!text.includes('9,000'), 'the deal total must not leak into the payment line');
   assert.match(text, /תאריך הפעילות: 14\/09\/2026 10:30/);
-  assert.match(text, /לינק לדיל: https:\/\/x\/admin\/crm\/deals\/27001/);
   assert.match(text, /בעלים: יעל/);
+  assert.match(text, /לינק לדיל: https:\/\/x\/admin\/crm\/deals\/27001/);
+});
+
+test('#1 owner is the FROZEN WON closer in every scenario — user, username-only, system source, legacy unknown', () => {
+  const base = {
+    contact: { firstNameHe: 'רון', lastNameHe: 'ברק' },
+    org: null,
+    tour: { date: '2026-09-14', startTime: '10:30' },
+    payment: { completedAmountMinor: 150000, currency: 'ILS' },
+    links: { origin: 'https://x' },
+  };
+  const withActor = (wonActor) => renderReport(1, { ...base, deal: { orderNo: 27001, wonActor } });
+
+  // Future-style named user — the frozen identity, not the current assignee.
+  assert.match(withActor({ type: 'user', userId: 'u1', displayName: 'דור קורן', username: 'dorko' }), /בעלים: דור קורן/);
+  // Today's ADMIN case: only a system username exists.
+  assert.match(withActor({ type: 'user', userId: 'u0', displayName: null, username: 'ADMIN' }), /בעלים: ADMIN/);
+  // Automatic closes name the real source.
+  assert.match(withActor({ type: 'system', cause: 'woo_order' }), /בעלים: מערכת — תשלום WooCommerce/);
+  assert.match(withActor({ type: 'system', cause: 'cardcom_payment' }), /בעלים: מערכת — Cardcom/);
+  assert.match(withActor({ type: 'system', cause: 'icount_payment' }), /בעלים: מערכת — תשלום iCount/);
+  // Legacy WON deal with no provable closer — explicit, never a dash.
+  const legacy = withActor(null);
+  assert.match(legacy, /בעלים: לא ידוע/);
+  assert.ok(!legacy.includes('בעלים: —'), 'no empty dash for the owner line');
+  // The report still identifies itself as its final line.
+  assert.ok(legacy.endsWith('\n\n(#1)'));
+});
+
+test('#1 English rendering resolves the same frozen actor through the same resolver', () => {
+  const def = reportByNumber(1);
+  const ctx = {
+    contact: { firstNameHe: 'רון', lastNameHe: 'ברק' },
+    org: null,
+    tour: { date: '2026-09-14', startTime: '10:30' },
+    payment: { completedAmountMinor: 150000, currency: 'ILS' },
+    links: { origin: 'https://x' },
+    deal: { orderNo: 27001, wonActor: { type: 'system', cause: 'icount_payment' } },
+  };
+  assert.match(renderReport(1, ctx, 'en'), /Owner: System — iCount payment/);
+  assert.match(renderReport(1, { ...ctx, deal: { orderNo: 27001, wonActor: null } }, 'en'), /Owner: Unknown/);
+  assert.equal(typeof def.renderEn, 'function');
 });
 
 // ── #2 quote ─────────────────────────────────────────────────────────────────

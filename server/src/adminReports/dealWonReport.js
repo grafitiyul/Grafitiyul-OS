@@ -24,7 +24,7 @@
 
 import { formatMoney } from '../communication/format.js';
 import { contactFullName } from '../communication/context.js';
-import { adminDisplayName } from '../admin/displayName.js';
+import { wonActorLabel } from '../deals/wonActor.js';
 
 const lines = (arr) => arr.filter((l) => l !== null && l !== undefined).join('\n');
 
@@ -58,12 +58,15 @@ function depositMinor(ctx) {
 }
 
 function closedByLabel(ctx, lang) {
+  // ONE label vocabulary for "who closed" — the canonical wonActor resolver
+  // (deals/wonActor.js). The frozen wonReport payload is normalized into the
+  // actor shape: a real closedBy is a user, otherwise the cause names the
+  // system source (iCount / Cardcom / Woo / generic card payment).
   const w = ctx.wonReport || {};
-  if (w.closedBy) return adminDisplayName(w.closedBy) || '—';
-  if (w.cause === 'card_payment') {
-    return lang === 'en' ? 'System — credit-card payment' : 'מערכת — תשלום אשראי';
-  }
-  return lang === 'en' ? 'System' : 'מערכת';
+  const actor = w.closedBy
+    ? { type: 'user', ...w.closedBy }
+    : { type: 'system', cause: w.cause };
+  return wonActorLabel(actor, lang);
 }
 
 function body(ctx, lang) {

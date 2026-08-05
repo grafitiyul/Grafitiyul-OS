@@ -69,11 +69,21 @@ export async function settleDealWon(
   } = {},
 ) {
   const runOrigin = origin || systemOrigin();
+  // ONE cause for the whole settlement: frozen into Deal.wonActor by the
+  // transition AND carried into Report #26's payload — the two can never
+  // disagree about why the deal closed.
+  const effectiveCause = cause || (paymentStatus === 'waived' ? 'no_payment' : 'card_payment');
   const result = await client.$transaction(async (tx) => {
     // THE canonical transition: atomic status guard + final pipeline stage +
-    // wonAt + wonQuoteRef. An already-WON deal (or a concurrent winner) exits
-    // here — retried IPNs and double callbacks are no-ops.
-    const t = await transitionDealToWon(tx, { dealId, publicOrigin: publicOrigin() });
+    // wonAt + wonQuoteRef + the frozen wonActor. An already-WON deal (or a
+    // concurrent winner) exits here — retried IPNs and double callbacks are
+    // no-ops.
+    const t = await transitionDealToWon(tx, {
+      dealId,
+      publicOrigin: publicOrigin(),
+      actorUserId: runOrigin?.createdBy || null,
+      cause: effectiveCause,
+    });
     if (!t.wonNow) return { dealId, alreadyWon: true };
     const deal = t.deal;
 
@@ -177,7 +187,7 @@ export async function settleDealWon(
     emitWonTransitionEffects({
       dealId,
       wonAt: result.wonAt,
-      cause: cause || (paymentStatus === 'waived' ? 'no_payment' : 'card_payment'),
+      cause: effectiveCause,
       closedByUserId: runOrigin?.createdBy || null,
       paymentAmountMinor,
     });

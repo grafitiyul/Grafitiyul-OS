@@ -24,6 +24,8 @@ import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildWonQuoteRef } from '../quote/quoteOffers.js';
 import { fireDealWonReport } from '../adminReports/dealWonEvent.js';
 import { runConfirmationOnWon } from '../confirmation/wonHook.js';
+import { ADMIN_NAME_SELECT } from '../admin/displayName.js';
+import { buildWonActor } from './wonActor.js';
 
 /**
  * The final stage of the pipeline: the last ACTIVE stage in the canonical
@@ -57,13 +59,21 @@ export const wonTransitionKey = (dealId, wonAt) =>
 /**
  * Move a deal to WON inside the caller's transaction.
  *
+ * `actorUserId` / `cause` identify WHO/WHAT is closing the deal; they are
+ * frozen into Deal.wonActor (deals/wonActor.js) in the same atomic write as
+ * status/wonAt — the immutable historical closer, resolved at transition time
+ * (never at report time, never from the current assignee).
+ *
  * Returns { wonNow, alreadyWon, deal, before, finalStage, wonAt } where `deal`
  * is the post-transition scalar row (merged, not re-read) and `before` is the
  * pre-transition row for the caller's changelog. Idempotent: an already-WON
  * deal (including one won by a concurrent transaction between our read and
  * write) returns { alreadyWon: true } and changes nothing.
  */
-export async function transitionDealToWon(tx, { dealId, publicOrigin = null }) {
+export async function transitionDealToWon(
+  tx,
+  { dealId, publicOrigin = null, actorUserId = null, cause = null },
+) {
   const before = await tx.deal.findUnique({ where: { id: dealId } });
   if (!before) {
     const e = new Error('deal_not_found');
@@ -84,6 +94,13 @@ export async function transitionDealToWon(tx, { dealId, publicOrigin = null }) {
       }
     : null;
 
+  // The closer's identity, resolved NOW so the frozen record survives later
+  // renames/deactivations. A missing/unknown user id degrades to a system
+  // attribution — never a fabricated human.
+  const actorUser = actorUserId
+    ? await tx.adminUser.findUnique({ where: { id: actorUserId }, select: ADMIN_NAME_SELECT })
+    : null;
+
   const wonAt = new Date();
   const data = {
     status: 'won',
@@ -94,6 +111,7 @@ export async function transitionDealToWon(tx, { dealId, publicOrigin = null }) {
     lostNotes: null,
     lostReason: null,
     wonQuoteRef,
+    wonActor: buildWonActor({ user: actorUser, cause, at: wonAt }),
   };
   // The atomic guard IS the race decision: two concurrent transitions (two
   // operator tabs, operator + webhook, two provider callbacks) both reach this

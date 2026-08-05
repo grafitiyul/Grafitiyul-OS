@@ -651,6 +651,8 @@ export async function markPaidFromResult(prisma, req, result, deps = {}) {
       dealId: req.dealId,
       origin: systemOrigin(),
       paymentAmountMinor: verifiedAmountMinor,
+      // Names the real source in Deal.wonActor / Report #26.
+      cause: 'cardcom_payment',
     });
     dealWasWonBeforePayment = settle?.alreadyWon === true;
   } catch (err) {

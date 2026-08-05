@@ -19,6 +19,7 @@
 import { formatDateHe, formatMoney } from '../communication/format.js';
 import { contactFullName } from '../communication/context.js';
 import { adminDisplayName } from '../admin/displayName.js';
+import { wonActorLabel } from '../deals/wonActor.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 
 const lines = (arr) => arr.filter((l) => l !== null && l !== undefined).join('\n');
@@ -51,7 +52,8 @@ export const OFFICE_REPORTS_EN = {
     `Amount paid: ${formatMoney(ctx.payment?.completedAmountMinor, ctx.payment?.currency) || '—'}`,
     `Activity date: ${tourDateEn(ctx)} ${tourTimeEn(ctx)}`.trim(),
     '',
-    `Owner: ${ownerNameEn(ctx)}`,
+    // Same frozen wonActor as the Hebrew line — one resolver, two languages.
+    `Owner: ${wonActorLabel(ctx.deal?.wonActor, 'en')}`,
     `Deal: ${dealLinkEn(ctx)}`,
   ]),
 

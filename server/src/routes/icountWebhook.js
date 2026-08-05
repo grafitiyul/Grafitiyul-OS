@@ -131,6 +131,9 @@ export async function settlePaymentFromIpn(
       dealId,
       origin: systemOrigin(),
       paymentAmountMinor: capture.amountMinor,
+      // Names the real source in Deal.wonActor / Report #26 — an IPN-driven
+      // close is "מערכת — תשלום iCount", never a generic card payment.
+      cause: 'icount_payment',
     });
     if (result?.wonNow) log?.log?.(`[icount webhook] settled deal ${dealId} WON from verified payment (${capture.doctype})`);
     return { settled: !!result?.wonNow, alreadyWon: !!result?.alreadyWon, doctype: capture.doctype };

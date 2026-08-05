@@ -1119,6 +1119,13 @@ model Deal {
   // (never retroactively); preserved on reopen like wonAt. Null when the deal
   // had no generated primary quote when it was won.
   wonQuoteRef                  Json?
+  // The IMMUTABLE actor of the WON transition, frozen by transitionDealToWon
+  // in the same atomic write as status/wonAt: { type: 'user'|'system',
+  // userId?, displayName?, username?, cause, at }. Written only on a genuine
+  // transition (never retroactively, preserved on reopen like wonAt); the ONE
+  // source for "who closed this deal" — never the current assignee. Null on
+  // legacy deals whose closer cannot be proven.
+  wonActor                     Json?
   lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free

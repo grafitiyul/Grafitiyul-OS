@@ -6,10 +6,15 @@ import { transitionDealToWon, resolveFinalStage, wonTransitionKey } from './wonT
 // lifecycle stamping, and the immutable per-transition identity Report #26
 // keys on.
 
-function makeTx({ deal, stages = [{ id: 'st_final', key: 'closing', label: 'סגירה', sortOrder: 4, isActive: true }] } = {}) {
+function makeTx({
+  deal,
+  stages = [{ id: 'st_final', key: 'closing', label: 'סגירה', sortOrder: 4, isActive: true }],
+  users = { u1: { id: 'u1', displayName: 'דור קורן', username: 'dorko' } },
+} = {}) {
   const s = { deal: { ...deal }, updates: [] };
   return {
     _s: s,
+    adminUser: { findUnique: async ({ where }) => users[where.id] || null },
     deal: {
       findUnique: async () => ({ ...s.deal }),
       updateMany: async ({ where, data }) => {
@@ -54,6 +59,36 @@ test('a genuine transition: status, FINAL stage, wonAt and lost-field clearing i
   // `before` preserves the pre-transition state for the caller's changelog.
   assert.equal(t.before.status, 'lost');
   assert.equal(t.before.dealStageId, 'st_lead');
+});
+
+test('an operator-driven transition FREEZES the closer into wonActor — id, names, cause', async () => {
+  const tx = makeTx({ deal: { id: 'd1', status: 'open', dealStageId: 'st_lead' } });
+  const t = await transitionDealToWon(tx, { dealId: 'd1', actorUserId: 'u1', cause: 'manual' });
+  assert.equal(t.wonNow, true);
+  const actor = tx._s.deal.wonActor;
+  assert.equal(actor.type, 'user');
+  assert.equal(actor.userId, 'u1');
+  assert.equal(actor.displayName, 'דור קורן');
+  assert.equal(actor.username, 'dorko');
+  assert.equal(actor.cause, 'manual');
+  assert.equal(actor.at, tx._s.deal.wonAt.toISOString(), 'frozen at the transition moment');
+  // Frozen in the SAME atomic write as status/wonAt — no second update.
+  assert.equal(tx._s.updates.length, 1);
+});
+
+test('an automatic transition freezes an explicit SYSTEM actor with its cause — never a fabricated human', async () => {
+  const tx = makeTx({ deal: { id: 'd1', status: 'open', dealStageId: 'st_lead' } });
+  await transitionDealToWon(tx, { dealId: 'd1', cause: 'icount_payment' });
+  assert.deepEqual(
+    { type: tx._s.deal.wonActor.type, cause: tx._s.deal.wonActor.cause },
+    { type: 'system', cause: 'icount_payment' },
+  );
+});
+
+test('an unknown actorUserId degrades to a system actor rather than freezing a broken user ref', async () => {
+  const tx = makeTx({ deal: { id: 'd1', status: 'open', dealStageId: 'st_lead' } });
+  await transitionDealToWon(tx, { dealId: 'd1', actorUserId: 'ghost', cause: 'manual' });
+  assert.equal(tx._s.deal.wonActor.type, 'system');
 });
 
 test('idempotent: an already-WON deal is a no-op with alreadyWon', async () => {

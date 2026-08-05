@@ -19,6 +19,7 @@
 import { formatDateHe, formatMoney, ACTIVITY_TYPE_LABELS } from '../communication/format.js';
 import { contactFullName } from '../communication/context.js';
 import { adminDisplayName } from '../admin/displayName.js';
+import { wonActorLabel } from '../deals/wonActor.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 import { GUIDE_REPORTS } from './guideReports.js';
 import { REVIEW_REPORTS } from './reviewReports.js';
@@ -71,16 +72,21 @@ export const REPORTS = [
       `סכום ששילם: ${formatMoney(ctx.payment?.completedAmountMinor, ctx.payment?.currency) || '—'}`,
       `תאריך הפעילות: ${tourDate(ctx)} ${tourTime(ctx)}`.trim(),
       '',
-      `בעלים: ${ownerName(ctx)}`,
+      // The IMMUTABLE closer frozen at the WON transition (deals/wonActor.js)
+      // — never the deal's current assignee, never a global fallback. A legacy
+      // deal with no frozen record says "לא ידוע" explicitly.
+      `בעלים: ${wonActorLabel(ctx.deal?.wonActor, 'he')}`,
       `לינק לדיל: ${dealLink(ctx)}`,
     ]),
     sample: () => ({
       contact: { firstNameHe: 'דנה', lastNameHe: 'לוי', firstNameEn: '', lastNameEn: '' },
       org: { name: 'עיריית תל אביב' },
-      deal: { orderNo: 27184, tourDate: '2026-09-14', tourTime: '10:30' },
+      deal: {
+        orderNo: 27184, tourDate: '2026-09-14', tourTime: '10:30',
+        wonActor: { type: 'user', userId: 'usr_sample', displayName: 'יעל שחר', username: 'yael', cause: 'manual' },
+      },
       tour: { date: '2026-09-14', startTime: '10:30' },
       payment: { completedAmountMinor: 285000, currency: 'ILS' },
-      owner: { displayName: 'יעל שחר', username: 'yael' },
       links: { origin: 'https://app.grafitiyul.co.il' },
     }),
   },
