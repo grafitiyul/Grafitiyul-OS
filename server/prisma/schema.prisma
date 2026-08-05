@@ -6767,3 +6767,66 @@ model ReviewItem {
   @@index([tourEventId])
   @@index([submissionId])
 }
+
+// ── "דפי אתר" — website content pages managed IN GOS ────────────────────────
+// GOS is the ONLY editable source for a migrated website page. WordPress renders
+// the published version; it never holds a second editable copy (see
+// docs/architecture/GOS-site-pages-module.md).
+//
+// The draft/published split is the same contract the quote and document modules
+// already use: `draft` is the mutable working document, and every publish freezes
+// an IMMUTABLE SitePageVersion. The public surface reads a version row and never
+// the draft, so editing can never change what a customer sees before publish, and
+// rollback is "point publishedVersionId at an older row" — no content is rewritten.
+model SitePage {
+  id           String @id @default(cuid())
+  // Operator-facing name in the list. Never rendered publicly.
+  internalName String
+  pageType     String @default("info")
+  // URL path segment on the public website, e.g. "restaurant-recommendations".
+  slug         String @unique
+
+  // The mutable working copy. Shape = shared/sitePage.mjs normalizeDocument().
+  draft Json
+
+  // Publication. status is derived-but-stored so the list can filter cheaply;
+  // publishedVersionId is the single pointer that decides what the public sees.
+  status             String    @default("draft") // draft | published
+  publishedVersionId String?   @unique
+  publishedVersion   SitePageVersion? @relation("SitePagePublished", fields: [publishedVersionId], references: [id])
+  publishedAt        DateTime?
+  // Set when the draft was touched after the current publish — drives the
+  // "יש שינויים שלא פורסמו" badge without diffing two JSON blobs on every read.
+  draftDirty         Boolean   @default(false)
+
+  versions SitePageVersion[] @relation("SitePageVersions")
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+  updatedByName String?
+
+  @@index([status])
+  @@index([pageType])
+}
+
+// One frozen, immutable publish. Never updated after insert — that is what makes
+// rollback safe and what lets WordPress cache a version by id.
+model SitePageVersion {
+  id        String   @id @default(cuid())
+  pageId    String
+  page      SitePage @relation("SitePageVersions", fields: [pageId], references: [id], onDelete: Cascade)
+  versionNo Int
+  // Frozen copy of the whole document at publish time.
+  content   Json
+  note      String?
+
+  publishedAt     DateTime @default(now())
+  publishedById   String?
+  publishedByName String?
+
+  publishedFor SitePage? @relation("SitePagePublished")
+
+  @@unique([pageId, versionNo])
+  @@index([pageId, publishedAt])
+}

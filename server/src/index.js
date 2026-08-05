@@ -14,6 +14,7 @@ import mediaRouter from './routes/media.js';
 import businessFieldsRouter from './routes/businessFields.js';
 import signersRouter from './routes/signers.js';
 import documentsRouter from './routes/documents.js';
+import sitePagesRouter from './routes/sitePages.js';
 import teamsRouter from './routes/teams.js';
 import peopleRouter from './routes/people.js';
 import exportsRouter from './routes/exports.js';
@@ -56,6 +57,7 @@ import { buildPollTargets, mirrorAdapterFactory, warmMirrorAdapters } from './mi
 import { ingestMirror } from './mirror/pipeline.js';
 import { airtableClientFromEnv } from './mirror/sources/airtableClient.js';
 import publicQuoteRouter from './routes/publicQuote.js';
+import publicSitePagesRouter from './routes/publicSitePages.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
 import savedViewsRouter from './routes/savedViews.js';
@@ -298,6 +300,8 @@ app.use('/api/portal', portalGalleryRouter);
 app.use('/api/gallery', publicGalleryRouter);
 // Public customer quote page — token-gated (QuoteDocument.publicToken), no auth.
 app.use('/api/public', publicQuoteRouter);
+// 'דפי אתר' public read — published content only, no auth, no draft access.
+app.use('/api/public', publicSitePagesRouter);
 // Public questionnaire fill (coordination forms etc.) — token-gated
 // (QuestionnaireLink.token), no auth. Same capability-URL philosophy.
 app.use('/api/public', publicQuestionnaireRouter);
@@ -350,6 +354,7 @@ app.use('/api/reviews', requireAdminAuth, reviewsRouter);
 app.use('/api/business-fields', requireAdminAuth, businessFieldsRouter);
 app.use('/api/signers', requireAdminAuth, signersRouter);
 app.use('/api/documents', requireAdminAuth, documentsRouter);
+app.use('/api/site-pages', requireAdminAuth, sitePagesRouter);
 app.use('/api/teams', requireAdminAuth, teamsRouter);
 app.use('/api/people', requireAdminAuth, peopleRouter);
 // Guide → training-Station permissions (הרשאות למערכי הדרכה) — explicit

@@ -176,6 +176,16 @@ export const MODULE_REGISTRY = [
     management: true,
     description: 'כרטיסי אנשי הצוות, צוותים, הכשרה והרשאות.',
   },
+  {
+    key: 'site-pages',
+    to: '/admin/site-pages',
+    label: 'דפי אתר',
+    glyph: '🌐',
+    railGroup: 'utility',
+    defaultInNav: false,
+    management: true,
+    description: 'עמודי תוכן של האתר הציבורי — כתיבה, פרסום וגרסאות.',
+  },
 ];
 
 // Back-compat exports. The rail's two groups are now RESOLVED at runtime from

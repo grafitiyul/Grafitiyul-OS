@@ -1,0 +1,519 @@
+{
+  "titleHe": "המלצות למסעדות שוות",
+  "titleEn": "",
+  "sections": [
+    {
+      "type": "cards",
+      "heading": "מסעדות כשרות",
+      "cards": [
+        {
+          "name": "לורנץ ומינץ",
+          "hours": "ראשון עד חמישי, 08:00 - 17:00",
+          "address": "שלוש 42, תל אביב",
+          "phone": "03-9018070",
+          "kosher": "כשר חלבי",
+          "notes": "בוקר, צהריים",
+          "website": "https://lorenzandmintz.co.il/contact/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/לורנץ-1024x593.jpg"
+        },
+        {
+          "name": "בוטיק סנטרל",
+          "hours": "ראשון עד חמישי, 07:00 - 21:00\nימי שישי וערבי חג: 07:00 - 15:00",
+          "address": "פלורנטין 22, תל אביב",
+          "phone": "03-9692665",
+          "kosher": "כשר חלבי",
+          "notes": "אין מקום לשבת, קפה, מאפה וכריך",
+          "website": "boutiquecentral.co.il",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/בוטיק-סנטרל.webp"
+        },
+        {
+          "name": "פלורנטינה",
+          "hours": "ראשון עד חמישי, 17:00 - אחרון הלקוחות\nשבת: שעה אחרי צאת השבת - אחרון הלקוחות",
+          "address": "אברבנאל 56, תל אביב",
+          "phone": "073-7020966",
+          "kosher": "כשר חלבי",
+          "notes": "2 דק הליכה, פתוחים רק בערב.",
+          "website": "https://florentina.rol.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/פלורנטינה.jpg"
+        },
+        {
+          "name": "רג'ינה",
+          "hours": "ראשון עד חמישי, 17:00 - 23:00\nו': 11:30 - 16:00",
+          "address": "מתחם התחנה (מבנה 10), תל אביב",
+          "phone": "\n03-7367474",
+          "kosher": "כשר למהדרין",
+          "notes": "12 דקות הליכה",
+          "website": "http://www.reginarest.co.il",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/Screenshot_5-1024x601.jpg"
+        },
+        {
+          "name": "רוני חומוס פול",
+          "address": "אילת 22, תל אביב",
+          "phone": "\n03-681-4246",
+          "kosher": "כשר",
+          "notes": "צמוד לנקודת מפגש הסיום",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/רוני-1024x558.jpg"
+        },
+        {
+          "name": "גושן",
+          "hours": "ראשון עד חמישי, 12:00 - 24:00\nו': המסעדה פתוחה לאירועים בלבד\nשבת: החל משעה אחרי יציאת שבת – עד הלקוח האחרון.",
+          "address": "נחלת בנימין 30, תל אביב",
+          "phone": "03-560076",
+          "kosher": "כשר",
+          "notes": "צמוד לנקודת מפגש הסיום",
+          "website": "https://goshentlv.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/גשן.jpg"
+        },
+        {
+          "name": "ד\"ר שקשוקה",
+          "address": "בית אשל 3, תל אביב",
+          "phone": "057-9444193",
+          "kosher": "כשר",
+          "notes": "מעל 15 דקות הליכה.",
+          "website": "https://www.doctorshakshuka.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/שקשוקה.jpg"
+        },
+        {
+          "name": "פלאפל בן חור",
+          "hours": "ראשון עד חמישי, 10:00 - 19:00\nו': 10-15:30",
+          "address": "המסגר 6, שדרות וושינגטון 32, תל אביב",
+          "phone": "03-696-0677",
+          "kosher": "כשר צוהר",
+          "notes": "זול, זמין, אנשים חמודים. תסביך שמכניס לתסביך",
+          "website": "https://benhur.rol.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/img_3826-1024x683.jpg"
+        },
+        {
+          "name": "בורקס מיס",
+          "hours": "ראשון עד חמישי, 06:00-19:30\nו':06:00-15:00",
+          "address": "אברהם שטרן 5, תל אביב",
+          "phone": "03-681-9080",
+          "kosher": "כשר",
+          "notes": "מוסד שכונתי, 5 דורות של הכנת בורקס",
+          "website": "https://www.bmiss.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/Screenshot_1.jpg"
+        },
+        {
+          "name": "מתוק",
+          "hours": "ראשון עד חמישי, 11:00-22:30\nו':11:00-16:30\nשבת: 18:30-23:55",
+          "address": "וושינגטון 30, תל אביב",
+          "phone": "055-9259593",
+          "kosher": "כשר צוהר",
+          "notes": "שוקולד עבודת יד, נדיר! מכינים הכל במקום ומשתמשים במרכיבים יחודיים (טבעוני)",
+          "website": "https://coco.ussl.co/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/COCO-19-scaled-1.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "מסעדות",
+      "cards": [
+        {
+          "name": "פלורנטינה",
+          "hours": "ראשון עד חמישי, 17:00 - אחרון הלקוחות\nשבת: שעה אחרי צאת השבת - אחרון הלקוחות",
+          "address": "אברבנאל 56, תל אביב",
+          "phone": "073-7020966",
+          "kosher": "כשר חלבי",
+          "notes": "\n2 דק הליכה, פתוחים רק בערב.",
+          "website": "https://florentina.rol.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/פלורנטינה.jpg"
+        },
+        {
+          "name": "מסקל (מסעדה מקסיקנית)",
+          "hours": "ראשון עד חמישי, 17:00 - 00:00\nימי שישי וערבי חג: 13:00 - 00:00",
+          "address": "חיים ויטאל 2, תל אביב",
+          "phone": "03-518-7925",
+          "kosher": "לא כשר",
+          "notes": "אסור לפספס את המרגריטה שלהם!",
+          "website": "https://www.mezcaltlv.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/מסקל.jpg"
+        },
+        {
+          "name": "אראפס",
+          "hours": "ראשון עד חמישי, 17:00 - 23:00\nימי שישי וערבי חג: 12:00 - 19:00\nשבת: 17:00-23:00",
+          "address": "הרצל 77, תל אביב",
+          "phone": "073-736-7887",
+          "kosher": "לא כשר",
+          "notes": "אוכל ונצולאני- מיועד  לעד 15 סועדים",
+          "website": "https://www.tripadvisor.co.il/Restaurant_Review-g293984-d8277905-Reviews-Arepa_s-Tel_Aviv_Tel_Aviv_District.html",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/אראפס-1024x574.jpg"
+        },
+        {
+          "name": "ברטון",
+          "hours": "ראשון עד חמישי, 11:00 - 00:00\nימי שישי וערבי חג: 11:00 - 18:00\nשבת: 00:00-11:00",
+          "address": "שדרות וושינגטון 22, תל אביב",
+          "phone": "03-9199773",
+          "kosher": "לא כשר",
+          "notes": "קרפים מדהימים מלוחים ומתוקים- ישיבה בחוץ בלבד",
+          "website": "https://bretonne.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/ברטון.jpg"
+        },
+        {
+          "name": "קאנו - Kanu",
+          "hours": "ראשון עד חמישי, 11:00 - 23:30\nימי שישי וערבי חג: 11:30 - 16:30\nשבת: 23:30-17:00",
+          "address": "הרצל 77, תל אביב",
+          "phone": "03-643-0846",
+          "kosher": "לא כשר",
+          "notes": "אוכל ויאטנמי- ישיבה בחוץ בלבד",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/kanu-1024x700.jpg"
+        },
+        {
+          "name": "אוזריה",
+          "address": "מטלון 44, תל אביב",
+          "phone": "03-5330899",
+          "kosher": "לא כשר\nלא כשר",
+          "notes": "סגור בשבת",
+          "website": "https://www.ouzeria.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/אוזריה-1024x683.jpg"
+        },
+        {
+          "name": "ד\"ר שקשוקה",
+          "address": "בית אשל 3, תל אביב",
+          "phone": "057-9444193",
+          "kosher": "כשר",
+          "notes": "מעל 15 דקות הליכה.",
+          "website": "https://www.doctorshakshuka.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/שקשוקה.jpg"
+        },
+        {
+          "name": "רג'ינה",
+          "hours": "ראשון עד חמישי, 17:00 - 23:00\nו': 11:30 - 16:00",
+          "address": "מתחם התחנה (מבנה 10), תל אביב",
+          "phone": "\n03-7367474",
+          "kosher": "כשר למהדרין",
+          "notes": "12 דקות הליכה",
+          "website": "http://www.reginarest.co.il",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/Screenshot_5-1024x601.jpg"
+        },
+        {
+          "name": "גושן",
+          "hours": "ראשון עד חמישי, 12:00 - 24:00\nו': המסעדה פתוחה לאירועים בלבד\nשבת: החל משעה אחרי יציאת שבת – עד הלקוח האחרון.",
+          "address": "נחלת בנימין 30, תל אביב",
+          "phone": "03-560076",
+          "kosher": "כשר",
+          "notes": "צמוד לנקודת מפגש הסיום",
+          "website": "https://goshentlv.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/גשן.jpg"
+        },
+        {
+          "name": "כנען",
+          "hours": "ראשון עד חמישי, 12:00 - 24:00\nו':  12:00 עד שעה וחצי לפני כניסת השבת\nשבת: שעה לאחר צאת השבת - 00:00",
+          "address": "אחד העם 14, תל אביב",
+          "phone": "050-9995411",
+          "kosher": "כשר",
+          "notes": "מעל 15 דק הליכה",
+          "website": "http://cnaan.comc.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/כנען.jpg"
+        },
+        {
+          "name": "רק בשר",
+          "hours": "ראשון עד חמישי: 17:00- אחרון הסועדים\nשישי -שבת- 13:00- אחרון הסועדים.",
+          "address": "סלמה 19, תל אביב",
+          "phone": "1-700-55-00-28   שלוחה 1",
+          "kosher": "לא כשר",
+          "website": "https://www.rakbasar.co.il/salame",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/רק-בשקר.jpg"
+        },
+        {
+          "name": "ננה בר",
+          "hours": "ראשון עד חמישי: 08:00-15:00",
+          "address": "אחד העם 1, תל אביב",
+          "phone": "03-5161915",
+          "kosher": "לא כשר",
+          "website": "http://www.nanabar.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/ננה.jpg"
+        },
+        {
+          "name": "דלל",
+          "hours": "שני עד חמישי: 17:00-00:30\nו': 09:00-17:00,18:00-00:30\nשבת: 09:00-17:00,18:00-00:30",
+          "address": "שבזי 10, תל אביב",
+          "phone": "03-5109292",
+          "kosher": "לא כשר",
+          "website": "https://dallal.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/דלל.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "איפה אוכלים התל-אביבים?",
+      "cards": [
+        {
+          "name": "טוני ואסתר",
+          "address": "מטלון 44, תל אביב",
+          "hours": "ראשון עד חמישי: 08:00-00:00\nשישי: 08:00-18:00\nשבת: 17:00-00:00",
+          "kosher": "לא כשר",
+          "phone": "03-528-1843",
+          "website": "https://www.thefoodnett.com/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/טוני.jpg"
+        },
+        {
+          "name": "שאפל בר",
+          "address": "פלורנטין 19, תל אביב",
+          "hours": "ראשון עד חמישי: 18:00-02:30\nשישי: 12:00-02:00",
+          "phone": "050-325-5355",
+          "kosher": "לא כשר",
+          "website": "https://www.shufflebar.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/שאפל.jpg"
+        },
+        {
+          "name": "פורט סעיד",
+          "address": "הר סיני 5, תל אביב",
+          "hours": "ראשון עד רביעי: 2:00-12:00\nחמישי:  3:00-12:00\nשישי: 17:00-12:00\nשבת: 2:00-12:00",
+          "phone": "03-620-7436",
+          "kosher": "לא כשר",
+          "website": "https://www.hashulchan.co.il/restaurant/%D7%A4%D7%95%D7%A8%D7%98-%D7%A1%D7%A2%D7%99%D7%93/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/פורט.jpg"
+        },
+        {
+          "name": "ויטרינה",
+          "address": "לילינבלום 40, תל אביב",
+          "hours": "ראשון עד רביעי: 11:00-00:00\nחמישי:  12:00-00:00",
+          "phone": "03-6164118",
+          "kosher": "לא כשר",
+          "website": "https://www.burger-il.com/business/vitrina/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/ויטרינה.jpg"
+        },
+        {
+          "name": "אה לה רמפה",
+          "address": "העמל 21, תל אביב",
+          "kosher": "כשר",
+          "hours": "ראשון עד שישי:19:00-03:00",
+          "phone": "03-546-1506",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/אה-לה-רמפה-1024x683.jpg"
+        },
+        {
+          "name": "פיצה לילה",
+          "address": "מרחביה 4, תל אביב",
+          "hours": "ראשון עד חמישי :12:00-23:00\nשבת: 12:00-23:00",
+          "kosher": "לא כשר",
+          "phone": "03-516-8244",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/לילה-1024x689.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "איפה לצאת לשתות אחרי?",
+      "cards": [
+        {
+          "name": "פורט סעיד",
+          "address": "הר סיני 5, תל אביב",
+          "hours": "ראשון עד רביעי: 2:00-12:00\nחמישי:  3:00-12:00\nשישי: 17:00-12:00\nשבת: 2:00-12:00",
+          "phone": "03-620-7436",
+          "kosher": "לא כשר",
+          "website": "https://www.hashulchan.co.il/restaurant/%D7%A4%D7%95%D7%A8%D7%98-%D7%A1%D7%A2%D7%99%D7%93/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/פורט.jpg"
+        },
+        {
+          "name": "שאפל בר",
+          "address": "פלורנטין 19, תל אביב",
+          "hours": "ראשון עד חמישי: 18:00-02:30\nשישי: 12:00-02:00",
+          "phone": "050-325-5355",
+          "kosher": "לא כשר",
+          "website": "https://www.shufflebar.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/שאפל.jpg"
+        },
+        {
+          "name": "התדר",
+          "address": "בית רומנו, דרך יפו 9, תל אביב",
+          "hours": "ראשון עד חמישי: 19:00-02:00\nשישי: 12:00-03:00",
+          "kosher": "כשר",
+          "phone": "03-571-9622",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/תדר-1024x777.jpg"
+        },
+        {
+          "name": "ברלין בפלורנטין",
+          "address": "חיים ויטאל 1, תל אביב",
+          "hours": "ראשון עד חמישי: 17:00-01:00\nשישי: 14:00-02:00",
+          "kosher": "לא כשר",
+          "phone": "050-928-0200",
+          "notes": "הבר שהרבה אמני גרפיטי מהשכונה שותים בו.",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/ברלין-1024x601.jpg"
+        },
+        {
+          "name": "פלורנטין 10",
+          "address": "פלורנטין 10, תל אביב",
+          "hours": "פתוח 24 שעות",
+          "phone": "03-681-9999",
+          "kosher": "לא כשר",
+          "notes": "בית קפה/בר, הרבה אנשי תעשייה עושים שם פגישות עבודה וכו'.",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/פלורנטין-10-1024x541.jpg"
+        },
+        {
+          "name": "סאצ'מו",
+          "address": "פלורנטין 10, תל אביב",
+          "hours": "א'-ו': 18:-03:00\nש': 12:00-03:00",
+          "phone": "052-550-8285",
+          "kosher": "לא כשר",
+          "notes": "אווירה יותר מבוגרת",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/סאצמו-1024x644.jpg"
+        },
+        {
+          "name": "המלבייה",
+          "address": "וושיגנטון 15, תל אביב",
+          "phone": "03-5339343",
+          "kosher": "לא כשר",
+          "notes": "מלבי מדהים ובירה זולה באווירה צעירה וכיפית",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/מלבייה-1024x677.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "משהו מתוק?",
+      "cards": [
+        {
+          "name": "ברטון",
+          "hours": "ראשון עד חמישי, 11:00 - 00:00\nימי שישי וערבי חג: 11:00 - 18:00\nשבת: 00:00-11:00",
+          "address": "שדרות וושינגטון 22, תל אביב",
+          "phone": "03-9199773",
+          "kosher": "לא כשר",
+          "notes": "קרפים מדהימים מלוחים ומתוקים- ישיבה בחוץ בלבד",
+          "website": "https://bretonne.co.il/",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/ברטון.jpg"
+        },
+        {
+          "name": "אניטה",
+          "hours": "ראשון עד שבת, 08:00-02:00",
+          "address": "פלורנטין 3, תל אביב",
+          "phone": "03-683-8730",
+          "kosher": "לא כשר",
+          "notes": "אם אהבתם את גלידה גולדה, זה המקור. זה סניף הבית של ה-אניטה שעל שמה קרויה הגלידה, ואם יש לכם מזל תוכלו לפגוש אותה שם",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/anita-1024x485.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "מאיפה להזמין פיצה?",
+      "cards": [
+        {
+          "name": "דומינוס",
+          "address": "פלורנטין 25.",
+          "phone": "076-804-8974"
+        },
+        {
+          "name": "הברבנאל",
+          "address": "אברבנאל 34",
+          "phone": "03-6813331",
+          "website": "http://habarbanel.com/"
+        },
+        {
+          "name": "בזיליקום",
+          "address": "אברבנאל 45",
+          "phone": "03-681-2047",
+          "website": "bazzili.com"
+        },
+        {
+          "name": "פיצה פרנקל",
+          "address": "פרנקל 57",
+          "phone": "03-544-4718",
+          "website": "https://pizzafrenkel.co.il/"
+        },
+        {
+          "name": "פיצה האט",
+          "address": "מעון 5 (רביעיית פלורנטין)",
+          "phone": "1-700-506-070"
+        },
+        {
+          "name": "שירוקו - מקום נעים לישיבה",
+          "address": "וושינגטון 30",
+          "phone": "058-629-9694"
+        },
+        {
+          "name": "פיצה לילה",
+          "address": "מרחביה 4",
+          "phone": "03-516-8244"
+        },
+        {
+          "name": "ג'וספה (גם ב- Wolt)",
+          "address": "ויטל 1",
+          "phone": "054-592-8244",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/תדר-1024x777.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "איפה אפשר לשבת לקפה נעים ושקט בקרב נקודת המפגש:",
+      "cards": [
+        {
+          "name": "קפה מלכה",
+          "hours": "ראשון עד חמישי, 06:00 - 19:00\nימי שישי וערבי חג: 06:00 - 14:00",
+          "address": "אליפלט 26, תל אביב",
+          "phone": "050-693-6947",
+          "notes": "מתאים לקבוצות של עד 15 משתתפים, ישיבה בחוץ קפה, מאפה וכריכים טעימים",
+          "image": "https://grafitiyul.co.il/wp-content/uploads/2022/01/מלכה-1024x704.jpg"
+        }
+      ],
+      "note": null
+    },
+    {
+      "type": "cards",
+      "heading": "חללים להשכרה באזור לישיבה משותפת/ קייטרינג שלכם:",
+      "cards": [
+        {
+          "name": "סטודיו קונטוס",
+          "address": "צריפין 33.",
+          "notes": "סטודיו ליוגה ויצירה. יש חלל גדול ממוזג ועוד חלל של סלון ומטבח, עד 40 איש",
+          "phone": "058-723-2500"
+        },
+        {
+          "name": "קינן",
+          "address": "סמטת פפו, תל אביב",
+          "notes": "לופט מהמם, עד 60 איש",
+          "phone": "52-560-0980"
+        },
+        {
+          "name": "הרצלינה",
+          "address": "רבנו חננאל 27, תל אביב",
+          "notes": "חלל בית לארוח מפנק, עד 60 איש",
+          "phone": "054-697-0504"
+        },
+        {
+          "name": "שירן",
+          "address": "צריפין 35, תל אביב",
+          "notes": "סלון בתוך בית קטן וחמוד, עד 10 משתתפים",
+          "phone": "054-919-2729"
+        }
+      ],
+      "note": "פארק נחמד לפיקניק עם מקומות צל וספסלים: אליפלט 25, תל אביב"
+    },
+    {
+      "type": "richText",
+      "heading": "חניונים",
+      "html": "<p>יש חניון באליפלט 23, ממש מול נק' המפגש, ועוד כמה חניונים באזור רחוב אליפלט ורחוב מעון. אם יש לך מזל פעם באף פעם יש גם חנייה בכחול לבן אבל לא להסתמך על זה</p>\n<p>חניה באליפלט 23: <a href=\"https://goo.gl/maps/k6YFKSew8nN33at67\">https://goo.gl/maps/k6YFKSew8nN33at67</a></p>\n<p>חניון ברחוב מעון :<a href=\"https://goo.gl/maps/rmkSF7cqrD7Rf829A\">https://goo.gl/maps/rmkSF7cqrD7Rf829A</a></p>\n<p>הרצל 108, תל אביב  מתאים לקבוצות גדולות- אפשר לדבר מראש עם אפי ולשריין מקום 0545579390, מומלץ לקולינרי</p>\n<p><a href=\"https://goo.gl/maps/9XxGywvUDEcBUxHf6\">https://goo.gl/maps/9XxGywvUDEcBUxHf6</a></p>\n<p>חניון ברחוב סלמה: <a href=\"https://goo.gl/maps/iebrHqHySUzfFG33A\">https://goo.gl/maps/iebrHqHySUzfFG33A</a></p>\n<p>במקרים קיצוניים יש את החניון של מתחם התחנה כ-6 דק הליכה : <a href=\"https://goo.gl/maps/SaPkHNQgy9bA7reN6\">https://goo.gl/maps/SaPkHNQgy9bA7reN6</a></p>\n<p>המלצה על ניר הסעות 053-666-9590⁩</p>"
+    },
+    {
+      "type": "richText",
+      "heading": "מקום מומלץ לפיקניק:",
+      "html": "<p>יש שני פארקים ברחוב אליפלט כ50 מ' מנקודת המפגש. פארק אחד סגור שהוא יותר גן שעשועים לילדים קטנים ומולו פארק אחר פתוח ורחב ידיים עם מדשאות, ספסלים, צל ושולחנות פיקניק.</p>\n<p>שולחן פיקניק - לפי מקום פנוי. כדאי להביא עוד מישהו שישמור על השולחן או להביא מחצלת ליתר ביטחון. (אם הם מעלים בעיה/התנגדות, יש מחצלת אצלנו ליתר ביטחון)</p>\n<p>גן שעשועים - <a href=\"https://goo.gl/maps/z3qWEpoDt97H4ma1A\">https://goo.gl/maps/z3qWEpoDt97H4ma1A</a></p>\n<p>גן אליפלט - <a href=\"https://goo.gl/maps/9v1PZDGMnNBdFBNb8\">https://goo.gl/maps/9v1PZDGMnNBdFBNb8</a></p>"
+    },
+    {
+      "type": "faq",
+      "heading": "שאלות נפוצות",
+      "items": [
+        {
+          "q": "האם יש מקרר בסטודיו?",
+          "a": "יש מיני-מקרר קטן, יש בו מקום לכ4-5 בקבוקי משקה גדולים או עוגה בינונית."
+        },
+        {
+          "q": "איפה מתחילים ואיפה מסיימים?",
+          "a": "נקודת ההתחלה היא בקפה מלכה, אליפלט 26 תל אביב. נקודת הסיום במרחק פחות מ100 מטר משם כך שלא תסתבכו. המדריכה תוכל לקחת אתכם בחזרה ממש לנקודה בה התחלתם."
+        },
+        {
+          "q": "איזה אוכל מומלץ להזמין לפיקניק?",
+          "a": "אנחנו הכי ממליצים על הכריכים והסלטים של קפה מלכה בנקודת המפגש (אליפלט 26), אפשר לקחת אותם וללכת לשבת בפארק. אפשר גם להזמין פיצה או בורקסים מבורקס מיס. אם בא לכם ממש להתפרע אפשר אפילו לקנות גלידה מאניטה בקילו - על אחריותכם בלבד"
+        }
+      ]
+    }
+  ]
+}

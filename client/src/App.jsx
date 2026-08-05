@@ -38,6 +38,8 @@ import BusinessFieldsPage from './admin/documents/businessFields/BusinessFieldsP
 import ItemPreviewPage from './preview/ItemPreviewPage.jsx';
 import GroupPreviewPage from './preview/GroupPreviewPage.jsx';
 import PeopleLayout from './admin/people/PeopleLayout.jsx';
+import SitePagesPage from './admin/sitePages/SitePagesPage.jsx';
+import SitePageEditor from './admin/sitePages/SitePageEditor.jsx';
 import PeopleList from './admin/people/PeopleList.jsx';
 import PersonProfile from './admin/people/PersonProfile.jsx';
 import TeamsPage from './admin/people/TeamsPage.jsx';
@@ -200,6 +202,9 @@ export default function App() {
             <Route path=":id" element={<ApprovalDetail />} />
           </Route>
         </Route>
+        {/* דפי אתר — website content pages managed in GOS */}
+        <Route path="site-pages" element={<SitePagesPage />} />
+        <Route path="site-pages/:id" element={<SitePageEditor />} />
         <Route path="people" element={<PeopleLayout />}>
           <Route index element={<PeopleList />} />
           <Route path="teams" element={<TeamsPage />} />

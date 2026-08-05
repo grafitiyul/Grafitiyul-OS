@@ -2010,4 +2010,23 @@ export const api = {
     staffSearch: (q) => request(`/api/communication/staff-search${qs({ q })}`),
     dealsSearch: (q) => request(`/api/communication/deals-search${qs({ q })}`),
   },
+  // "דפי אתר" — GOS-managed website content pages.
+  sitePages: {
+    meta: () => request('/api/site-pages/meta'),
+    list: () => request('/api/site-pages'),
+    get: (id) => request(`/api/site-pages/${id}`),
+    create: (body) => request('/api/site-pages', { method: 'POST', body: JSON.stringify(body) }),
+    save: (id, body) => request(`/api/site-pages/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    publish: (id, body) =>
+      request(`/api/site-pages/${id}/publish`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    unpublish: (id) => request(`/api/site-pages/${id}/unpublish`, { method: 'POST' }),
+    rollback: (id, versionId) =>
+      request(`/api/site-pages/${id}/rollback/${versionId}`, { method: 'POST' }),
+    version: (id, versionId) => request(`/api/site-pages/${id}/versions/${versionId}`),
+    preview: (id, document, locale) =>
+      request(`/api/site-pages/${id}/preview${qs({ locale })}`, {
+        method: 'POST',
+        body: JSON.stringify({ document }),
+      }),
+  },
 };
