@@ -90,6 +90,22 @@ function tourTitle(tour) {
   return product || location || 'סיור';
 }
 
+// The English display snapshot, frozen alongside titleHe. Built ONLY from
+// English the catalog actually has: with no English product AND no English
+// city there is nothing honest to store, so it stays null (a reported content
+// gap) rather than a Hebrew string sitting in an English column. A half pair
+// still produces a useful title — that is the canonical resolver's rule, and
+// the missing half is reported per-record by the coverage script.
+function tourTitleEn(tour) {
+  const product = tour.product?.nameEn || null;
+  const location = tour.location?.nameEn || null;
+  if (!product && !location) return null;
+  const p = product || tour.product?.nameHe || null;
+  const l = location || tour.location?.nameHe || null;
+  if (p && l) return `${p} · ${l}`;
+  return p || l;
+}
+
 function participantsTotal(bookings) {
   const active = (bookings || []).filter((b) => b.status === 'active');
   const seats = active.reduce((n, b) => n + (Number(b.seats) || 0), 0);
@@ -213,9 +229,9 @@ export async function ensureTourPayroll(client, tourEventId) {
   const tour = await client.tourEvent.findUnique({
     where: { id: tourEventId },
     include: {
-      product: { select: { nameHe: true } },
+      product: { select: { nameHe: true, nameEn: true } },
       productVariant: { select: { baseGuidePaymentMinor: true, travelPaymentMinor: true } },
-      location: { select: { nameHe: true } },
+      location: { select: { nameHe: true, nameEn: true } },
       assignments: true,
       bookings: { select: { status: true, seats: true, deal: { select: { participants: true } } } },
       payrollActivity: { include: { entries: true } },
@@ -238,6 +254,7 @@ export async function ensureTourPayroll(client, tourEventId) {
         sourceType: 'tour_event',
         tourEventId: tour.id,
         titleHe: tourTitle(tour),
+        titleEn: tourTitleEn(tour),
         payrollMonth: monthOf(tour.date),
         date: tour.date,
       },
@@ -350,9 +367,15 @@ export async function ensureTourPayroll(client, tourEventId) {
   if (activity.state === 'active' && officeState !== 'office_approved') {
     // Draft-era attributes follow the tour (date moves, product/location
     // rename): the activity is a projection until fully office-approved.
-    const desired = { titleHe: tourTitle(tour), date: tour.date, payrollMonth: monthOf(tour.date) };
+    const desired = {
+      titleHe: tourTitle(tour),
+      titleEn: tourTitleEn(tour),
+      date: tour.date,
+      payrollMonth: monthOf(tour.date),
+    };
     if (
       activity.titleHe !== desired.titleHe ||
+      activity.titleEn !== desired.titleEn ||
       activity.date !== desired.date ||
       activity.payrollMonth !== desired.payrollMonth
     ) {
@@ -814,14 +837,25 @@ export async function createGeneralActivity(client, { typeId, payrollMonth, date
     }
   }
 
+  // Both title snapshots come from the TYPE at creation. titleEn stays null
+  // when the type has no English name — never a Hebrew value in an English
+  // column, and the gap is reported per-record.
   const general = await client.generalActivity.create({
-    data: { typeId: type.id, titleHe: type.nameHe, payrollMonth, date, notes },
+    data: {
+      typeId: type.id,
+      titleHe: type.nameHe,
+      titleEn: type.nameEn || null,
+      payrollMonth,
+      date,
+      notes,
+    },
   });
   const activity = await client.payrollActivity.create({
     data: {
       sourceType: 'general',
       generalActivityId: general.id,
       titleHe: type.nameHe,
+      titleEn: type.nameEn || null,
       payrollMonth,
       date,
     },

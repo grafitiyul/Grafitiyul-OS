@@ -6,8 +6,19 @@ import { handle } from '../asyncHandler.js';
 // workshop component can take place in; referenced per TourEvent component row
 // (Slice C). Same catalog shape as the others: sortOrder + isActive + reorder.
 // A referenced location is deactivated, never hard-deleted.
+//
+// BILINGUAL: nameHe/address/instructions are the Hebrew side; nameEn/addressEn/
+// instructionsEn are their English twins, written only by an operator through
+// the settings screen. Nothing is auto-translated server-side.
 
 const router = Router();
+
+// Trim → cap → null. Empty means "no English content yet", which is what the
+// coverage report counts; it must never be stored as an empty string.
+const text = (v, max) => {
+  const s = String(v ?? '').trim();
+  return s ? s.slice(0, max) : null;
+};
 
 router.get(
   '/',
@@ -51,6 +62,9 @@ router.post(
         nameHe,
         address: b.address ? String(b.address).trim().slice(0, 300) : null,
         instructions: b.instructions ? String(b.instructions).trim().slice(0, 2000) : null,
+        nameEn: text(b.nameEn, 200),
+        addressEn: text(b.addressEn, 300),
+        instructionsEn: text(b.instructionsEn, 2000),
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
     });
@@ -71,6 +85,11 @@ router.put(
     if (b.address !== undefined) data.address = b.address ? String(b.address).trim().slice(0, 300) : null;
     if (b.instructions !== undefined)
       data.instructions = b.instructions ? String(b.instructions).trim().slice(0, 2000) : null;
+    // English twins — an empty string CLEARS the field (back to "no English
+    // content"), it never falls back to the Hebrew value.
+    if (b.nameEn !== undefined) data.nameEn = text(b.nameEn, 200);
+    if (b.addressEn !== undefined) data.addressEn = text(b.addressEn, 300);
+    if (b.instructionsEn !== undefined) data.instructionsEn = text(b.instructionsEn, 2000);
     if (b.isActive !== undefined) data.isActive = !!b.isActive;
     if (b.sortOrder !== undefined) data.sortOrder = Number(b.sortOrder) || 0;
     const updated = await prisma.workshopLocation.update({ where: { id: req.params.id }, data });

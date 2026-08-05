@@ -32,7 +32,8 @@ export default function GeneralActivityTypesSettings() {
     );
   }
 
-  const items = types.map((t) => ({ ...t, label: t.nameHe }));
+  // label/labelEn is the shared catalog-kit bilingual contract.
+  const items = types.map((t) => ({ ...t, label: t.nameHe, labelEn: t.nameEn || '' }));
 
   return (
     <div className="px-5 py-8 lg:px-10 max-w-4xl mx-auto">
@@ -42,6 +43,7 @@ export default function GeneralActivityTypesSettings() {
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed max-w-2xl">
           תוספות שכר שאינן סיור. לכל סוג אפשר להגדיר יחידת מידה (שעה, יום, ק״מ…) —
           היא שמופיעה בפירוט השכר של המדריך: ״₪40 לשעה × 1.5 שעות״.
+          יחידת המידה באנגלית מוצגת למדריכים דוברי אנגלית: ״₪40 × 1.5 hours״.
         </p>
       </header>
 
@@ -111,6 +113,8 @@ export default function GeneralActivityTypesSettings() {
             quantity: String(Number(item.defaultQuantity)),
             unitSingular: item.unitLabelSingularHe || '',
             unitPlural: item.unitLabelPluralHe || '',
+            unitSingularEn: item.unitLabelSingularEn || '',
+            unitPluralEn: item.unitLabelPluralEn || '',
             defaultNotes: item.defaultNotes || '',
             active: item.active,
           })}
@@ -152,6 +156,28 @@ export default function GeneralActivityTypesSettings() {
                   className="w-20 h-10 rounded-lg border border-gray-300 px-2 text-sm"
                 />
               </label>
+              {/* English unit nouns — LTR + left-aligned so an operator typing
+                  English never fights the RTL page. */}
+              <label className={checkCls}>
+                Unit (singular):
+                <input
+                  value={draft.unitSingularEn}
+                  onChange={(e) => setDraft((d) => ({ ...d, unitSingularEn: e.target.value }))}
+                  placeholder="hour"
+                  dir="ltr"
+                  className="w-24 h-10 rounded-lg border border-gray-300 px-2 text-sm text-left"
+                />
+              </label>
+              <label className={checkCls}>
+                Unit (plural):
+                <input
+                  value={draft.unitPluralEn}
+                  onChange={(e) => setDraft((d) => ({ ...d, unitPluralEn: e.target.value }))}
+                  placeholder="hours"
+                  dir="ltr"
+                  className="w-24 h-10 rounded-lg border border-gray-300 px-2 text-sm text-left"
+                />
+              </label>
               <label className={`${checkCls} flex-1 min-w-[12rem]`}>
                 הערות:
                 <input
@@ -175,11 +201,19 @@ export default function GeneralActivityTypesSettings() {
             defaultQuantity: Number(draft.quantity) || 1,
             unitLabelSingularHe: draft.unitSingular.trim() || null,
             unitLabelPluralHe: draft.unitPlural.trim() || null,
+            unitLabelSingularEn: draft.unitSingularEn.trim() || null,
+            unitLabelPluralEn: draft.unitPluralEn.trim() || null,
             defaultNotes: draft.defaultNotes.trim() || null,
             active: draft.active,
           })}
           onSave={async (item, patch) => {
-            await api.payroll.activityTypes.update(item.id, { nameHe: patch.label, ...patch, label: undefined, labelEn: undefined });
+            await api.payroll.activityTypes.update(item.id, {
+              ...patch,
+              nameHe: patch.label,
+              nameEn: patch.labelEn ?? null,
+              label: undefined,
+              labelEn: undefined,
+            });
             await load();
           }}
         />

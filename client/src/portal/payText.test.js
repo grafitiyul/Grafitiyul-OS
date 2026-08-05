@@ -124,15 +124,46 @@ test('lineDisplayName: the stored payroll name is never translated for an Englis
   assert.equal(lineDisplayName('תשלום בסיס', 'tour_event', EN), 'תשלום בסיס');
 });
 
-// The Hebrew rate preposition ("₪40 לשעה") only works glued to a Hebrew noun.
-// For an English reader the bare multiplier is used with the stored noun —
-// honest about the missing data instead of inventing an English unit.
-test('lineCalcLabel: English reader gets the bare multiplier, stored noun intact', () => {
+// Unit nouns are bilingual DATA the SERVER already resolved, so this module
+// only picks the connecting word: "ל<noun>" in Hebrew, "per <noun>" in English.
+test('lineCalcLabel: English uses "per" with the server-resolved English noun', () => {
+  assert.equal(
+    lineCalcLabel(
+      { unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: 'hour', unitLabelPlural: 'hours' },
+      'en',
+    ),
+    `${formatMinor(4000)} per hour × 1.5 hours`,
+  );
+  // Singular quantity takes the singular noun in English too.
+  assert.equal(
+    lineCalcLabel(
+      { unitPriceMinor: 4000, quantity: 1, amountMinor: 4000, unitLabelSingular: 'hour', unitLabelPlural: 'hours' },
+      'en',
+    ),
+    `${formatMinor(4000)} per hour × 1 hour`,
+  );
+});
+
+// A type whose English unit noun has not been filled yet: the server falls back
+// to the authored Hebrew noun and this module still formats it correctly. That
+// is real DATA missing, reported per-record — never invented here.
+test('lineCalcLabel: an unfilled English unit noun keeps the authored Hebrew one', () => {
   assert.equal(
     lineCalcLabel(
       { unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' },
       'en',
     ),
-    `${formatMinor(4000)} × 1.5 שעות`,
+    `${formatMinor(4000)} per שעה × 1.5 שעות`,
+  );
+});
+
+// Hebrew is untouched by all of the above.
+test('lineCalcLabel: Hebrew keeps the "ל" preposition exactly as before', () => {
+  assert.equal(
+    lineCalcLabel(
+      { unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' },
+      'he',
+    ),
+    `${formatMinor(4000)} לשעה × 1.5 שעות`,
   );
 });

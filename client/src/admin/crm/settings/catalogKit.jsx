@@ -15,6 +15,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
+import TranslateButton from '../../common/TranslateButton.jsx';
 
 // Shared building blocks for the CRM catalog settings screens (Organization
 // Types & Subtypes, Deal Stages). Each row supports inline EDIT of the business
@@ -190,6 +191,14 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPan
             placeholder="Label (EN) — אופציונלי"
             dir="ltr"
             className="flex-1 min-w-[7rem] sm:max-w-[12rem] h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+          {/* Shared translate action — fills the English field for review and
+              never saves; the form's own save button still commits. */}
+          <TranslateButton
+            getSource={() => draft.label}
+            getTarget={() => draft.labelEn}
+            onResult={(v) => setDraft((d) => ({ ...d, labelEn: v }))}
+            format="text"
           />
           {editExtra && editExtra(draft, setDraft)}
           {editPanel && (

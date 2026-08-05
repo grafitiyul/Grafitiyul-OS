@@ -98,6 +98,11 @@ export async function createTour(prisma, body) {
     data: {
       titleHe,
       descriptionHe: optStr(body?.descriptionHe) ?? null,
+      // English twins — operator-written only, never auto-filled. optStr maps
+      // an empty string to null, so "no English yet" stays distinguishable
+      // from "deliberately blank" for the coverage report.
+      titleEn: optStr(body?.titleEn) ?? null,
+      descriptionEn: optStr(body?.descriptionEn) ?? null,
       active: optBool(body?.active) ?? true,
       sortOrder: await nextSortOrder(prisma.tour, {}),
     },
@@ -115,6 +120,8 @@ export async function updateTour(prisma, id, body) {
   const data = {};
   if (body?.titleHe !== undefined) data.titleHe = reqStr(body.titleHe, 'title_required');
   if (body?.descriptionHe !== undefined) data.descriptionHe = optStr(body.descriptionHe);
+  if (body?.titleEn !== undefined) data.titleEn = optStr(body.titleEn);
+  if (body?.descriptionEn !== undefined) data.descriptionEn = optStr(body.descriptionEn);
   if (body?.active !== undefined) data.active = optBool(body.active);
   return prisma.tour.update({ where: { id }, data });
 }
@@ -153,9 +160,12 @@ export async function createStation(prisma, tourId, body) {
       tourId,
       titleHe,
       descriptionHe: optStr(body?.descriptionHe) ?? null,
+      titleEn: optStr(body?.titleEn) ?? null,
+      descriptionEn: optStr(body?.descriptionEn) ?? null,
       kind: body?.kind ?? 'location',
       heroImageId: optStr(body?.heroImageId) ?? null,
       heroImageTitle: optStr(body?.heroImageTitle) ?? null,
+      heroImageTitleEn: optStr(body?.heroImageTitleEn) ?? null,
       locationId: optStr(body?.locationId) ?? null,
       active: optBool(body?.active) ?? true,
       sortOrder: await nextSortOrder(prisma.tourStation, { tourId }),
@@ -167,7 +177,7 @@ export async function getStation(prisma, id) {
   return prisma.tourStation.findUnique({
     where: { id },
     include: {
-      tour: { select: { id: true, titleHe: true } },
+      tour: { select: { id: true, titleHe: true, titleEn: true } },
       heroImage: true,
       steps: {
         orderBy: { sortOrder: 'asc' },
@@ -196,6 +206,9 @@ export async function updateStation(prisma, id, body) {
   if (body?.kind !== undefined) { assertKind(body.kind); data.kind = body.kind; }
   if (body?.heroImageId !== undefined) data.heroImageId = optStr(body.heroImageId);
   if (body?.heroImageTitle !== undefined) data.heroImageTitle = optStr(body.heroImageTitle);
+  if (body?.titleEn !== undefined) data.titleEn = optStr(body.titleEn);
+  if (body?.descriptionEn !== undefined) data.descriptionEn = optStr(body.descriptionEn);
+  if (body?.heroImageTitleEn !== undefined) data.heroImageTitleEn = optStr(body.heroImageTitleEn);
   if (body?.locationId !== undefined) data.locationId = optStr(body.locationId);
   if (body?.active !== undefined) data.active = optBool(body.active);
   return prisma.tourStation.update({ where: { id }, data });
@@ -228,6 +241,10 @@ export async function createBlock(prisma, body) {
     data: {
       titleHe: optStr(body?.titleHe) ?? null,
       bodyHe: typeof body?.bodyHe === 'string' ? body.bodyHe : '',
+      // bodyEn stays NULL until a human writes English (bodyHe defaults to '',
+      // bodyEn deliberately does not) so the two states stay distinguishable.
+      titleEn: optStr(body?.titleEn) ?? null,
+      bodyEn: typeof body?.bodyEn === 'string' ? body.bodyEn || null : null,
       internalNote: optStr(body?.internalNote) ?? null,
       shared: optBool(body?.shared) ?? false,
       active: optBool(body?.active) ?? true,
@@ -246,6 +263,8 @@ export async function updateBlock(prisma, id, body) {
   const data = {};
   if (body?.titleHe !== undefined) data.titleHe = optStr(body.titleHe);
   if (body?.bodyHe !== undefined) data.bodyHe = typeof body.bodyHe === 'string' ? body.bodyHe : '';
+  if (body?.titleEn !== undefined) data.titleEn = optStr(body.titleEn);
+  if (body?.bodyEn !== undefined) data.bodyEn = typeof body.bodyEn === 'string' ? body.bodyEn || null : null;
   if (body?.internalNote !== undefined) data.internalNote = optStr(body.internalNote);
   if (body?.shared !== undefined) data.shared = optBool(body.shared);
   if (body?.active !== undefined) data.active = optBool(body.active);
@@ -364,6 +383,7 @@ export async function createAsset(prisma, blockId, body) {
     data: {
       contentBlockId: blockId,
       titleHe,
+      titleEn: optStr(body?.titleEn) ?? null,
       assetType,
       language: language ?? null,
       url,
@@ -379,6 +399,7 @@ export async function updateAsset(prisma, id, body) {
   if (!current) throw svcError('asset_not_found');
   const data = {};
   if (body?.titleHe !== undefined) data.titleHe = reqStr(body.titleHe, 'title_required');
+  if (body?.titleEn !== undefined) data.titleEn = optStr(body.titleEn);
   if (body?.assetType !== undefined) { assertAssetType(body.assetType); data.assetType = body.assetType; }
   if (body?.language !== undefined) { const l = optStr(body.language); assertLanguage(l); data.language = l; }
   if (body?.active !== undefined) data.active = optBool(body.active);

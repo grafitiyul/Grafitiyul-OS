@@ -39,7 +39,10 @@ export default function PayrollComponentsSettings() {
     );
   }
 
-  const items = components.map((c) => ({ ...c, label: c.nameHe }));
+  // label/labelEn is the shared catalog-kit bilingual contract; PayrollComponent
+  // now stores the English name, so guides reading the portal in English see the
+  // English payroll line names.
+  const items = components.map((c) => ({ ...c, label: c.nameHe, labelEn: c.nameEn || '' }));
 
   return (
     <div className="px-5 py-8 lg:px-10 max-w-4xl mx-auto">
@@ -50,6 +53,8 @@ export default function PayrollComponentsSettings() {
           הקטלוג הקנוני של רכיבי השכר. רכיבים אוטומטיים מחושבים על ידי המנוע;
           רכיבים ידניים מופיעים במטריצת המשרד גם כשהם אפס. שינויים כאן לא משנים
           רשומות שכר קיימות — רק חישובים חדשים (או ״חשב מחדש״ מפורש).
+          השם באנגלית מוצג למדריכים דוברי אנגלית בפורטל — כולל ברשומות שכר קיימות,
+          שהשם העברי המוקפא בהן נשאר כפי שהוא.
         </p>
       </header>
 
@@ -238,7 +243,13 @@ export default function PayrollComponentsSettings() {
             return patch;
           }}
           onSave={async (item, patch) => {
-            await api.payroll.components.update(item.id, { nameHe: patch.label, ...patch, label: undefined, labelEn: undefined });
+            await api.payroll.components.update(item.id, {
+              ...patch,
+              nameHe: patch.label,
+              nameEn: patch.labelEn ?? null,
+              label: undefined,
+              labelEn: undefined,
+            });
             await load();
           }}
         />

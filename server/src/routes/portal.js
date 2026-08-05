@@ -24,6 +24,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { buildExpansion } from '../services/flowExpansion.js';
 import { staffLanguage } from '../../../shared/staffName.mjs';
+import { pairFrom } from '../../../shared/bilingualText.mjs';
 
 const router = Router();
 
@@ -143,7 +144,7 @@ function badgeFor(kind) {
 // Today this is the only collector. When the next task type lands
 // (training plans, tours, …), add its own collector and concat the
 // results into the same `tasks` array — no client-side change needed.
-async function collectProcedureTasks(person) {
+async function collectProcedureTasks(person, lang = 'he') {
   const visibleFlows = await prisma.flow.findMany({
     where: {
       status: 'published',
@@ -159,6 +160,8 @@ async function collectProcedureTasks(person) {
       id: true,
       title: true,
       description: true,
+      titleEn: true,
+      descriptionEn: true,
       mandatory: true,
       updatedAt: true,
     },
@@ -202,11 +205,12 @@ async function collectProcedureTasks(person) {
     return {
       id: `procedure:${f.id}`,
       type: 'procedure',
-      // Flow.title is authored in ONE language (no bilingual column exists) —
-      // it ships verbatim. An untitled flow ships null so the portal client
-      // renders the untitled wording in the guide's language.
-      title: f.title || null,
-      description: f.description || null,
+      // Flow carries an English twin (titleEn/descriptionEn); `title`/
+      // `description` are the Hebrew side under their original unsuffixed
+      // names. Resolved through the ONE bilingual picker — an untitled flow
+      // ships null so the client renders its own "untitled" wording.
+      title: pairFrom(f, 'title', 'titleEn', lang) || null,
+      description: pairFrom(f, 'description', 'descriptionEn', lang) || null,
       status,
       // Visual grouping in the portal feed. Five buckets so guides
       // can see review status at a glance:
@@ -282,7 +286,8 @@ router.get(
     const r = await resolvePerson(req.params.token);
     if (r.error === 'not_found') return notFound(res);
     if (r.error === 'disabled') return disabled(res);
-    const procedureTasks = await collectProcedureTasks(r.person);
+    const language = staffLanguage(r.person);
+    const procedureTasks = await collectProcedureTasks(r.person, language);
     const tasks = sortTasks(procedureTasks);
     // Diagnostic — surfaces the bucket classification of every task
     // for this request. If the portal's review-status sections are
@@ -304,7 +309,7 @@ router.get(
     res.json({
       // Same ONE language value the shell bootstrap ships — this endpoint is
       // also reachable on its own, so it must never leave the caller guessing.
-      language: staffLanguage(r.person),
+      language,
       person: {
         displayName: r.person.displayName,
         // No id / externalPersonId leaked. The token is the only

@@ -21,6 +21,7 @@ import MoveToDialog from './MoveToDialog.jsx';
 import FlowTreeRow from './FlowTreeRow.jsx';
 import AssignmentDialog from './AssignmentDialog.jsx';
 import ExportDialog from '../exports/ExportDialog.jsx';
+import TranslateButton from '../../common/TranslateButton.jsx';
 import {
   buildTree,
   flattenVisible,
@@ -162,6 +163,10 @@ export default function FlowEditor() {
       setFlow({
         id: f.id,
         title: f.title || '',
+        // English title — what a guide reading the portal in English sees in
+        // the procedures feed. Empty = no English written yet (a reported
+        // content gap), never a copy of the Hebrew.
+        titleEn: f.titleEn || '',
         status: f.status || 'draft',
       });
       setNodes(f.nodes || []);
@@ -556,7 +561,7 @@ export default function FlowEditor() {
   async function saveTitleOnBlur() {
     if (!flow) return;
     try {
-      await api.flows.update(flowId, { title: flow.title });
+      await api.flows.update(flowId, { title: flow.title, titleEn: flow.titleEn.trim() || null });
       await refreshFlowsList?.();
     } catch (e) {
       alert('שמירת כותרת נכשלה: ' + e.message);
@@ -790,6 +795,24 @@ function EditorHeader({
         onBlur={onBlurTitle}
         placeholder="שם הזרימה"
         className="flex-1 min-w-0 text-lg font-medium text-gray-900 bg-transparent border-0 focus:outline-none focus:bg-gray-50 rounded px-2 py-1"
+      />
+      {/* English title — same save-on-blur as the Hebrew one (this header has
+          always autosaved the title; keeping the twin on the same flow avoids
+          two different save behaviours in one row). LTR + left-aligned. */}
+      <input
+        value={flow.titleEn}
+        onChange={(e) => setFlow({ ...flow, titleEn: e.target.value })}
+        onBlur={onBlurTitle}
+        placeholder="Flow name (EN)"
+        dir="ltr"
+        aria-label="Flow name (English)"
+        className="w-40 sm:w-52 shrink-0 text-[15px] text-left text-gray-700 bg-transparent border-0 focus:outline-none focus:bg-gray-50 rounded px-2 py-1 placeholder:text-gray-300"
+      />
+      <TranslateButton
+        getSource={() => flow.title}
+        getTarget={() => flow.titleEn}
+        onResult={(v) => setFlow((prev) => ({ ...prev, titleEn: v }))}
+        format="text"
       />
       {/* Flow-level preview — opens the learner runtime in a new tab with
           preview=1 (no attempt persistence). */}

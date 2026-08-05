@@ -323,7 +323,14 @@ router.post(
 // Component catalog — nothing is hardcoded. System rows keep their identity
 // (key/kind/autoRule/isSystem immutable); everything display/behavioral is
 // editable, including auto-rule config (weekend amount, participant bonus).
-const COMPONENT_EDITABLE = ['nameHe', 'sign', 'vatMode', 'scope', 'officeAlways', 'guideVisible', 'active', 'config'];
+const COMPONENT_EDITABLE = ['nameHe', 'nameEn', 'sign', 'vatMode', 'scope', 'officeAlways', 'guideVisible', 'active', 'config'];
+
+// Trim → null. An empty English field means "no English content yet" (what the
+// portal coverage report counts), never an empty string and never the Hebrew.
+const enText = (v) => {
+  const s = String(v ?? '').trim();
+  return s || null;
+};
 const VAT_MODES = ['net', 'gross', 'none'];
 const SCOPES = ['all', 'tour', 'general'];
 
@@ -347,6 +354,7 @@ router.post(
     const component = await prisma.payrollComponent.create({
       data: {
         nameHe,
+        nameEn: enText(b.nameEn),
         kind: 'manual',
         sign: Number(b.sign) === -1 ? -1 : 1,
         vatMode: VAT_MODES.includes(b.vatMode) ? b.vatMode : 'net',
@@ -375,7 +383,8 @@ router.patch(
         const v = String(b.nameHe || '').trim();
         if (!v) return res.status(400).json({ error: 'name_required' });
         data.nameHe = v;
-      } else if (k === 'sign') data.sign = Number(b.sign) === -1 ? -1 : 1;
+      } else if (k === 'nameEn') data.nameEn = enText(b.nameEn);
+      else if (k === 'sign') data.sign = Number(b.sign) === -1 ? -1 : 1;
       else if (k === 'vatMode') {
         if (!VAT_MODES.includes(b.vatMode)) return res.status(400).json({ error: 'invalid_vat_mode' });
         data.vatMode = b.vatMode;
@@ -446,6 +455,9 @@ router.post(
     const type = await prisma.generalActivityType.create({
       data: {
         nameHe,
+        nameEn: enText(b.nameEn),
+        unitLabelSingularEn: enText(b.unitLabelSingularEn),
+        unitLabelPluralEn: enText(b.unitLabelPluralEn),
         defaultUnitPriceMinor: Math.round(Number(b.defaultUnitPriceMinor) || 0),
         defaultQuantity: Number.isFinite(Number(b.defaultQuantity)) && Number(b.defaultQuantity) >= 0 ? Number(b.defaultQuantity) : 1,
         defaultNotes: b.defaultNotes ? String(b.defaultNotes) : null,
@@ -479,6 +491,9 @@ router.patch(
     if ('defaultNotes' in b) data.defaultNotes = b.defaultNotes ? String(b.defaultNotes) : null;
     if ('unitLabelSingularHe' in b) data.unitLabelSingularHe = String(b.unitLabelSingularHe || '').trim() || null;
     if ('unitLabelPluralHe' in b) data.unitLabelPluralHe = String(b.unitLabelPluralHe || '').trim() || null;
+    if ('nameEn' in b) data.nameEn = enText(b.nameEn);
+    if ('unitLabelSingularEn' in b) data.unitLabelSingularEn = enText(b.unitLabelSingularEn);
+    if ('unitLabelPluralEn' in b) data.unitLabelPluralEn = enText(b.unitLabelPluralEn);
     if ('active' in b) data.active = !!b.active;
     const type = await prisma.generalActivityType.update({ where: { id: existing.id }, data });
     res.json({ type });

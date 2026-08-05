@@ -60,6 +60,17 @@ export function catalogTitle(row, lang) {
   return pickBilingual({ he: row.titleHe, en: row.titleEn }, lang);
 }
 
+/**
+ * A row whose Hebrew side lives in an UNSUFFIXED column (WorkshopLocation
+ * `address`/`instructions`, Flow `title`/`description`) — those predate the
+ * bilingual convention and were deliberately not renamed, so the migration
+ * could stay additive. `heField` names the Hebrew column, `enField` the twin.
+ */
+export function pairFrom(row, heField, enField, lang) {
+  if (!row) return '';
+  return pickBilingual({ he: row[heField], en: row[enField] }, lang);
+}
+
 /** A Contact's full name from its four canonical name columns. */
 export function contactFullName(contact, lang) {
   if (!contact) return '';

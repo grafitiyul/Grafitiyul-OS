@@ -5,6 +5,7 @@
 // internals (calc snapshots, other guides, catalog config) are exposed.
 
 import { entryTotals, lineFinalMinor } from './engine.js';
+import { pickBilingual } from '../../../shared/bilingualText.mjs';
 
 // The message events that form one entry's guide↔office conversation
 // (immutable TimelineEntry rows on the activity, filtered by data.entryId).
@@ -44,7 +45,23 @@ export function guideConversationDto(timelineRows, entryId) {
     }));
 }
 
-export function guidePayEntryDto(entry, activity, componentById, conversation = [], unitLabels = null) {
+// `lang` is the READING GUIDE's language (server-resolved, one value for the
+// whole portal). Payroll display text is bilingual in two different ways:
+//   • activity title — a frozen snapshot pair (titleHe/titleEn) on the activity
+//   • line name — the LINE froze componentNameHe at calculation time, but it
+//     also kept componentId, so the English name is resolved LIVE from the
+//     catalog. That means editing a component's English name fixes every past
+//     payslip's English without rewriting a single frozen Hebrew snapshot.
+// Nothing is translated here; a missing English value keeps the authored
+// Hebrew and is reported by the portal coverage script.
+export function guidePayEntryDto(
+  entry,
+  activity,
+  componentById,
+  conversation = [],
+  unitLabels = null,
+  lang = 'he',
+) {
   const visibleLines = (entry.lines || [])
     .filter((l) => {
       const component = componentById.get(l.componentId);
@@ -60,7 +77,7 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
   });
   return {
     id: entry.id,
-    activityTitle: activity.titleHe,
+    activityTitle: pickBilingual({ he: activity.titleHe, en: activity.titleEn }, lang),
     sourceType: activity.sourceType,
     date: activity.date,
     payrollMonth: activity.payrollMonth,
@@ -73,7 +90,11 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
     vatStatus: entry.vatStatusSnapshot, // exempt → the UI shows a flat total only
     vatRate: entry.vatRateSnapshot,
     lines: visibleLines.map((l) => ({
-      name: l.componentNameHe,
+      name:
+        pickBilingual(
+          { he: l.componentNameHe, en: componentById.get(l.componentId)?.nameEn },
+          lang,
+        ) || l.componentNameHe,
       sign: l.sign,
       amountMinor: lineFinalMinor(l),
       // Canonical rate × quantity inputs (general-activity lines carry them;

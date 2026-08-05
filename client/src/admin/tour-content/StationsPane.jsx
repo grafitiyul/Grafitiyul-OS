@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BilingualField from '../common/BilingualField.jsx';
 import Dialog from '../common/Dialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import { alertError, Field, TextInput, primaryBtn, ghostBtn } from './kit.jsx';
@@ -100,12 +101,23 @@ export default function StationsPane({ tourId, activeStationId, width }) {
 function TourEditDialog({ tour, onClose, onSaved, onArchivedTour }) {
   const [titleHe, setTitleHe] = useState(tour.titleHe || '');
   const [descriptionHe, setDescriptionHe] = useState(tour.descriptionHe || '');
+  // English twins — what a guide reading the portal in English sees in the
+  // training list. Empty clears the column back to "no English content yet".
+  const [titleEn, setTitleEn] = useState(tour.titleEn || '');
+  const [descriptionEn, setDescriptionEn] = useState(tour.descriptionEn || '');
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
-    try { await api.tourContent.updateTour(tour.id, { titleHe, descriptionHe }); onSaved(); }
-    catch (e) { alertError('שגיאה בשמירה', e); setBusy(false); }
+    try {
+      await api.tourContent.updateTour(tour.id, {
+        titleHe,
+        descriptionHe,
+        titleEn: titleEn.trim() || null,
+        descriptionEn: descriptionEn.trim() || null,
+      });
+      onSaved();
+    } catch (e) { alertError('שגיאה בשמירה', e); setBusy(false); }
   }
   async function toggleArchive() {
     const next = !tour.active;
@@ -123,8 +135,23 @@ function TourEditDialog({ tour, onClose, onSaved, onArchivedTour }) {
         <button className={primaryBtn} onClick={save} disabled={busy || !titleHe.trim()}>{busy ? 'שומר…' : 'שמור'}</button>
       </>}>
       <div className="space-y-3">
-        <Field label="שם הסיור"><TextInput value={titleHe} onChange={(e) => setTitleHe(e.target.value)} /></Field>
-        <Field label="תיאור"><TextInput value={descriptionHe} onChange={(e) => setDescriptionHe(e.target.value)} placeholder="אופציונלי" /></Field>
+        <BilingualField
+          label="שם הסיור"
+          he={titleHe}
+          en={titleEn}
+          onHe={setTitleHe}
+          onEn={setTitleEn}
+          placeholderEn="Tour name"
+        />
+        <BilingualField
+          label="תיאור"
+          he={descriptionHe}
+          en={descriptionEn}
+          onHe={setDescriptionHe}
+          onEn={setDescriptionEn}
+          placeholderHe="אופציונלי"
+          placeholderEn="Optional"
+        />
       </div>
     </Dialog>
   );

@@ -3,15 +3,16 @@ import { api } from '../../../lib/api.js';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import AlertDialog from '../../common/AlertDialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import BilingualField from '../../common/BilingualField.jsx';
 
 // Settings → Tours → "מיקומי סדנה". Physical places a workshop component can take
 // place in; chosen per workshop component on each tour (Slice C). Drag to
 // reorder; toggle active to retire a location without losing tour history.
 
-const INPUT =
-  'h-9 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
-
-const emptyDraft = { nameHe: '', address: '', instructions: '' };
+const emptyDraft = {
+  nameHe: '', address: '', instructions: '',
+  nameEn: '', addressEn: '', instructionsEn: '',
+};
 
 export default function WorkshopLocationsSettings() {
   const [items, setItems] = useState([]);
@@ -73,6 +74,7 @@ export default function WorkshopLocationsSettings() {
           <h2 className="text-[15px] font-semibold text-gray-900">מיקומי סדנה</h2>
           <p className="text-[12.5px] text-gray-500 mt-0.5">
             מיקומים בהם מתקיימות סדנאות. נבחרים לכל מרכיב סדנה בנפרד בתוך הסיור.
+            מדריך דובר אנגלית רואה את הגרסה האנגלית בפורטל.
           </p>
         </div>
         {!adding && !loading && (
@@ -135,6 +137,16 @@ export default function WorkshopLocationsSettings() {
                       <div className="truncate text-[12px] text-gray-500">{item.address}</div>
                     )}
                   </div>
+                  {/* Operator-visible content gap: this location has no English,
+                      so an English-speaking guide would read it in Hebrew. */}
+                  {item.isActive && !String(item.nameEn || '').trim() && (
+                    <span
+                      className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-200"
+                      title="אין תוכן באנגלית — מדריך דובר אנגלית יראה את הטקסט בעברית"
+                    >
+                      חסר אנגלית
+                    </span>
+                  )}
                   {!item.isActive && (
                     <span className="shrink-0 text-[11px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">
                       לא פעיל
@@ -188,6 +200,9 @@ function LocationForm({ draft, onClose, onSubmit }) {
     nameHe: draft.nameHe || '',
     address: draft.address || '',
     instructions: draft.instructions || '',
+    nameEn: draft.nameEn || '',
+    addressEn: draft.addressEn || '',
+    instructionsEn: draft.instructionsEn || '',
   });
   const [busy, setBusy] = useState(false);
   const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
@@ -198,10 +213,15 @@ function LocationForm({ draft, onClose, onSubmit }) {
     if (!f.nameHe.trim()) return;
     setBusy(true);
     try {
+      // Empty English CLEARS the column (back to "no English content yet") —
+      // it is never backfilled from the Hebrew.
       await onSubmit({
         nameHe: f.nameHe.trim(),
         address: f.address.trim() || null,
         instructions: f.instructions.trim() || null,
+        nameEn: f.nameEn.trim() || null,
+        addressEn: f.addressEn.trim() || null,
+        instructionsEn: f.instructionsEn.trim() || null,
       });
     } catch (e) {
       setAlertMsg('שגיאה בשמירה: ' + (e.payload?.error || e.message));
@@ -215,25 +235,35 @@ function LocationForm({ draft, onClose, onSubmit }) {
       className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 px-3 py-3 space-y-2"
       dir="rtl"
     >
-      <input
-        value={f.nameHe}
-        onChange={(e) => set('nameHe', e.target.value)}
-        placeholder="שם המיקום"
-        className={INPUT}
-        autoFocus
+      {/* One shared bilingual pair per field — He right/RTL, En left/LTR. */}
+      <BilingualField
+        label="שם המיקום"
+        he={f.nameHe}
+        en={f.nameEn}
+        onHe={(v) => set('nameHe', v)}
+        onEn={(v) => set('nameEn', v)}
+        placeholderHe="שם המיקום"
+        placeholderEn="Location name"
       />
-      <input
-        value={f.address}
-        onChange={(e) => set('address', e.target.value)}
-        placeholder="כתובת (אופציונלי)"
-        className={INPUT}
+      <BilingualField
+        label="כתובת"
+        he={f.address}
+        en={f.addressEn}
+        onHe={(v) => set('address', v)}
+        onEn={(v) => set('addressEn', v)}
+        placeholderHe="כתובת (אופציונלי)"
+        placeholderEn="Address (optional)"
       />
-      <textarea
-        value={f.instructions}
-        onChange={(e) => set('instructions', e.target.value)}
-        placeholder="הוראות הגעה / חניה / הקמה (אופציונלי)"
+      <BilingualField
+        label="הוראות הגעה / חניה / הקמה"
+        render="textarea"
         rows={2}
-        className={`${INPUT} h-auto resize-y py-2`}
+        he={f.instructions}
+        en={f.instructionsEn}
+        onHe={(v) => set('instructions', v)}
+        onEn={(v) => set('instructionsEn', v)}
+        placeholderHe="הוראות הגעה / חניה / הקמה (אופציונלי)"
+        placeholderEn="Arrival / parking / setup notes (optional)"
       />
       <div className="flex justify-end gap-2">
         <button

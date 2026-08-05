@@ -8,11 +8,10 @@ import { formatMinor } from '../lib/money.js';
 // words.
 //
 // Note on the DATA: payroll component names, activity titles and unit nouns are
-// single-language columns in the schema (PayrollComponent.nameHe,
-// PayrollActivity.titleHe, GeneralActivityType.unitLabel*He) — there is no
-// English source anywhere in GOS. They are therefore rendered exactly as
-// stored, never translated in code, and are listed in the English-coverage
-// report as a data gap.
+// bilingual columns now (PayrollComponent.nameEn, PayrollActivity.titleEn,
+// GeneralActivityType.unitLabel*En). The SERVER resolves them to the reading
+// guide's language before they reach this file, so nothing here inspects a
+// language-specific field or translates anything.
 
 // The waiting card counts ACTIVITIES awaiting the guide's action; it never
 // shows their monetary total.
@@ -42,9 +41,9 @@ export function formatQuantity(n) {
 //   rate noun is always the singular ("₪40 לשעה"). Missing nouns degrade
 //   gracefully to the bare multiplier.
 //
-// The unit noun is Hebrew-only DATA. The "ל" rate preposition only makes sense
-// glued to a Hebrew noun, so for an English reader the bare multiplier form is
-// used with the stored noun appended — honest, and never a fake translation.
+// The "ל" rate preposition only works glued to a Hebrew noun, so the English
+// form uses "per": "₪40 per hour × 1.5 hours". The noun itself is DATA the
+// server already resolved — this only picks the connecting word.
 export function lineCalcLabel(line, lang = 'he') {
   const { unitPriceMinor, quantity, amountMinor, unitLabelSingular, unitLabelPlural } = line || {};
   if (unitPriceMinor == null || quantity == null) return null;
@@ -57,7 +56,9 @@ export function lineCalcLabel(line, lang = 'he') {
   if (!singular && !plural) return `${rate} × ${qty}`;
 
   const qtyNoun = Number(quantity) === 1 ? singular || plural : plural || singular;
-  const ratePart = lang === 'en' ? rate : singular ? `${rate} ל${singular}` : rate;
+  const ratePart = singular
+    ? (lang === 'en' ? `${rate} per ${singular}` : `${rate} ל${singular}`)
+    : rate;
   return `${ratePart} × ${qty} ${qtyNoun}`.trim();
 }
 

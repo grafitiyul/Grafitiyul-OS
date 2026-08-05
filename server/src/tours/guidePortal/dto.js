@@ -8,7 +8,7 @@
 // unit-testable without a database.
 
 import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
-import { catalogName, contactFullName } from '../../../../shared/bilingualText.mjs';
+import { catalogName, contactFullName, pairFrom } from '../../../../shared/bilingualText.mjs';
 import { tourEndMs as canonicalTourEndMs } from '../tourTime.js';
 import { stripTrailingSameDate } from '../calendar/desiredState.js';
 
@@ -299,14 +299,16 @@ export function guideTourDetailDto({
         id: row.id,
         name: catalogName(row.activityComponent, lang) || '',
         icon: row.activityComponent?.icon || null,
-        // WorkshopLocation has NO English columns anywhere in GOS (name,
-        // address and access instructions are single-language). These ship
-        // VERBATIM — never machine-translated — and the gap is reported by
-        // scripts/reportPortalEnglishGaps.js so it can be fixed in the data.
+        // WorkshopLocation is bilingual: name/address/instructions each have an
+        // English twin. `address`/`instructions` are the Hebrew side under
+        // their original unsuffixed names (additive migration), hence pairFrom.
+        // A row with no English yet resolves to the authored Hebrew — a DATA
+        // gap the coverage report lists, never a runtime translation.
         location: {
-          name: row.workshopLocation.nameHe,
-          address: row.workshopLocation.address || null,
-          instructions: row.workshopLocation.instructions || null,
+          name: catalogName(row.workshopLocation, lang) || row.workshopLocation.nameHe,
+          address: pairFrom(row.workshopLocation, 'address', 'addressEn', lang) || null,
+          instructions:
+            pairFrom(row.workshopLocation, 'instructions', 'instructionsEn', lang) || null,
         },
       })),
     participants: (tour.bookings || [])

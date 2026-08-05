@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BilingualField from '../common/BilingualField.jsx';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import Dialog from '../common/Dialog.jsx';
@@ -33,7 +34,12 @@ export default function StationEditor() {
     try {
       const [s, sibs] = await Promise.all([api.tourContent.getStation(stationId), api.tourContent.listStations(tourId)]);
       setStation(s); setSiblings(sibs); setHeroImage(s.heroImage || null);
-      const init = { titleHe: s.titleHe || '', descriptionHe: s.descriptionHe || '', heroImageId: s.heroImageId || null, active: s.active };
+      const init = {
+        titleHe: s.titleHe || '', descriptionHe: s.descriptionHe || '',
+        // English twins — what a guide reading the portal in English sees.
+        titleEn: s.titleEn || '', descriptionEn: s.descriptionEn || '',
+        heroImageId: s.heroImageId || null, active: s.active,
+      };
       setForm(init); setOriginal(init);
       const media = s.steps.find((x) => x.roleHint === MEDIA_ROLE);
       setMediaAssets(media ? await api.tourContent.listAssets(media.contentBlockId) : []);
@@ -110,11 +116,27 @@ export default function StationEditor() {
         <Section icon="📍" title="פרטי התחנה">
           <div className="grid md:grid-cols-[1.4fr_1fr] gap-6">
             <div className="space-y-3">
-              <Field label="שם התחנה"><TextInput value={form.titleHe} onChange={(e) => set('titleHe', e.target.value)} /></Field>
-              <Field label="תיאור קצר">
-                <textarea rows={2} value={form.descriptionHe} onChange={(e) => set('descriptionHe', e.target.value)} placeholder="אופציונלי"
-                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
-              </Field>
+              {/* Shared bilingual pair — He right/RTL, En left/LTR, with the
+                  canonical translate action. Saving stays on "שמור פרטים". */}
+              <BilingualField
+                label="שם התחנה"
+                he={form.titleHe}
+                en={form.titleEn}
+                onHe={(v) => set('titleHe', v)}
+                onEn={(v) => set('titleEn', v)}
+                placeholderEn="Station name"
+              />
+              <BilingualField
+                label="תיאור קצר"
+                render="textarea"
+                rows={2}
+                he={form.descriptionHe}
+                en={form.descriptionEn}
+                onHe={(v) => set('descriptionHe', v)}
+                onEn={(v) => set('descriptionEn', v)}
+                placeholderHe="אופציונלי"
+                placeholderEn="Optional"
+              />
             </div>
             <Field label="תמונה ראשית (R2)">
               <SingleImage image={heroImage} onChange={onHero} folder="tour-content/hero" />
@@ -221,13 +243,27 @@ function PartRow({ step, handle, expanded, onExpand, onRemove, onSaved }) {
   const block = step.contentBlock || {};
   const [titleHe, setTitleHe] = useState(block.titleHe || '');
   const [bodyHe, setBodyHe] = useState(block.bodyHe || '');
+  const [titleEn, setTitleEn] = useState(block.titleEn || '');
+  const [bodyEn, setBodyEn] = useState(block.bodyEn || '');
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setTitleHe(block.titleHe || ''); setBodyHe(block.bodyHe || ''); }, [block.id, block.titleHe, block.bodyHe]);
+  useEffect(() => {
+    setTitleHe(block.titleHe || ''); setBodyHe(block.bodyHe || '');
+    setTitleEn(block.titleEn || ''); setBodyEn(block.bodyEn || '');
+  }, [block.id, block.titleHe, block.bodyHe, block.titleEn, block.bodyEn]);
 
   async function save() {
     setSaving(true);
-    try { await api.tourContent.updateBlock(step.contentBlockId, { titleHe, bodyHe }); await onSaved(); onExpand(); }
-    catch (e) { alertError('שגיאה בשמירת התוכן', e); } finally { setSaving(false); }
+    // Empty English clears the column back to "no English content yet"; it is
+    // never backfilled from the Hebrew.
+    try {
+      await api.tourContent.updateBlock(step.contentBlockId, {
+        titleHe, bodyHe,
+        titleEn: titleEn.trim() || null,
+        bodyEn: bodyEn.trim() || null,
+      });
+      await onSaved();
+      onExpand();
+    } catch (e) { alertError('שגיאה בשמירת התוכן', e); } finally { setSaving(false); }
   }
 
   return (
@@ -250,8 +286,30 @@ function PartRow({ step, handle, expanded, onExpand, onRemove, onSaved }) {
       {expanded && (
         <div className="px-3.5 pb-3.5 pt-1 border-t border-blue-100 space-y-3">
           {block.shared && <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">התוכן הזה משותף — עריכה תשפיע על כל התחנות שמשתמשות בו.</div>}
-          <Field label="כותרת החלק"><TextInput value={titleHe} onChange={(e) => setTitleHe(e.target.value)} /></Field>
-          <Field label="תוכן"><RichEditor value={bodyHe} onChange={setBodyHe} ariaLabel="תוכן החלק" /></Field>
+          <BilingualField
+            label="כותרת החלק"
+            he={titleHe}
+            en={titleEn}
+            onHe={setTitleHe}
+            onEn={setTitleEn}
+            placeholderEn="Part title"
+          />
+          {/* Rich body — format="html" so the translator preserves markup. */}
+          <BilingualField
+            label="תוכן"
+            format="html"
+            he={bodyHe}
+            en={bodyEn}
+            onHe={setBodyHe}
+            onEn={setBodyEn}
+            // Same contract as every other bilingual rich field in the admin
+            // (Locations, Products, Quote sections): RichEditor owns direction
+            // through the content's own block markup, and TranslateButton
+            // stamps LTR on translated English before it lands here.
+            render={({ value, onChange, ariaLabel }) => (
+              <RichEditor value={value} onChange={onChange} ariaLabel={ariaLabel} />
+            )}
+          />
           <div className="flex gap-2">
             <button className={primaryBtn} onClick={save} disabled={saving}>{saving ? 'שומר…' : 'שמור תוכן'}</button>
             <button className={ghostBtn} onClick={onExpand} disabled={saving}>סגור</button>

@@ -9,11 +9,10 @@ import { usePortalLanguage } from '../PortalLanguage.jsx';
 //   * exactly one tour → skip the selector, land straight on its stations
 //   * nothing granted → polished honest empty state (no fake "coming soon")
 //
-// LANGUAGE: the screen's own wording comes from the ONE portal registry. The
-// training CONTENT itself (tour titles, station titles/descriptions, body) is
-// single-language in the schema — Tour/TourStation/TourContentBlock have no
-// English columns at all — so it renders exactly as authored. That gap is a
-// DATA gap, listed in the English-coverage report, never patched in code.
+// LANGUAGE: the screen's own wording comes from the ONE portal registry; the
+// training CONTENT (`title`, `description`) arrives ALREADY RESOLVED to the
+// guide's language from the server's bilingual columns. The client never picks
+// between nameHe/nameEn, and never translates anything.
 
 export function useTrainingFeed(token) {
   const [state, setState] = useState({ phase: 'loading' });
@@ -96,10 +95,10 @@ export function StationList({ token, tour }) {
           )}
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[14.5px] font-semibold text-gray-900">
-              {s.titleHe}
+              {s.title}
             </span>
-            {s.descriptionHe && (
-              <span className="block truncate text-[12px] text-gray-500">{s.descriptionHe}</span>
+            {s.description && (
+              <span className="block truncate text-[12px] text-gray-500">{s.description}</span>
             )}
           </span>
           <span className="text-gray-300">{rtl ? '‹' : '›'}</span>
@@ -136,14 +135,14 @@ export default function TrainingPage() {
       {state.tours && state.tours.length === 1 && (
         <div>
           <h1 className="mb-1 px-1 text-[17px] font-bold text-gray-900">
-            {state.tours[0].titleHe}
+            {state.tours[0].title}
           </h1>
-          {state.tours[0].descriptionHe && (
+          {state.tours[0].description && (
             <p className="mb-3 px-1 text-[13px] text-gray-500">
-              {state.tours[0].descriptionHe}
+              {state.tours[0].description}
             </p>
           )}
-          {!state.tours[0].descriptionHe && <div className="mb-3" />}
+          {!state.tours[0].description && <div className="mb-3" />}
           <StationList token={token} tour={state.tours[0]} />
         </div>
       )}
@@ -177,7 +176,7 @@ function TourRow({ token, tour }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[15px] font-semibold text-gray-900">
-          {tour.titleHe}
+          {tour.title}
         </span>
         <span className="block text-[12px] text-gray-500">
           {tour.stations.length === 1
@@ -212,7 +211,7 @@ export function TrainingTourPage() {
                 {rtl ? '→' : '←'}
               </Link>
               <h1 className="min-w-0 flex-1 truncate text-[17px] font-bold text-gray-900">
-                {tour.titleHe}
+                {tour.title}
               </h1>
             </div>
             <StationList token={token} tour={tour} />

@@ -1,286 +1,457 @@
-// Guide Portal — English data-coverage report.
+// Guide Portal — English content-completion worklist.
 //
-// The portal is fully language-aware: every static string exists in both
-// languages (client/src/portal/i18n.js) and every field GOS maintains as a
-// He/En PAIR is resolved to the reader's language on the server. What this
-// script measures is the REMAINDER: business data with no English value, which
-// an English-speaking guide therefore sees in Hebrew.
+// The portal is STRUCTURALLY complete in English: every static string exists in
+// both languages (client/src/portal/i18n.js) and every business field the
+// portal renders now has a canonical English column resolved through the ONE
+// shared resolver (shared/bilingualText.mjs). What remains is CONTENT ENTRY.
 //
-// Nothing here is a code bug and nothing is fixed by code — machine translation
-// is deliberately not used anywhere in this path. This report is the work list
-// for populating translations IN THE DATABASE.
-//
-// Two kinds of gap are reported separately, because they need different work:
-//
-//   MISSING VALUE   — the column pair exists, the English side is empty.
-//                     Fixable today by filling it in the admin UI.
-//   NO ENGLISH FIELD — the entity has no English column at all in the schema.
-//                     Needs a schema + admin-UI decision before data can exist.
+// This script produces that worklist, per record — entity, id, the Hebrew value
+// an English guide currently sees, the empty English field, the portal screen,
+// the operational impact, and the admin URL to fix it. Nothing is fixed by
+// code: there is no machine translation anywhere in this path, by design.
 //
 // Read-only. Run against production:
 //   railway run node server/scripts/report-portal-english-gaps.mjs
 // or set DATABASE_URL to the prod URL and run the same command.
 //
-//   --json   machine-readable output (for pasting into a tracking doc)
+//   --json          machine-readable, per-record
+//   --counts        summary only (no per-record rows)
+//   --limit=N       cap the rows printed per entity (default 25; 0 = all)
 
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const asJson = process.argv.includes('--json');
+const argv = process.argv.slice(2);
+const asJson = argv.includes('--json');
+const countsOnly = argv.includes('--counts');
+const limitArg = argv.find((a) => a.startsWith('--limit='));
+const LIMIT = limitArg ? Number(limitArg.split('=')[1]) : 25;
 
+const BASE = process.env.GOS_ADMIN_ORIGIN || 'https://app.grafitiyul.co.il';
 const blank = (v) => !(typeof v === 'string' && v.trim() !== '');
+const short = (v, n = 60) => {
+  const t = String(v ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length > n ? `${t.slice(0, n)}…` : t;
+};
 
-// A gap row: what a guide would see, where, and how many records are affected.
-function gap(o) {
+// One entity's worklist. `rows` are the actual records still missing English.
+function group(o) {
   return {
     entity: o.entity,
     field: o.field,
-    screens: o.screens,
+    screen: o.screen,
     impact: o.impact,
-    kind: o.kind, // 'missing_value' | 'no_english_field'
-    missing: o.missing,
+    adminPath: o.adminPath,
+    kind: o.kind, // 'catalog' | 'content' | 'people'
+    missing: o.rows.length,
     total: o.total,
-    examples: o.examples || [],
+    rows: o.rows,
   };
 }
 
-// ── pairs that EXIST and are simply unfilled ─────────────────────────────────
-
-async function pairGaps() {
+async function collect() {
   const out = [];
 
-  // Product.nameEn — the single most visible value in the portal: it is half of
-  // every tour card title and the tour-detail heading.
+  // ── Tour identity: the single most visible text in the portal ─────────────
   const products = await prisma.product.findMany({
     where: { active: true },
     select: { id: true, nameHe: true, nameEn: true },
     orderBy: { sortOrder: 'asc' },
   });
-  const productsMissing = products.filter((p) => blank(p.nameEn));
   out.push(
-    gap({
+    group({
       entity: 'Product',
       field: 'nameEn',
-      screens: ['Upcoming tours', 'Past tours', 'Tour detail', 'Tour gallery', 'Participants breakdown'],
+      screen: 'Upcoming tours · Past tours · Tour detail · Gallery · Participants breakdown',
       impact: 'The tour name shows in Hebrew on every card and heading.',
-      kind: 'missing_value',
-      missing: productsMissing.length,
+      adminPath: '/admin/products',
+      kind: 'catalog',
       total: products.length,
-      examples: productsMissing.slice(0, 10).map((p) => p.nameHe),
+      rows: products
+        .filter((p) => blank(p.nameEn))
+        .map((p) => ({ id: p.id, he: p.nameHe, url: `${BASE}/admin/products/${p.id}` })),
     }),
   );
 
-  // Location.nameEn — the other half of the tour title ("Product · City").
   const locations = await prisma.location.findMany({
     select: { id: true, nameHe: true, nameEn: true },
     orderBy: { sortOrder: 'asc' },
   });
-  const locationsMissing = locations.filter((l) => blank(l.nameEn));
   out.push(
-    gap({
-      entity: 'Location',
+    group({
+      entity: 'Location (city)',
       field: 'nameEn',
-      screens: ['Upcoming tours', 'Past tours', 'Tour detail', 'Parallel tours'],
+      screen: 'Upcoming tours · Past tours · Tour detail · Parallel tours',
       impact: 'The city half of every tour title shows in Hebrew.',
-      kind: 'missing_value',
-      missing: locationsMissing.length,
+      adminPath: '/admin/settings/products/locations',
+      kind: 'catalog',
       total: locations.length,
-      examples: locationsMissing.slice(0, 10).map((l) => l.nameHe),
+      rows: locations
+        .filter((l) => blank(l.nameEn))
+        .map((l) => ({ id: l.id, he: l.nameHe, url: `${BASE}/admin/settings/products/locations` })),
     }),
   );
 
-  // ActivityComponent.nameEn — the "activity components" chips on tour detail.
   const components = await prisma.activityComponent.findMany({
     where: { isActive: true },
-    select: { nameHe: true, nameEn: true },
+    select: { id: true, nameHe: true, nameEn: true },
     orderBy: { sortOrder: 'asc' },
   });
-  const componentsMissing = components.filter((c) => blank(c.nameEn));
   out.push(
-    gap({
+    group({
       entity: 'ActivityComponent',
       field: 'nameEn',
-      screens: ['Tour detail — activity components', 'Tour detail — workshop locations'],
+      screen: 'Tour detail — activity component chips + workshop rows',
       impact: 'Component chips show in Hebrew.',
-      kind: 'missing_value',
-      missing: componentsMissing.length,
+      adminPath: '/admin/settings/tours/components',
+      kind: 'catalog',
       total: components.length,
-      examples: componentsMissing.slice(0, 10).map((c) => c.nameHe),
+      rows: components
+        .filter((c) => blank(c.nameEn))
+        .map((c) => ({ id: c.id, he: c.nameHe, url: `${BASE}/admin/settings/tours/components` })),
     }),
   );
 
-  // TicketType.nameEn — the ticket lines under each participant card.
   const ticketTypes = await prisma.ticketType.findMany({
     where: { active: true },
-    select: { nameHe: true, nameEn: true },
+    select: { id: true, nameHe: true, nameEn: true },
     orderBy: { sortOrder: 'asc' },
   });
-  const ticketTypesMissing = ticketTypes.filter((t) => blank(t.nameEn));
   out.push(
-    gap({
+    group({
       entity: 'TicketType',
       field: 'nameEn',
-      screens: ['Tour detail — participants breakdown'],
+      screen: 'Tour detail — participants breakdown',
       impact: 'Ticket-type rows show in Hebrew.',
-      kind: 'missing_value',
-      missing: ticketTypesMissing.length,
+      adminPath: '/admin/settings/products/ticket-types',
+      kind: 'catalog',
       total: ticketTypes.length,
-      examples: ticketTypesMissing.slice(0, 10).map((t) => t.nameHe),
+      rows: ticketTypes
+        .filter((t) => blank(t.nameEn))
+        .map((t) => ({ id: t.id, he: t.nameHe, url: `${BASE}/admin/settings/products/ticket-types` })),
     }),
   );
 
-  // PersonProfile English names — the guide's own name in the header, and the
-  // names of teammates on the tour-detail team list.
-  const profiles = await prisma.personProfile.findMany({
-    select: { firstNameEn: true, lastNameEn: true, firstNameHe: true, lastNameHe: true },
+  // ── Workshop locations: where the guide goes and how to get in ────────────
+  const workshops = await prisma.workshopLocation.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      nameHe: true, nameEn: true,
+      address: true, addressEn: true,
+      instructions: true, instructionsEn: true,
+    },
+    orderBy: { sortOrder: 'asc' },
   });
-  const profilesMissing = profiles.filter((p) => blank(p.firstNameEn) && blank(p.lastNameEn));
+  const workshopRows = [];
+  for (const w of workshops) {
+    const fields = [];
+    if (blank(w.nameEn)) fields.push({ field: 'nameEn', he: w.nameHe });
+    if (!blank(w.address) && blank(w.addressEn)) fields.push({ field: 'addressEn', he: w.address });
+    if (!blank(w.instructions) && blank(w.instructionsEn)) {
+      fields.push({ field: 'instructionsEn', he: short(w.instructions) });
+    }
+    if (fields.length) {
+      workshopRows.push({
+        id: w.id,
+        he: w.nameHe,
+        fields,
+        url: `${BASE}/admin/settings/tours/workshop-locations`,
+      });
+    }
+  }
   out.push(
-    gap({
-      entity: 'PersonProfile',
-      field: 'firstNameEn / lastNameEn',
-      screens: ['Portal header (own name)', 'Profile', 'Tour detail — team'],
-      impact: 'Staff names show in Hebrew for an English-reading guide.',
-      kind: 'missing_value',
-      missing: profilesMissing.length,
-      total: profiles.length,
-      examples: profilesMissing
-        .slice(0, 10)
-        .map((p) => `${p.firstNameHe || ''} ${p.lastNameHe || ''}`.trim())
-        .filter(Boolean),
+    group({
+      entity: 'WorkshopLocation',
+      field: 'nameEn / addressEn / instructionsEn',
+      screen: 'Tour detail — workshop locations',
+      impact:
+        'HIGHEST operational risk: this is where the guide is told where to go, the address, and how to get in.',
+      adminPath: '/admin/settings/tours/workshop-locations',
+      kind: 'catalog',
+      total: workshops.length,
+      rows: workshopRows,
     }),
   );
 
-  // Contact English names — the customer names on the participant cards. Note
-  // the columns are non-null in the schema, so "missing" means EMPTY STRING.
+  // ── Training content ─────────────────────────────────────────────────────
+  const tours = await prisma.tour.findMany({
+    where: { active: true },
+    select: { id: true, titleHe: true, titleEn: true, descriptionHe: true, descriptionEn: true },
+    orderBy: { sortOrder: 'asc' },
+  });
+  out.push(
+    group({
+      entity: 'Tour (training set)',
+      field: 'titleEn / descriptionEn',
+      screen: 'Training content — list + station header',
+      impact: 'The training set name shows in Hebrew.',
+      adminPath: '/admin/tour-content',
+      kind: 'content',
+      total: tours.length,
+      rows: tours
+        .filter((t) => blank(t.titleEn) || (!blank(t.descriptionHe) && blank(t.descriptionEn)))
+        .map((t) => ({
+          id: t.id,
+          he: t.titleHe,
+          fields: [
+            blank(t.titleEn) ? { field: 'titleEn', he: t.titleHe } : null,
+            !blank(t.descriptionHe) && blank(t.descriptionEn)
+              ? { field: 'descriptionEn', he: short(t.descriptionHe) }
+              : null,
+          ].filter(Boolean),
+          url: `${BASE}/admin/tour-content/${t.id}`,
+        })),
+    }),
+  );
+
+  const stations = await prisma.tourStation.findMany({
+    where: { active: true, tour: { active: true } },
+    select: {
+      id: true, tourId: true,
+      titleHe: true, titleEn: true,
+      descriptionHe: true, descriptionEn: true,
+    },
+    orderBy: { sortOrder: 'asc' },
+  });
+  out.push(
+    group({
+      entity: 'TourStation',
+      field: 'titleEn / descriptionEn',
+      screen: 'Training content — station list + station page',
+      impact: 'Station names and summaries show in Hebrew.',
+      adminPath: '/admin/tour-content',
+      kind: 'content',
+      total: stations.length,
+      rows: stations
+        .filter((s) => blank(s.titleEn) || (!blank(s.descriptionHe) && blank(s.descriptionEn)))
+        .map((s) => ({
+          id: s.id,
+          he: s.titleHe,
+          fields: [
+            blank(s.titleEn) ? { field: 'titleEn', he: s.titleHe } : null,
+            !blank(s.descriptionHe) && blank(s.descriptionEn)
+              ? { field: 'descriptionEn', he: short(s.descriptionHe) }
+              : null,
+          ].filter(Boolean),
+          url: `${BASE}/admin/tour-content/${s.tourId}/stations/${s.id}`,
+        })),
+    }),
+  );
+
+  // Only blocks that are actually PLACED in a live station reach a guide.
+  const blocks = await prisma.tourContentBlock.findMany({
+    where: { active: true, placements: { some: { station: { active: true, tour: { active: true } } } } },
+    select: {
+      id: true,
+      titleHe: true, titleEn: true,
+      bodyHe: true, bodyEn: true,
+      placements: {
+        take: 1,
+        select: { stationId: true, station: { select: { tourId: true, titleHe: true } } },
+      },
+    },
+  });
+  out.push(
+    group({
+      entity: 'TourContentBlock (station part)',
+      field: 'titleEn / bodyEn',
+      screen: 'Training content — station page body',
+      impact: 'The teaching content itself shows in Hebrew. Highest VOLUME gap.',
+      adminPath: '/admin/tour-content',
+      kind: 'content',
+      total: blocks.length,
+      rows: blocks
+        .filter((b) => (!blank(b.titleHe) && blank(b.titleEn)) || (!blank(b.bodyHe) && blank(b.bodyEn)))
+        .map((b) => {
+          const place = b.placements[0];
+          return {
+            id: b.id,
+            he: b.titleHe || short(b.bodyHe, 40),
+            station: place?.station?.titleHe || null,
+            fields: [
+              !blank(b.titleHe) && blank(b.titleEn) ? { field: 'titleEn', he: b.titleHe } : null,
+              !blank(b.bodyHe) && blank(b.bodyEn) ? { field: 'bodyEn', he: short(b.bodyHe) } : null,
+            ].filter(Boolean),
+            url: place
+              ? `${BASE}/admin/tour-content/${place.station.tourId}/stations/${place.stationId}`
+              : `${BASE}/admin/tour-content`,
+          };
+        }),
+    }),
+  );
+
+  const assets = await prisma.tourBlockAsset.findMany({
+    where: { active: true },
+    select: { id: true, titleHe: true, titleEn: true, contentBlockId: true },
+  });
+  out.push(
+    group({
+      entity: 'TourBlockAsset (media/link)',
+      field: 'titleEn',
+      screen: 'Training content — media and links',
+      impact: 'Media/link captions show in Hebrew.',
+      adminPath: '/admin/tour-content',
+      kind: 'content',
+      total: assets.length,
+      rows: assets
+        .filter((a) => blank(a.titleEn))
+        .map((a) => ({ id: a.id, he: a.titleHe, url: `${BASE}/admin/tour-content` })),
+    }),
+  );
+
+  // ── Payroll ──────────────────────────────────────────────────────────────
+  const payComponents = await prisma.payrollComponent.findMany({
+    where: { active: true, guideVisible: true },
+    select: { id: true, nameHe: true, nameEn: true },
+    orderBy: { sortOrder: 'asc' },
+  });
+  out.push(
+    group({
+      entity: 'PayrollComponent',
+      field: 'nameEn',
+      screen: 'Pay — line names inside each entry',
+      impact: 'Payroll line names show in Hebrew. Applies to PAST payslips too (resolved live).',
+      adminPath: '/admin/settings/finance/payroll-components',
+      kind: 'catalog',
+      total: payComponents.length,
+      rows: payComponents
+        .filter((c) => blank(c.nameEn))
+        .map((c) => ({ id: c.id, he: c.nameHe, url: `${BASE}/admin/settings/finance/payroll-components` })),
+    }),
+  );
+
+  const activityTypes = await prisma.generalActivityType.findMany({
+    where: { active: true },
+    select: {
+      id: true, nameHe: true, nameEn: true,
+      unitLabelSingularHe: true, unitLabelSingularEn: true,
+      unitLabelPluralHe: true, unitLabelPluralEn: true,
+    },
+    orderBy: { sortOrder: 'asc' },
+  });
+  out.push(
+    group({
+      entity: 'GeneralActivityType',
+      field: 'nameEn / unitLabelSingularEn / unitLabelPluralEn',
+      screen: 'Pay — general-addition entries and their "₪40 per hour × 1.5 hours" breakdown',
+      impact: 'Activity names and unit nouns show in Hebrew inside otherwise-English pay cards.',
+      adminPath: '/admin/settings/finance/activity-types',
+      kind: 'catalog',
+      total: activityTypes.length,
+      rows: activityTypes
+        .filter(
+          (t) =>
+            blank(t.nameEn) ||
+            (!blank(t.unitLabelSingularHe) && blank(t.unitLabelSingularEn)) ||
+            (!blank(t.unitLabelPluralHe) && blank(t.unitLabelPluralEn)),
+        )
+        .map((t) => ({
+          id: t.id,
+          he: t.nameHe,
+          fields: [
+            blank(t.nameEn) ? { field: 'nameEn', he: t.nameHe } : null,
+            !blank(t.unitLabelSingularHe) && blank(t.unitLabelSingularEn)
+              ? { field: 'unitLabelSingularEn', he: t.unitLabelSingularHe }
+              : null,
+            !blank(t.unitLabelPluralHe) && blank(t.unitLabelPluralEn)
+              ? { field: 'unitLabelPluralEn', he: t.unitLabelPluralHe }
+              : null,
+          ].filter(Boolean),
+          url: `${BASE}/admin/settings/finance/activity-types`,
+        })),
+    }),
+  );
+
+  // ── Procedures ───────────────────────────────────────────────────────────
+  const flows = await prisma.flow.findMany({
+    where: { status: 'published' },
+    select: { id: true, title: true, titleEn: true, description: true, descriptionEn: true },
+  });
+  out.push(
+    group({
+      entity: 'Flow (procedure)',
+      field: 'titleEn / descriptionEn',
+      screen: 'Procedures — task cards',
+      impact: 'Procedure titles show in Hebrew.',
+      adminPath: '/admin/procedures/flows',
+      kind: 'content',
+      total: flows.length,
+      rows: flows
+        .filter((f) => blank(f.titleEn) || (!blank(f.description) && blank(f.descriptionEn)))
+        .map((f) => ({
+          id: f.id,
+          he: f.title,
+          fields: [
+            blank(f.titleEn) ? { field: 'titleEn', he: f.title } : null,
+            !blank(f.description) && blank(f.descriptionEn)
+              ? { field: 'descriptionEn', he: short(f.description) }
+              : null,
+          ].filter(Boolean),
+          url: `${BASE}/admin/procedures/flows/${f.id}`,
+        })),
+    }),
+  );
+
+  // ── People ───────────────────────────────────────────────────────────────
+  const profiles = await prisma.personProfile.findMany({
+    select: {
+      personRefId: true,
+      firstNameHe: true, lastNameHe: true,
+      firstNameEn: true, lastNameEn: true,
+      personRef: { select: { displayName: true, portalEnabled: true } },
+    },
+  });
+  out.push(
+    group({
+      entity: 'PersonProfile (staff name)',
+      field: 'firstNameEn / lastNameEn',
+      screen: 'Portal header (own name) · Profile · Tour detail — team',
+      impact: 'Staff names show in Hebrew for an English-reading guide.',
+      adminPath: '/admin/people',
+      kind: 'people',
+      total: profiles.length,
+      rows: profiles
+        .filter((p) => blank(p.firstNameEn) && blank(p.lastNameEn))
+        .map((p) => ({
+          id: p.personRefId,
+          he:
+            `${p.firstNameHe || ''} ${p.lastNameHe || ''}`.trim() ||
+            p.personRef?.displayName ||
+            '(no name)',
+          url: `${BASE}/admin/people/${p.personRefId}`,
+        })),
+    }),
+  );
+
+  // Contacts are counted, never listed: 20k rows is not a worklist, and a
+  // customer's Latin name is usually already present in the Hebrew fields.
   const contactsTotal = await prisma.contact.count();
   const contactsMissing = await prisma.contact.count({
     where: { AND: [{ firstNameEn: '' }, { lastNameEn: '' }] },
   });
-  out.push(
-    gap({
-      entity: 'Contact',
-      field: 'firstNameEn / lastNameEn',
-      screens: ['Tour detail — participant cards', 'Tour gallery title'],
-      impact: 'Customer names show in Hebrew.',
-      kind: 'missing_value',
-      missing: contactsMissing,
-      total: contactsTotal,
-      examples: [],
-    }),
-  );
 
-  return out;
-}
-
-// ── entities with NO English column anywhere in the schema ───────────────────
-//
-// These cannot be filled today: the schema has no place to put an English
-// value. Each needs an explicit owner decision (add the column + the admin
-// field) before any data work can start. Counts show how much content is
-// affected, i.e. how much translation work the decision would create.
-
-async function schemaGaps() {
-  const out = [];
-
-  const workshopLocations = await prisma.workshopLocation.findMany({
-    where: { isActive: true },
-    select: { nameHe: true, address: true, instructions: true },
-  });
-  out.push(
-    gap({
-      entity: 'WorkshopLocation',
-      field: 'nameHe / address / instructions (no *En columns)',
-      screens: ['Tour detail — workshop locations'],
-      impact:
-        'Workshop name, address and access instructions show in Hebrew. Operationally significant: this is where the guide is told where to go and how to get in.',
-      kind: 'no_english_field',
-      missing: workshopLocations.length,
-      total: workshopLocations.length,
-      examples: workshopLocations.slice(0, 10).map((w) => w.nameHe),
-    }),
-  );
-
-  const tours = await prisma.tour.count({ where: { active: true } });
-  const stations = await prisma.tourStation.count({ where: { active: true } });
-  const blocks = await prisma.tourContentBlock.count();
-  out.push(
-    gap({
-      entity: 'Tour / TourStation / TourContentBlock (training content)',
-      field: 'titleHe / descriptionHe / bodyHe (no *En columns)',
-      screens: ['Training content list', 'Training station page'],
-      impact:
-        'The whole training-content domain is single-language: titles, descriptions and the station body render in Hebrew.',
-      kind: 'no_english_field',
-      missing: tours + stations + blocks,
-      total: tours + stations + blocks,
-      examples: [`${tours} tours`, `${stations} stations`, `${blocks} content blocks`],
-    }),
-  );
-
-  const components = await prisma.payrollComponent.count();
-  const generalTypes = await prisma.generalActivityType.count();
-  out.push(
-    gap({
-      entity: 'PayrollComponent / GeneralActivityType / PayrollActivity',
-      field: 'nameHe / unitLabelSingularHe / unitLabelPluralHe / titleHe (no *En columns)',
-      screens: ['Pay'],
-      impact:
-        'Payroll line names, unit nouns and activity titles render in Hebrew inside otherwise-English pay cards.',
-      kind: 'no_english_field',
-      missing: components + generalTypes,
-      total: components + generalTypes,
-      examples: [`${components} payroll components`, `${generalTypes} general-activity types`],
-    }),
-  );
-
-  const flows = await prisma.flow.count({ where: { status: 'published' } });
-  out.push(
-    gap({
-      entity: 'Flow (procedures)',
-      field: 'title / description (no *En columns)',
-      screens: ['Procedures'],
-      impact:
-        'Procedure titles and descriptions render in Hebrew. The procedure RUNTIME (item content) is likewise single-language.',
-      kind: 'no_english_field',
-      missing: flows,
-      total: flows,
-      examples: [],
-    }),
-  );
-
-  return out;
-}
-
-// ── questionnaire templates: bilingual by design, per-language completeness ──
-//
-// The questionnaire engine stores every string as a localized JSON map and the
-// portal now opens internal forms in the FILLING GUIDE's language. A template
-// that does not declare 'en' in supportedLanguages will fall back to its
-// default language for an English guide.
-
-async function questionnaireGaps() {
-  const templates = await prisma.questionnaireTemplate.findMany({
+  const questionnaires = await prisma.questionnaireTemplate.findMany({
     where: { status: 'active', purpose: { in: ['tour_summary', 'coordination'] } },
-    select: { key: true, purpose: true, internalName: true, supportedLanguages: true, defaultLanguage: true },
+    select: { id: true, internalName: true, purpose: true, supportedLanguages: true },
   });
-  const missing = templates.filter((t) => !(t.supportedLanguages || []).includes('en'));
-  return [
-    gap({
-      entity: 'QuestionnaireTemplate (tour summary / coordination)',
-      field: "supportedLanguages does not include 'en'",
-      screens: ['Tour detail — tour summary form', 'Tour detail — coordination form'],
-      impact:
-        "The form opens in the template's default language. The engine is fully bilingual — this is unfilled content, not a code limit.",
-      kind: 'missing_value',
-      missing: missing.length,
-      total: templates.length,
-      examples: missing.map((t) => `${t.purpose}: ${t.internalName}`),
+  out.push(
+    group({
+      entity: 'QuestionnaireTemplate',
+      field: "supportedLanguages missing 'en'",
+      screen: 'Tour detail — tour summary form / coordination form',
+      impact: "The form opens in the template's default language.",
+      adminPath: '/admin/settings/tours',
+      kind: 'content',
+      total: questionnaires.length,
+      rows: questionnaires
+        .filter((q) => !(q.supportedLanguages || []).includes('en'))
+        .map((q) => ({ id: q.id, he: `${q.purpose}: ${q.internalName}`, url: `${BASE}/admin/settings/tours` })),
     }),
-  ];
-}
+  );
 
-// ── who this actually affects ────────────────────────────────────────────────
+  return { groups: out.filter((g) => g.missing > 0), contacts: { total: contactsTotal, missing: contactsMissing } };
+}
 
 async function englishGuides() {
   const rows = await prisma.personRef.findMany({
@@ -292,41 +463,51 @@ async function englishGuides() {
 }
 
 async function main() {
-  const [pairs, schema, questionnaires, guides] = await Promise.all([
-    pairGaps(),
-    schemaGaps(),
-    questionnaireGaps(),
-    englishGuides(),
-  ]);
-  const rows = [...pairs, ...questionnaires, ...schema].filter((r) => r.missing > 0);
+  const [{ groups, contacts }, guides] = await Promise.all([collect(), englishGuides()]);
 
   if (asJson) {
-    console.log(JSON.stringify({ guides, gaps: rows }, null, 2));
+    console.log(JSON.stringify({ guides, contacts, groups }, null, 2));
     return;
   }
 
-  console.log('\nGUIDE PORTAL — ENGLISH DATA COVERAGE');
-  console.log('====================================');
+  console.log('\nGUIDE PORTAL — ENGLISH CONTENT WORKLIST');
+  console.log('======================================');
   console.log(
     `English-language guides with portal access: ${guides.en} of ${guides.total}` +
       (guides.names.length ? ` (${guides.names.join(', ')})` : ''),
   );
+  console.log(
+    'Every field below HAS an English column and an admin editor. What is missing is content.\n',
+  );
 
-  for (const kind of ['missing_value', 'no_english_field']) {
-    const group = rows.filter((r) => r.kind === kind);
-    if (!group.length) continue;
-    console.log(
-      `\n${kind === 'missing_value' ? 'A. FILLABLE TODAY — the En column exists and is empty' : 'B. NEEDS A SCHEMA DECISION — no English column exists'}`,
-    );
-    for (const r of group) {
-      console.log(`\n  ${r.entity} · ${r.field}`);
-      console.log(`    missing : ${r.missing} of ${r.total} records`);
-      console.log(`    screens : ${r.screens.join(', ')}`);
-      console.log(`    impact  : ${r.impact}`);
-      if (r.examples.length) console.log(`    examples: ${r.examples.join(' | ')}`);
+  const totalMissing = groups.reduce((n, g) => n + g.missing, 0);
+  for (const g of groups.sort((a, b) => a.missing - b.missing)) {
+    console.log(`\n■ ${g.entity} · ${g.field}`);
+    console.log(`  missing : ${g.missing} of ${g.total} records`);
+    console.log(`  screen  : ${g.screen}`);
+    console.log(`  impact  : ${g.impact}`);
+    console.log(`  fix at  : ${g.adminPath}`);
+    if (countsOnly) continue;
+    const shown = LIMIT > 0 ? g.rows.slice(0, LIMIT) : g.rows;
+    for (const r of shown) {
+      const fields = r.fields ? r.fields.map((f) => f.field).join(', ') : g.field;
+      console.log(`    - ${r.id}  "${short(r.he, 48)}"${r.station ? ` [${r.station}]` : ''}  → ${fields}`);
+      console.log(`      ${r.url}`);
+    }
+    if (shown.length < g.rows.length) {
+      console.log(`    …and ${g.rows.length - shown.length} more (use --limit=0 for all)`);
     }
   }
-  if (!rows.length) console.log('\nNo gaps: every portal-visible field has English content.');
+
+  console.log(`\n■ Contact (customer names) · firstNameEn / lastNameEn`);
+  console.log(`  missing : ${contacts.missing} of ${contacts.total} records`);
+  console.log('  screen  : Tour detail — participant cards · Gallery title');
+  console.log('  impact  : Customer names show in Hebrew. Low urgency — a Latin name is often');
+  console.log('            already stored in the Hebrew fields, and names are personal data.');
+  console.log('  fix at  : /admin/crm/contacts (per contact, as they come up)');
+
+  console.log(`\nTOTAL actionable records (excluding contacts): ${totalMissing}`);
+  if (!totalMissing) console.log('The Guide Portal is fully populated in English.');
   console.log('');
 }
 

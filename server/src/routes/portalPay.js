@@ -17,6 +17,7 @@ import { emitPayrollChanged, openPayrollStream } from '../payroll/events.js';
 import { guidePayEntryDto, guideConversationDto } from '../payroll/dto.js';
 import { entryTotals } from '../payroll/engine.js';
 import { businessToday } from '../tours/completion.js';
+import { pickBilingual } from '../../../shared/bilingualText.mjs';
 
 const router = Router();
 
@@ -107,7 +108,9 @@ router.get(
       orderBy: { createdAt: 'asc' },
     });
     const components = await prisma.payrollComponent.findMany({
-      select: { id: true, guideVisible: true },
+      // nameEn drives the LIVE English name for a frozen payroll line (see
+      // guidePayEntryDto): the Hebrew snapshot on the line is never rewritten.
+      select: { id: true, guideVisible: true, nameEn: true },
     });
     const componentById = new Map(components.map((c) => [c.id, c]));
     // Configurable unit noun per general-activity type (one query for the
@@ -120,13 +123,36 @@ router.get(
     const generals = generalActivityIds.length
       ? await prisma.generalActivity.findMany({
           where: { id: { in: generalActivityIds } },
-          select: { id: true, type: { select: { unitLabelSingularHe: true, unitLabelPluralHe: true } } },
+          select: {
+            id: true,
+            type: {
+              select: {
+                unitLabelSingularHe: true,
+                unitLabelPluralHe: true,
+                unitLabelSingularEn: true,
+                unitLabelPluralEn: true,
+              },
+            },
+          },
         })
       : [];
+    // Unit nouns resolve to the reader's language here (one place), so the DTO
+    // and the client both stay free of language branching.
     const unitLabelsByGeneralId = new Map(
       generals.map((g) => [
         g.id,
-        { singular: g.type?.unitLabelSingularHe || null, plural: g.type?.unitLabelPluralHe || null },
+        {
+          singular:
+            pickBilingual(
+              { he: g.type?.unitLabelSingularHe, en: g.type?.unitLabelSingularEn },
+              access.language,
+            ) || null,
+          plural:
+            pickBilingual(
+              { he: g.type?.unitLabelPluralHe, en: g.type?.unitLabelPluralEn },
+              access.language,
+            ) || null,
+        },
       ]),
     );
     // Conversation rows for the guide's own entries (one query; the DTO
@@ -168,10 +194,9 @@ router.get(
     const months = [...new Set(monthRows.map((r) => r.activity.payrollMonth))].sort().reverse();
 
     res.json({
-      // Payroll VALUES (activity titles, component names, unit nouns, office
-      // notes) are single-language in the schema — no English column exists for
-      // any of them, so they ship verbatim. The language drives the screen's own
-      // vocabulary (states, totals, actions) in the client registry.
+      // Payroll catalog text is bilingual (component name + unit nouns +
+      // activity title). Free text the office typed — officeNote, conversation
+      // messages — stays exactly as written (language-neutral by definition).
       language: access.language,
       month,
       months,
@@ -185,6 +210,7 @@ router.get(
             componentById,
             guideConversationDto(timelineRows, e.id),
             e.activity.generalActivityId ? unitLabelsByGeneralId.get(e.activity.generalActivityId) || null : null,
+            access.language,
           ),
         ),
     });

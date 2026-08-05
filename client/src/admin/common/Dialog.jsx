@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { FloatingLayer, dialogZ, useFloatingDepth } from './floatingLayer.jsx';
 
 // Open dialogs, oldest first. Escape belongs to the TOP one only: every open
 // dialog used to listen on document, so one keystroke inside a dialog opened
@@ -30,8 +32,21 @@ export default function Dialog({
   minWidthPx = null,
   contentClassName,
   panelClassName = '',
+  // Direction + the two chrome strings. Defaults keep every admin caller
+  // byte-identical; the Guide Portal passes the guide's language values so an
+  // English form renders left-to-right with an English close button.
+  dir = 'rtl',
+  closeAriaLabel = 'סגירה',
+  dialogAriaFallback = 'דיאלוג',
 }) {
   const panelRef = useRef(null);
+  // Where this dialog sits in the shared floating stack. 0 (the overwhelming
+  // majority) = opened by a page → unchanged z-50, rendered in place. >0 =
+  // opened from INSIDE a floating surface (e.g. the assignment error raised by
+  // the guide picker inside the Deal → Tour Details popover): that host caps
+  // its height and scrolls, so an in-place overlay would be clipped by it and
+  // painted inside its stacking context. Those get portaled and lifted.
+  const depth = useFloatingDepth();
   // Stable per INSTANCE, and routed through a ref, so an ordinary re-render of
   // the dialog underneath (typing in it) cannot re-push it above the dialog on
   // top and steal Escape.
@@ -110,19 +125,20 @@ export default function Dialog({
 
   const widthCls = fitContent ? 'w-full sm:w-auto' : `w-full ${maxWidthPx != null ? '' : maxW}`;
 
-  return (
+  const shell = (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={ariaLabel || title || 'דיאלוג'}
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/40"
+      aria-label={ariaLabel || title || dialogAriaFallback}
+      className="fixed inset-0 flex items-center justify-center p-3 sm:p-6 bg-black/40"
+      style={{ zIndex: dialogZ(depth) }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose?.();
       }}
     >
       <div
         ref={panelRef}
-        dir="rtl"
+        dir={dir}
         className={`bg-white ${widthCls} sm:rounded-lg shadow-xl overflow-hidden flex flex-col ${panelClassName}`}
         style={panelStyle}
       >
@@ -132,20 +148,28 @@ export default function Dialog({
             <button
               type="button"
               onClick={onClose}
-              aria-label="סגירה"
+              aria-label={closeAriaLabel}
               className="text-gray-500 hover:bg-gray-100 rounded px-2 py-1"
             >
               ×
             </button>
           </div>
         )}
-        <div className={contentClassName ?? 'flex-1 overflow-y-auto p-4'}>{children}</div>
+        <div className={contentClassName ?? 'flex-1 overflow-y-auto p-4'}>
+          <FloatingLayer depth={depth}>{children}</FloatingLayer>
+        </div>
         {footer && (
           <div className="p-3 border-t border-gray-200 flex items-center gap-2 justify-end shrink-0">
-            {footer}
+            <FloatingLayer depth={depth}>{footer}</FloatingLayer>
           </div>
         )}
       </div>
     </div>
   );
+
+  // Top-level dialogs render exactly where they always did — `fixed inset-0`
+  // already escapes ordinary layout, and moving hundreds of existing callers to
+  // a portal would risk inherited-style shifts for no benefit. Only the nested
+  // case, which is genuinely broken in place, is portaled out.
+  return depth > 0 ? createPortal(shell, document.body) : shell;
 }

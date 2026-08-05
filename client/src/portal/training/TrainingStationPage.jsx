@@ -8,8 +8,9 @@ import { usePortalLanguage } from '../PortalLanguage.jsx';
 // A direct URL without an explicit grant gets 403 from the server and the
 // honest blocked state here.
 //
-// LANGUAGE: the page chrome follows the guide; the station CONTENT is
-// single-language in the schema and renders exactly as authored.
+// LANGUAGE: the page chrome follows the guide, and the station CONTENT
+// (title, description, part titles/bodies, media titles) arrives already
+// resolved to the guide's language from the server's bilingual columns.
 
 export default function TrainingStationPage() {
   const { token } = useOutletContext();
@@ -86,9 +87,9 @@ export default function TrainingStationPage() {
         </Link>
       </div>
       <StationContentView
-        tourTitle={s.tour?.titleHe}
-        title={s.titleHe}
-        description={s.descriptionHe}
+        tourTitle={s.tour?.title}
+        title={s.title}
+        description={s.description}
         heroImageUrl={s.heroImageUrl}
         parts={s.parts}
         media={s.media}

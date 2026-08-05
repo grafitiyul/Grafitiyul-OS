@@ -9,6 +9,14 @@ import {
 
 const router = Router();
 
+// Trim → null for the English twins. Empty means "no English content yet" —
+// which the Guide Portal coverage report counts — never an empty string and
+// never a copy of the Hebrew value.
+const flowText = (v) => {
+  const s = String(v ?? '').trim();
+  return s || null;
+};
+
 router.get(
   '/',
   handle(async (_req, res) => {
@@ -152,7 +160,7 @@ router.get(
 router.post(
   '/',
   handle(async (req, res) => {
-    const { title = 'Untitled Flow', description = null } = req.body;
+    const { title = 'Untitled Flow', description = null, titleEn = null, descriptionEn = null } = req.body;
     // Append new flows at the bottom of the list (max sortOrder + 1).
     const top = await prisma.flow.findFirst({
       orderBy: { sortOrder: 'desc' },
@@ -160,7 +168,15 @@ router.post(
     });
     const sortOrder = (top?.sortOrder ?? -1) + 1;
     const flow = await prisma.flow.create({
-      data: { title, description, sortOrder },
+      data: {
+        title,
+        description,
+        // English twins for the Guide Portal procedures feed — operator-written
+        // only, never auto-filled from the Hebrew.
+        titleEn: flowText(titleEn),
+        descriptionEn: flowText(descriptionEn),
+        sortOrder,
+      },
     });
     res.status(201).json(flow);
   }),
@@ -169,10 +185,12 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { title, description, status, openToAll, mandatory } = req.body;
+    const { title, description, titleEn, descriptionEn, status, openToAll, mandatory } = req.body;
     const data = {};
     if (title !== undefined) data.title = title;
     if (description !== undefined) data.description = description;
+    if (titleEn !== undefined) data.titleEn = flowText(titleEn);
+    if (descriptionEn !== undefined) data.descriptionEn = flowText(descriptionEn);
     if (status !== undefined) data.status = status;
     if (openToAll !== undefined) data.openToAll = !!openToAll;
     if (mandatory !== undefined) data.mandatory = !!mandatory;

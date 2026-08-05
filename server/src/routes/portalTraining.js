@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { catalogTitle, pickBilingual } from '../../../shared/bilingualText.mjs';
 import { handle } from '../asyncHandler.js';
 import { resolveGuidePortalAccess } from '../tours/guidePortal/access.js';
 
@@ -60,27 +61,41 @@ router.get(
         id: true,
         titleHe: true,
         descriptionHe: true,
+        titleEn: true,
+        descriptionEn: true,
         kind: true,
         sortOrder: true,
         heroImage: { select: { url: true } },
-        tour: { select: { id: true, titleHe: true, descriptionHe: true, sortOrder: true } },
+        tour: {
+          select: {
+            id: true,
+            titleHe: true,
+            descriptionHe: true,
+            titleEn: true,
+            descriptionEn: true,
+            sortOrder: true,
+          },
+        },
       },
     });
+    const lang = access.language;
     const byTour = new Map();
     for (const s of stations) {
       if (!byTour.has(s.tour.id)) {
         byTour.set(s.tour.id, {
           id: s.tour.id,
-          titleHe: s.tour.titleHe,
-          descriptionHe: s.tour.descriptionHe || null,
+          // Resolved to the guide's language through the ONE bilingual picker;
+          // the client never sees a language-specific key.
+          title: catalogTitle(s.tour, lang),
+          description: pickBilingual({ he: s.tour.descriptionHe, en: s.tour.descriptionEn }, lang) || null,
           sortOrder: s.tour.sortOrder,
           stations: [],
         });
       }
       byTour.get(s.tour.id).stations.push({
         id: s.id,
-        titleHe: s.titleHe,
-        descriptionHe: s.descriptionHe || null,
+        title: catalogTitle(s, lang),
+        description: pickBilingual({ he: s.descriptionHe, en: s.descriptionEn }, lang) || null,
         kind: s.kind,
         heroImageUrl: s.heroImage?.url || null,
       });
@@ -88,11 +103,10 @@ router.get(
     const tours = [...byTour.values()].sort((a, b) => a.sortOrder - b.sortOrder);
     for (const t of tours) delete t.sortOrder;
     res.set('Cache-Control', 'no-store');
-    // Training CONTENT (Tour/TourStation/TourContentBlock) is single-language in
-    // the schema — there is no English column anywhere in that domain, so the
-    // titles/descriptions/body ship verbatim. `language` still travels so the
-    // page CHROME (headings, empty/error states, back links) is in the guide's
-    // language and the gap is visible rather than silently mixed.
+    // Training content is now fully bilingual (Tour/TourStation/
+    // TourContentBlock/TourBlockAsset each carry an English twin). Every value
+    // above is already resolved to the guide's language; `language` travels so
+    // the page CHROME comes from the portal registry.
     res.json({ language: access.language, tours });
   }),
 );
@@ -112,7 +126,7 @@ router.get(
     const station = await prisma.tourStation.findFirst({
       where: { id: stationId, active: true, tour: { active: true } },
       include: {
-        tour: { select: { id: true, titleHe: true } },
+        tour: { select: { id: true, titleHe: true, titleEn: true } },
         heroImage: { select: { url: true } },
         steps: {
           orderBy: { sortOrder: 'asc' },
@@ -137,26 +151,31 @@ router.get(
     const mediaStep = visibleSteps.find((s) => s.roleHint === MEDIA_ROLE);
 
     res.set('Cache-Control', 'no-store');
+    const lang = access.language;
     res.json({
-      language: access.language,
+      language: lang,
       id: station.id,
-      titleHe: station.titleHe,
-      descriptionHe: station.descriptionHe || null,
+      // All station content resolves through the ONE bilingual picker. Where
+      // English has not been written yet the authored Hebrew shows — a DATA
+      // gap listed by the coverage report, never translated at runtime.
+      title: catalogTitle(station, lang),
+      description: pickBilingual({ he: station.descriptionHe, en: station.descriptionEn }, lang) || null,
       heroImageUrl: station.heroImage?.url || null,
-      heroImageTitle: station.heroImageTitle || null,
-      tour: { id: station.tour.id, titleHe: station.tour.titleHe },
+      heroImageTitle:
+        pickBilingual({ he: station.heroImageTitle, en: station.heroImageTitleEn }, lang) || null,
+      tour: { id: station.tour.id, title: catalogTitle(station.tour, lang) },
       // Ordered content parts — rich HTML rendered by the canonical stack.
       // roleHint drives the accordion grouping (build_up / curiosity_hook /
       // content / punchline). internalNote / station notes are admin-only
       // and NEVER shipped here.
-      parts: contentSteps.map((s) => ({
-        roleHint: s.roleHint || null,
-        title: s.contentBlock?.titleHe || null,
-        body: s.contentBlock?.bodyHe || '',
+      parts: contentSteps.map((step) => ({
+        roleHint: step.roleHint || null,
+        title: catalogTitle(step.contentBlock, lang) || null,
+        body: pickBilingual({ he: step.contentBlock?.bodyHe, en: step.contentBlock?.bodyEn }, lang) || '',
       })),
       media: (mediaStep?.contentBlock?.assets || []).map((a) => ({
         assetType: a.assetType,
-        title: a.titleHe,
+        title: catalogTitle(a, lang),
         url: a.media?.url || a.url || null,
       })),
     });
