@@ -45,6 +45,7 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { duplicateDeal } from '../deals/duplicateDeal.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import { sendConfirmationEmail } from '../confirmation/sendService.js';
 import { hasActiveFillers } from '../confirmation/fillers.js';
@@ -184,6 +185,25 @@ async function reconcileClassification(data, resulting) {
   data.activityType = norm.activityType;
   data.organizationTypeId = norm.organizationTypeId;
   data.organizationSubtypeId = norm.organizationSubtypeId;
+  return null;
+}
+
+// Deal ↔ OrganizationUnit — the unit must belong to the RESULTING linked
+// organization (contacts.js enforces the same rule with the same error code).
+// A unit explicitly sent with a foreign/absent org is a 400; a unit merely left
+// over from a previous org link is force-cleared so an org switch can never
+// strand a foreign unit on the deal.
+async function reconcileUnit(data, resulting, { unitSent }) {
+  if (!resulting.organizationUnitId) return null;
+  if (resulting.organizationId) {
+    const unit = await prisma.organizationUnit.findUnique({
+      where: { id: resulting.organizationUnitId },
+      select: { organizationId: true },
+    });
+    if (unit && unit.organizationId === resulting.organizationId) return null;
+  }
+  if (unitSent) return 'unit_not_in_organization';
+  data.organizationUnitId = null;
   return null;
 }
 
@@ -630,6 +650,13 @@ router.post(
     });
     if (classErr) return res.status(400).json({ error: classErr });
 
+    const unitErr = await reconcileUnit(
+      data,
+      { organizationId: data.organizationId, organizationUnitId: data.organizationUnitId },
+      { unitSent: b.organizationUnitId !== undefined },
+    );
+    if (unitErr) return res.status(400).json({ error: unitErr });
+
     const deal = await prisma.deal.create({ data, include: DEAL_INCLUDE });
     // Communication Center — "ליד חדש נוצר": fires ONCE per deal (idempotent
     // triggerKey deal_created:<id>); later edits never re-fire.
@@ -637,6 +664,29 @@ router.post(
     // Every new sales lead opens with exactly one "שיחה ראשונית" task
     // (idempotent; fire-and-forget by contract).
     ensureInitialCallTask({ dealId: deal.id });
+    res.status(201).json(deal);
+  }),
+);
+
+// Duplicate — a transactional server-side copy of the deal's COMMERCIAL
+// TEMPLATE (see deals/duplicateDeal.js for exactly what copies and what never
+// does). The copy is born like any new deal: OPEN, first pipeline stage, fresh
+// orderNo, deal_created trigger, auto "שיחה ראשונית" task.
+router.post(
+  '/:id/duplicate',
+  handle(async (req, res) => {
+    const result = await duplicateDeal(req.params.id);
+    if (result.error) {
+      return res
+        .status(result.error === 'not_found' ? 404 : 400)
+        .json({ error: result.error });
+    }
+    fireCommunicationTrigger({ type: 'deal_created', dealId: result.dealId });
+    ensureInitialCallTask({ dealId: result.dealId });
+    const deal = await prisma.deal.findUnique({
+      where: { id: result.dealId },
+      include: DEAL_INCLUDE,
+    });
     res.status(201).json(deal);
   }),
 );
@@ -733,6 +783,20 @@ router.put(
           : existing.organizationSubtypeId,
     });
     if (classErr) return res.status(400).json({ error: classErr });
+
+    const unitErr = await reconcileUnit(
+      data,
+      {
+        organizationId:
+          b.organizationId !== undefined ? data.organizationId : existing.organizationId,
+        organizationUnitId:
+          b.organizationUnitId !== undefined
+            ? data.organizationUnitId
+            : existing.organizationUnitId,
+      },
+      { unitSent: b.organizationUnitId !== undefined },
+    );
+    if (unitErr) return res.status(400).json({ error: unitErr });
 
     // Outcome status transitions stamp/clear wonAt/lostAt. LOST now stores
     // STRUCTURED data: a required lostReasonId (FK to the LostReason catalog)

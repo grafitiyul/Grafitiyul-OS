@@ -496,6 +496,9 @@ export const api = {
     get: (id) => request(`/api/deals/${id}`),
     create: (data) =>
       request('/api/deals', { method: 'POST', body: JSON.stringify(data) }),
+    // Server-side commercial-template copy (contacts, Builder, plan included;
+    // never payments/history) — always born OPEN at the first stage.
+    duplicate: (id) => request(`/api/deals/${id}/duplicate`, { method: 'POST' }),
     update: (id, data) => {
       const p = request(`/api/deals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
       // A deal status change (WON creates/joins a tour · LOST cancels it ·

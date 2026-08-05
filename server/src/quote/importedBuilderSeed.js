@@ -19,8 +19,7 @@
 //   * No TourEvent / registration / timeline write. Plain quote rows only —
 //     deliberately NOT touchDealActivity: seeding is not business activity.
 import { splitVat } from '../pricing/engine.js';
-
-const SIGN = (k) => (k === 'discount' || k === 'credit' ? -1 : 1);
+import { lineSign as SIGN } from '../../../shared/lineMath.mjs';
 
 // Compose exactly as pricing/builderCompose.js does for non-engine lines
 // (every imported line is kind 'manual'/'discount', so the engine never prices

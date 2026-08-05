@@ -122,7 +122,6 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const navigate = useNavigate();
   const [deal, setDeal] = useState(null);
   const [stages, setStages] = useState([]);
-  const [orgs, setOrgs] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
   const [types, setTypes] = useState([]);
   const [orgType, setOrgType] = useState(null);
@@ -262,17 +261,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     const stale = () => epoch !== refreshEpoch.current;
     setError(null);
     try {
-      const [d, s, o, st, ty] = await Promise.all([
+      const [d, s, st, ty] = await Promise.all([
         api.deals.get(id),
         api.dealStages.list(),
-        api.organizations.list(),
         api.organizationSubtypes.list(),
         api.organizationTypes.list(),
       ]);
       if (stale()) return;
       setDeal(d);
       setStages(s);
-      setOrgs(o);
       setSubtypes(st);
       setTypes(ty);
       // Keep the TimelineFeed (pinned notes + history) in step with any action
@@ -778,23 +775,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
 
   async function duplicateDeal() {
     try {
-      const copy = await api.deals.create({
-        title: `${deal.title} (עותק)`,
-        dealStageId: deal.dealStageId || undefined,
-        activityType: deal.activityType || null,
-        organizationTypeId: deal.organizationTypeId || null,
-        organizationId: deal.organizationId || null,
-        organizationUnitId: deal.organizationUnitId || null,
-        organizationSubtypeId: deal.organizationSubtypeId || null,
-        valueMinor: minorToInput(deal.valueMinor),
-        discountMinor: minorToInput(deal.discountMinor),
-        currency: deal.currency || 'ILS',
-        paymentTermId: deal.paymentTermId || null,
-        paymentMethodId: deal.paymentMethodId || null,
-        source: deal.source || null,
-        expectedCloseDate: deal.expectedCloseDate || null,
-        notes: deal.notes || null,
-      });
+      // ONE server-side transaction copies the full commercial template —
+      // contacts, Builder lines, tour context/dates, notes, planning — and none
+      // of the executed lifecycle. A WON deal duplicates into an OPEN one.
+      const copy = await api.deals.duplicate(deal.id);
       navigate(dealPath(copy));
     } catch (e) {
       alert('שגיאה בשכפול: ' + (e.payload?.error || e.message));
@@ -1628,7 +1612,6 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       />
       <OrganizationEditDialog
         deal={deal}
-        orgs={orgs}
         types={types}
         subtypes={subtypes}
         open={orgDialogOpen}

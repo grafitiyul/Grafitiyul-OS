@@ -27,6 +27,7 @@ export default function TaskComposer({ dealId, onCreated }) {
   const [text, setText] = useState('');
   const [dueDate, setDueDate] = useState(defaultDueDate(null));
   const [dueTime, setDueTime] = useState('');
+  const [dueTouched, setDueTouched] = useState(false);
   const [priority, setPriority] = useState('none');
   const [ownerUserId, setOwnerUserId] = useState('');
   const [saving, setSaving] = useState(false);
@@ -85,11 +86,15 @@ export default function TaskComposer({ dealId, onCreated }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // There is ONE draft. Switching type re-seeds the type-driven defaults
+  // (date/time) only while the user hasn't picked them — it never touches the
+  // typed text, so a half-written "שיחה ראשונית" simply becomes a WhatsApp task.
   function applyType(type) {
     setSelectedTypeId(type.id);
-    setText('');
-    setDueDate(defaultDueDate(type));
-    setDueTime(type.channel === 'whatsapp' ? type.defaultTime || '10:00' : type.defaultTime || '');
+    if (!dueTouched) {
+      setDueDate(defaultDueDate(type));
+      setDueTime(type.channel === 'whatsapp' ? type.defaultTime || '10:00' : type.defaultTime || '');
+    }
   }
 
   async function submit() {
@@ -120,8 +125,10 @@ export default function TaskComposer({ dealId, onCreated }) {
         ...(isWhatsapp ? { whatsappChatId: chat.id, scheduledAt } : {}),
       };
       await api.dealTasks.create(dealId, payload);
-      // Reset text but keep the type/owner for quick successive entry.
+      // Reset text but keep the type/owner for quick successive entry. The
+      // saved task consumed the draft — the next one starts untouched again.
       setText('');
+      setDueTouched(false);
       onCreated?.();
     } catch (e) {
       // A failure to OPEN the conversation is a business problem (the contact
@@ -221,8 +228,8 @@ export default function TaskComposer({ dealId, onCreated }) {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {/* Date is required (submit validates) → no clear; time stays optional
             for normal tasks. WhatsApp keeps its 10:00 default via applyType. */}
-        <DateField label="תאריך" value={dueDate} onChange={setDueDate} clearable={false} />
-        <TimeField label={`שעה ${isWhatsapp ? '' : '(רשות)'}`} value={dueTime} onChange={setDueTime} clearable={!isWhatsapp} />
+        <DateField label="תאריך" value={dueDate} onChange={(v) => { setDueTouched(true); setDueDate(v); }} clearable={false} />
+        <TimeField label={`שעה ${isWhatsapp ? '' : '(רשות)'}`} value={dueTime} onChange={(v) => { setDueTouched(true); setDueTime(v); }} clearable={!isWhatsapp} />
         <label className="block text-[12px] text-gray-600">
           סדר עדיפות
           <select

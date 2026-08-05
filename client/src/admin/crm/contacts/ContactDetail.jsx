@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
+import UnitPicker from '../common/UnitPicker.jsx';
 import BackButton from '../../common/BackButton.jsx';
 import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
@@ -419,8 +420,16 @@ function MembershipsSection({ contact, onChange }) {
           onResolve={setResolution}
         />
 
-        {orgId && units.length > 0 && (
-          <UnitPicker units={units} value={unitId} onChange={setUnitId} />
+        {orgId && (
+          <div className="max-w-xs">
+            <UnitPicker
+              orgId={orgId}
+              units={units}
+              value={unitId}
+              onChange={setUnitId}
+              onCreated={(unit) => setUnits((u) => [...u, unit])}
+            />
+          </div>
         )}
         {unitCleared && (
           <div className="rounded-md bg-amber-50 px-3 py-1.5 text-[12px] text-amber-800">
@@ -449,71 +458,6 @@ function MembershipsSection({ contact, onChange }) {
         </div>
       </form>
     </Section>
-  );
-}
-
-// Searchable unit single-select — shown only when the selected organization
-// HAS units; a foreign unit is impossible by construction (options come from
-// the selected org) and rejected server-side regardless.
-function UnitPicker({ units, value, onChange }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const selected = units.find((u) => u.id === value) || null;
-  const q = query.trim().toLowerCase();
-  const filtered = q ? units.filter((u) => (u.name || '').toLowerCase().includes(q)) : units;
-
-  return (
-    <div className="relative max-w-xs">
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] text-gray-500">יחידה (אופציונלי)</span>
-        <span className="relative block">
-          <input
-            value={open ? query : selected?.name || ''}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => { setOpen(true); setQuery(''); }}
-            onBlur={() => setTimeout(() => setOpen(false), 120)}
-            placeholder="חיפוש יחידה…"
-            autoComplete="off"
-            className={
-              'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400' +
-              (selected ? ' pe-8' : '')
-            }
-          />
-          {selected && !open && (
-            <button
-              type="button"
-              onClick={() => onChange('')}
-              title="נקה יחידה"
-              className="absolute end-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            >
-              ✕
-            </button>
-          )}
-        </span>
-      </label>
-      {open && (
-        <ul className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-44 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-[12px] text-gray-400">לא נמצאו יחידות תואמות.</li>
-          ) : (
-            filtered.map((u) => (
-              <li key={u.id}>
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { onChange(u.id); setOpen(false); }}
-                  className={`block w-full text-right px-3 py-2 text-sm hover:bg-blue-50 ${
-                    u.id === value ? 'bg-blue-50 font-medium' : ''
-                  }`}
-                >
-                  {u.name}
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      )}
-    </div>
   );
 }
 

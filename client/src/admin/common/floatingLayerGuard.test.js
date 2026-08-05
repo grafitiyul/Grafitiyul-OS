@@ -30,7 +30,6 @@ const SRC = path.resolve(here, '..', '..');
 // adding a new entry needs an explicit owner decision.
 const NOT_YET_CONVERTED = new Set([
   'admin/communication/EventEditorPage.jsx',
-  'admin/crm/contacts/ContactDetail.jsx',
   'admin/documents/instances/InstanceEditor.jsx',
   'admin/email/RecipientField.jsx',
   'admin/pricing/PricingBoard.jsx',

@@ -5,6 +5,7 @@ import ReorderableList from '../common/ReorderableList.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { api } from '../../lib/api.js';
 import { duplicateLineVat } from '../../../../shared/vatMode.mjs';
+import { lineSign } from '../../../../shared/lineMath.mjs';
 import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
 
 // Price Builder — a roomy, document-style editor for a Deal's base pricing. Edits
@@ -17,6 +18,15 @@ const VAT_OPTIONS = [
   { mode: 'excluded', label: 'מחירים לפני מע״מ' },
   { mode: 'exempt', label: 'פטור ממע״מ' },
 ];
+// Per-LINE VAT vocabulary (the row ⋮ menu). 'inherit' = follow the order's
+// mode — the default every new line is born with (shared/vatMode.mjs).
+const LINE_VAT_OPTIONS = [
+  { mode: 'inherit', label: 'לפי ההזמנה' },
+  { mode: 'included', label: 'כולל מע״מ' },
+  { mode: 'excluded', label: 'לפני מע״מ' },
+  { mode: 'exempt', label: 'פטור ממע״מ' },
+];
+const lineVatLabel = (mode) => LINE_VAT_OPTIONS.find((o) => o.mode === mode)?.label || mode;
 function vatLabel(mode) {
   return VAT_OPTIONS.find((o) => o.mode === mode)?.label || 'מע״מ';
 }
@@ -397,14 +407,53 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   function onReorder(ids) {
     setLines((ls) => ids.map((id) => ls.find((l) => l.id === id)).filter(Boolean));
   }
-  // Choosing the order's VAT mode sets it ONCE and releases the per-line
-  // overrides, so every line — and every line added afterwards — follows it.
-  // (Previously this stamped the mode onto each existing line and left the
-  // order itself unrecorded, so the next added line silently disagreed.)
+  // Choosing the order's VAT mode sets the ORDER's mode only. A deliberate
+  // per-line override (the row ⋮ menu) SURVIVES the order-level change — the
+  // row shows a visible badge, so nothing disagrees silently; every 'inherit'
+  // line follows the new mode automatically.
   function setOrderVat(mode) {
     setVatMode(mode);
-    setLines((ls) => ls.map((l) => ({ ...l, vatMode: 'inherit', vatRate: null })));
   }
+
+  // ---- Discounts ----------------------------------------------------------
+  // A discount is MATERIALIZED as a kind:'discount' line — the one canonical
+  // storage. It flows through composeBuilderLines' sign handling into totals,
+  // Deal.valueMinor, customer quotes, iCount document rows and payment amounts
+  // with no parallel math anywhere. A percentage is a creation-time calculator
+  // over the current lines; the resulting amount is frozen into the line (and
+  // stays visible + editable as a normal row).
+  const [discountFor, setDiscountFor] = useState(null); // null | 'deal' | <line id>
+
+  // A line's builder-basis amount exactly as its row displays it: sign × unit
+  // × qty, product lines following the engine price until overridden.
+  function lineAmountMinor(l) {
+    const c = computedById.get(l.id);
+    const unit = l.kind === 'product' && !l.overridden && c ? c.unitPriceMinor : l.unitPriceMinor;
+    let qty = parseInt(l.quantity, 10);
+    if (!Number.isFinite(qty) || qty < 0) qty = 1;
+    return lineSign(l.kind) * (Number(unit) || 0) * qty;
+  }
+
+  function applyDiscount({ amountMinor, label }) {
+    const row = normalize({ kind: 'discount', label, unitPriceMinor: amountMinor, quantity: 1 });
+    setLines((ls) => {
+      if (discountFor === 'deal') return [...ls, row];
+      const idx = ls.findIndex((l) => l.id === discountFor);
+      return idx === -1
+        ? [...ls, row]
+        : [...ls.slice(0, idx + 1), row, ...ls.slice(idx + 1)];
+    });
+    setDiscountFor(null);
+  }
+
+  const discountTarget = discountFor && discountFor !== 'deal' ? lines.find((l) => l.id === discountFor) : null;
+  const discountBaseMinor = discountFor
+    ? discountFor === 'deal'
+      ? lines.filter((l) => l.active !== false).reduce((s, l) => s + lineAmountMinor(l), 0)
+      : discountTarget
+        ? lineAmountMinor(discountTarget)
+        : 0
+    : 0;
   function setFree(id, on) {
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   }
@@ -633,13 +682,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           )}
           <div className="flex items-center gap-2 ms-auto">
             <VatButton mode={orderVatMode} rate={vatDefault?.rate} onPick={setOrderVat} />
-            <button
-              type="button"
-              title="הגדרות בונה המחיר — בקרוב"
-              className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 text-lg leading-none"
-            >
-              ⋯
-            </button>
+            <BuilderMenu
+              disabled={!!historicalMode}
+              onDealDiscount={() => setDiscountFor('deal')}
+            />
           </div>
         </div>
 
@@ -652,6 +698,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             <span className="w-32 shrink-0 text-center">מחיר</span>
             <span className="w-20 shrink-0 text-center">כמות</span>
             <span className="w-44 shrink-0">סה״כ שורה</span>
+            <span className="w-9 shrink-0" aria-hidden />
             <span className="w-9 shrink-0" aria-hidden />
             <span className="w-9 shrink-0" aria-hidden />
           </div>
@@ -672,11 +719,13 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                   noteOpen={openNotes.has(line.id)}
                   free={freeRows.has(line.id)}
                   handle={handle}
+                  menuEnabled={!historicalMode}
                   onChange={(patch) => updateLine(line.id, patch)}
                   onToggleNote={() => toggleNote(line.id)}
                   onRemove={() => removeLine(line.id)}
                   onSetFree={(on) => setFree(line.id, on)}
                   onPickProduct={(p) => pickProduct(line.id, p)}
+                  onDiscount={() => setDiscountFor(line.id)}
                 />
               )}
             />
@@ -735,6 +784,15 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           </div>
         </div>
       </div>
+
+      <DiscountDialog
+        open={!!discountFor}
+        scope={discountFor === 'deal' ? 'deal' : 'line'}
+        targetLabel={discountTarget?.label || ''}
+        baseMinor={discountBaseMinor}
+        onApply={applyDiscount}
+        onClose={() => setDiscountFor(null)}
+      />
     </>
   );
 
@@ -791,15 +849,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
 const FIELD = 'w-full h-10 rounded-md border border-gray-300 px-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
 
-function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree, onPickProduct }) {
+function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, menuEnabled, onChange, onToggleNote, onRemove, onSetFree, onPickProduct, onDiscount }) {
   const isProduct = line.kind === 'product';
   const isAddon = line.kind === 'addon';
   const disabled = !line.active;
   // Product price comes from the engine (per-unit base) until manually overridden.
   const unitMinor = isProduct && !line.overridden && computed ? computed.unitPriceMinor : line.unitPriceMinor;
   const qty = Number.isFinite(parseInt(line.quantity, 10)) ? parseInt(line.quantity, 10) : 1;
-  const lineTotalMinor = (Number(unitMinor) || 0) * (qty || 0);
+  // Same signed echo as every other surface (shared/lineMath.mjs) — a discount
+  // row must display negative here exactly as the server totals it.
+  const sign = lineSign(line.kind);
+  const lineTotalMinor = sign * (Number(unitMinor) || 0) * (qty || 0);
   const negative = lineTotalMinor < 0;
+  // Deliberate per-line VAT override (the ⋮ menu) — visibly badged so it can
+  // never disagree silently with the order's toolbar mode.
+  const vatOverride = line.vatMode && line.vatMode !== 'inherit' ? line.vatMode : null;
 
   // Engine-GENERATED computed lines (the "משתתפים נוספים" breakdown line, an
   // auto שבת/חג surcharge) are NOT catalog items and must NEVER become editable
@@ -942,12 +1006,24 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
         />
 
         {/* Line total */}
-        <div className={`w-44 shrink-0 text-[13px] ${negative ? 'text-red-600' : 'text-gray-600'}`} dir="ltr">
-          <span className="text-gray-400">{minorToInput(unitMinor) || 0} × {qty || 0} = </span>
-          <span className="font-semibold">{formatMinor(lineTotalMinor)}</span>
+        <div className={`w-44 shrink-0 text-[13px] ${negative ? 'text-red-600' : 'text-gray-600'}`}>
+          <div dir="ltr">
+            <span className="text-gray-400">{sign < 0 ? '−' : ''}{minorToInput(unitMinor) || 0} × {qty || 0} = </span>
+            <span className="font-semibold">{formatMinor(lineTotalMinor)}</span>
+          </div>
+          {vatOverride && (
+            <div className="text-[10.5px] font-medium text-blue-600">מע״מ: {lineVatLabel(vatOverride)}</div>
+          )}
         </div>
 
-        {/* Left: note toggle + delete (every row is deletable) */}
+        {/* Left: row menu + note toggle + delete (every row is deletable) */}
+        <LineKebab
+          line={line}
+          generated={generated}
+          enabled={menuEnabled}
+          onDiscount={onDiscount}
+          onVat={(mode) => onChange(mode === 'inherit' ? { vatMode: 'inherit', vatRate: null } : { vatMode: mode })}
+        />
         <NoteIcon open={noteOpen} onClick={onToggleNote} />
         <button type="button" onClick={onRemove} title="מחק שורה" className="w-9 shrink-0 flex justify-center text-gray-300 hover:text-red-600">
           <TrashIcon />
@@ -1008,6 +1084,176 @@ function VatButton({ mode, rate, onPick }) {
         ))}
       </AnchoredMenu>
     </div>
+  );
+}
+
+// The Builder's "⋯" toolbar menu — order-level actions (portal-anchored, same
+// pattern as the VAT menu beside it).
+function BuilderMenu({ disabled, onDealDiscount }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  return (
+    <div>
+      <button
+        ref={ref}
+        type="button"
+        title="פעולות על ההזמנה"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 text-lg leading-none disabled:opacity-40"
+      >
+        ⋯
+      </button>
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={232} align="start">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); onDealDiscount(); }}
+          className="w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          הנחה על כל העסקה…
+        </button>
+      </AnchoredMenu>
+    </div>
+  );
+}
+
+// Per-row "⋮" menu: a line discount + the line's own VAT mode. Generated
+// (engine-rebuilt) rows hide the VAT override — regeneration would silently
+// drop it; their VAT follows the order/card like the calculation that made them.
+function LineKebab({ line, generated, enabled, onDiscount, onVat }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const current = line.vatMode || 'inherit';
+  if (!enabled) return <span className="w-9 shrink-0" aria-hidden />;
+  return (
+    <div className="w-9 shrink-0 flex justify-center">
+      <button
+        ref={ref}
+        type="button"
+        title="פעולות שורה"
+        onClick={() => setOpen((v) => !v)}
+        className={`p-1 rounded text-lg leading-none ${current !== 'inherit' ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
+      >
+        ⋮
+      </button>
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={224} align="start">
+        {line.kind !== 'discount' && line.kind !== 'credit' && (
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onDiscount(); }}
+            className="w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            הנחה על שורה זו…
+          </button>
+        )}
+        {!generated && (
+          <>
+            <div className="border-t border-gray-100 px-3 pt-2 pb-1 text-[11px] font-medium text-gray-400">
+              מע״מ לשורה
+            </div>
+            {LINE_VAT_OPTIONS.map((o) => (
+              <button
+                key={o.mode}
+                type="button"
+                onClick={() => { onVat(o.mode); setOpen(false); }}
+                className={`w-full text-right px-3 py-2 text-sm hover:bg-gray-50 ${current === o.mode ? 'text-blue-700 font-medium' : 'text-gray-700'}`}
+              >
+                {current === o.mode ? '✓ ' : ''}{o.label}
+              </button>
+            ))}
+          </>
+        )}
+      </AnchoredMenu>
+    </div>
+  );
+}
+
+// Percentage / fixed-amount discount entry. The amount is computed here once
+// (a creation-time calculator over the CURRENT lines) and materialized by the
+// caller as a kind:'discount' line — the canonical math never changes.
+function DiscountDialog({ open, scope, targetLabel, baseMinor, onApply, onClose }) {
+  const [mode, setMode] = useState('percent'); // 'percent' | 'fixed'
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    if (open) { setMode('percent'); setValue(''); }
+  }, [open]);
+  const pct = parseFloat(value);
+  const amountMinor =
+    mode === 'percent'
+      ? Number.isFinite(pct) && pct > 0
+        ? Math.round((baseMinor * pct) / 100)
+        : 0
+      : toMinor(value) ?? 0;
+  const valid = amountMinor > 0;
+  function apply() {
+    if (!valid) return;
+    const label =
+      scope === 'deal'
+        ? mode === 'percent' ? `הנחה ${value}%` : 'הנחה'
+        : `הנחה — ${targetLabel || 'שורה'}${mode === 'percent' ? ` (${value}%)` : ''}`;
+    onApply({ amountMinor, label });
+  }
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={scope === 'deal' ? 'הנחה על כל העסקה' : `הנחה על ${targetLabel || 'השורה'}`}
+      size="sm"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={apply}
+            disabled={!valid}
+            className="bg-blue-600 text-white text-sm font-semibold rounded-md px-5 py-1.5 disabled:opacity-50"
+          >
+            החל הנחה
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="flex rounded-lg border border-gray-200 p-0.5 text-sm">
+          {[{ k: 'percent', l: 'אחוז (%)' }, { k: 'fixed', l: 'סכום (₪)' }].map((o) => (
+            <button
+              key={o.k}
+              type="button"
+              onClick={() => { setMode(o.k); setValue(''); }}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium ${mode === o.k ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              {o.l}
+            </button>
+          ))}
+        </div>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ''))}
+          autoFocus
+          inputMode="decimal"
+          dir="ltr"
+          placeholder={mode === 'percent' ? 'למשל 10' : 'למשל 500'}
+          className="w-full h-10 rounded-lg border border-gray-300 px-3 text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-200"
+        />
+        <div className="rounded-lg bg-gray-50 px-3 py-2 text-[12.5px] text-gray-600 space-y-0.5">
+          {mode === 'percent' && (
+            <div className="flex justify-between">
+              <span>בסיס החישוב</span>
+              <span dir="ltr" className="tabular-nums">{formatMinor(baseMinor)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-medium text-gray-800">
+            <span>סכום ההנחה</span>
+            <span dir="ltr" className="tabular-nums">{valid ? `−${formatMinor(amountMinor)}` : '—'}</span>
+          </div>
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-gray-400">
+          ההנחה נוספת כשורת הנחה רגילה בבונה — גלויה, ניתנת לעריכה ולמחיקה, ומחושבת בדיוק כמו כל שורה אחרת.
+        </p>
+      </div>
+    </Dialog>
   );
 }
 

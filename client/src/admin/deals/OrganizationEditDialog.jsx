@@ -3,12 +3,16 @@ import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 import OrgContactsSection from '../crm/common/OrgContactsSection.jsx';
+import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
+import UnitPicker from '../crm/common/UnitPicker.jsx';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Choose / edit the Deal's organization binding from the header — a focused
-// chooser, NOT a second organization editor. It reuses the existing org + deal
-// APIs and links out to the full Organization page for deep editing (units,
-// finance, contacts).
+// chooser, NOT a second organization editor. Organization selection goes
+// through THE canonical OrgPicker (live server search + "+ צור ארגון חדש" →
+// the one CreateOrgDialog/create API); unit selection goes through the shared
+// UnitPicker (search + create through the one unit API). It links out to the
+// full Organization page for deep editing (finance, contacts).
 //
 // Source-of-truth rules (ENFORCED on the backend — deals/classification.js):
 //   • Linking an organization forces the deal to activityType='business' and
@@ -16,15 +20,20 @@ import { useDirtyWhen } from '../../lib/dirtyForms.js';
 //   • Organization type
 //       – org linked  → edits the ORGANIZATION's own type (api.organizations.update);
 //                        every deal of that org reflects it. (No deal-level copy.)
+//       – new org     → chosen inside OrgPicker (required there).
 //       – no org      → stored on the DEAL (Deal.organizationTypeId).
 //   • Subtype  → always on the Deal (Deal.organizationSubtypeId); the server
 //                clears it if it does not belong to the linked org's type.
-//   • Unit     → on the Deal (Deal.organizationUnitId).
+//                The field renders ONLY when the effective type actually has
+//                subtypes — never as an empty select.
+//   • Unit     → on the Deal (Deal.organizationUnitId); must belong to the
+//                linked org (unit_not_in_organization server-side).
 //
 // Nothing autosaves — there is one explicit "שמור" button.
 const FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-full';
 
-export default function OrganizationEditDialog({ deal, orgs, types, subtypes, open, onClose, onSaved }) {
+export default function OrganizationEditDialog({ deal, types, subtypes, open, onClose, onSaved }) {
+  const [resolution, setResolution] = useState(null);
   const [orgId, setOrgId] = useState('');
   const [name, setName] = useState(''); // the linked org's own name (editable when linked)
   const [unitId, setUnitId] = useState('');
@@ -32,11 +41,12 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   const [subtypeId, setSubtypeId] = useState('');
   const [orgFull, setOrgFull] = useState(null); // fetched org (units + current type + contactLinks)
   const [original, setOriginal] = useState(null); // baseline binding for dirty check
+  const [pickerInit, setPickerInit] = useState(undefined); // undefined = not ready yet
   const [busy, setBusy] = useState(false);
   const [showContacts, setShowContacts] = useState(false);
-  const [creatingNew, setCreatingNew] = useState(false); // typing a brand-new org
 
-  // Reload the linked org (contacts/units) after the contacts section mutates.
+  // Reload the linked org (contacts/units) after the contacts section or the
+  // unit picker mutates it.
   async function reloadOrgFull() {
     if (!orgId) return;
     try {
@@ -46,21 +56,23 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     }
   }
 
-  // Initialise from the deal whenever the dialog opens. The baseline is captured
-  // together with the (possibly async) effective type, so dirty tracking is
-  // accurate even though the org type loads after a fetch.
+  // Initialise from the deal whenever the dialog opens. The OrgPicker is
+  // uncontrolled after mount, so it mounts only once `pickerInit` is resolved
+  // (needs the linked org's name). The baseline is captured together with the
+  // (possibly async) effective type, so dirty tracking is accurate.
   useEffect(() => {
     if (!open) return;
     const initialOrgId = deal.organizationId || '';
     const baseUnit = deal.organizationUnitId || '';
     const baseSub = deal.organizationSubtypeId || '';
+    setResolution(null);
     setOrgId(initialOrgId);
     setUnitId(baseUnit);
     setSubtypeId(baseSub);
     setName('');
     setOrgFull(null);
     setOriginal(null);
-    setCreatingNew(false);
+    setPickerInit(undefined);
     if (initialOrgId) {
       api.organizations
         .get(initialOrgId)
@@ -69,113 +81,100 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
           const t = full.organizationTypeId || '';
           setTypeId(t);
           setName(full.name || '');
+          setPickerInit({ id: initialOrgId, name: full.name || '' });
           setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: t, name: full.name || '' });
         })
         .catch(() => {
           setTypeId('');
+          setPickerInit({ id: initialOrgId, name: '' });
           setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: '', name: '' });
         });
     } else {
       // No org → the deal owns the type.
       const t = deal.organizationType?.id || deal.organizationTypeId || '';
       setTypeId(t);
+      setPickerInit(null);
       setOriginal({ orgId: '', unitId: baseUnit, subtypeId: baseSub, typeId: t, name: '' });
     }
   }, [open, deal]);
 
-  // Unsaved-work guard (auto-update): dirty when the chosen binding / org name
-  // diverges from the baseline; clears on revert, on save, or on close.
-  useDirtyWhen({ orgId, unitId, subtypeId, typeId, name }, original, { active: open && !!original });
-
-  async function chooseOrg(value) {
-    setOrgId(value);
+  // Follow the picker: selecting a different existing org (or clearing it)
+  // swaps the fetched org + resets the unit; a typed-new name simply means
+  // "no existing org selected" until save creates it.
+  useEffect(() => {
+    if (!resolution) return;
+    const rid = resolution.existingOrgId || '';
+    if (rid === orgId) return;
+    setOrgId(rid);
     setUnitId('');
     setOrgFull(null);
     setName('');
-    if (value) {
-      try {
-        const full = await api.organizations.get(value);
-        setOrgFull(full);
-        setTypeId(full.organizationTypeId || '');
-        setName(full.name || '');
-      } catch {
-        setTypeId('');
-      }
+    if (rid) {
+      api.organizations
+        .get(rid)
+        .then((full) => {
+          setOrgFull(full);
+          setTypeId(full.organizationTypeId || '');
+          setName(full.name || '');
+        })
+        .catch(() => setTypeId(''));
     }
     // When clearing the org, keep the current typeId as the deal's own type.
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolution]);
 
-  // Switch into "new organization" mode: no existing binding, name typed fresh.
-  // The new org INHERITS the deal's current classification (the type/subtype
-  // badge) as its default — the deal is often classified before the real org is
-  // created. The effective type is the linked org's type if one is selected, else
-  // the deal's own type; the deal's subtype is kept only if it belongs to that
-  // type. The user can still override before saving.
-  function startCreate() {
-    setCreatingNew(true);
-    setOrgId('');
-    setOrgFull(null);
-    setUnitId('');
-    setName('');
-    const effType = orgFull?.organizationTypeId || deal.organizationType?.id || deal.organizationTypeId || '';
-    const effSub = deal.organizationSubtypeId || '';
-    setTypeId(effType);
-    const subBelongs = subtypes.some(
-      (s) => s.id === effSub && (!s.organizationTypeId || s.organizationTypeId === effType),
-    );
-    setSubtypeId(subBelongs ? effSub : '');
-  }
-  function cancelCreate() {
-    setCreatingNew(false);
-    setName('');
-  }
-
-  const units = orgFull?.units || [];
+  const isNew = !!resolution?.isNew;
+  // Effective type: linked org's (editable here) / the new org's (picked inside
+  // OrgPicker) / the deal's own when there is no organization.
+  const effectiveTypeId = isNew ? resolution?.orgTypeId || '' : typeId;
   // Subtypes are scoped to the effective type (plus generic, type-less subtypes).
   const scopedSubtypes = subtypes.filter(
-    (s) => !typeId || !s.organizationTypeId || s.organizationTypeId === typeId,
+    (s) => !effectiveTypeId || !s.organizationTypeId || s.organizationTypeId === effectiveTypeId,
+  );
+  const units = orgFull?.units || [];
+
+  // Unsaved-work guard (auto-update): dirty when the chosen binding / org name
+  // diverges from the baseline; clears on revert, on save, or on close.
+  useDirtyWhen(
+    { orgId: isNew ? `new:${resolution?.newOrgName || ''}` : orgId, unitId, subtypeId, typeId: effectiveTypeId, name },
+    original,
+    { active: open && !!original },
   );
 
   async function save() {
     setBusy(true);
     try {
-      if (creatingNew) {
-        // Create a brand-new organization (the org becomes the source of truth
-        // for its name + type) and link it to the deal. Reuses the org create API.
-        const cleanName = name.trim();
-        if (!cleanName) {
-          alert('יש להזין שם ארגון.');
+      let finalOrgId = null;
+      if (resolution?.isExisting) {
+        finalOrgId = resolution.existingOrgId;
+      } else if (isNew) {
+        if (resolution.invalid) {
+          alert('לארגון חדש חייבים לבחור סוג.');
           return;
         }
-        const created = await api.organizations.create({
-          name: cleanName,
-          organizationTypeId: typeId || null,
-        });
-        await api.deals.update(deal.id, {
-          organizationId: created.id,
-          organizationUnitId: null,
-          organizationSubtypeId: subtypeId || null,
-        });
-      } else {
-        const finalOrgId = orgId || null;
-        const dealPayload = {
-          organizationId: finalOrgId,
-          organizationUnitId: unitId || null,
-          organizationSubtypeId: subtypeId || null,
-        };
-        // Deal owns the type ONLY when there is no organization.
-        if (!finalOrgId) dealPayload.organizationTypeId = typeId || null;
-        await api.deals.update(deal.id, dealPayload);
+        // The ONE creation path (resolveOrganization → POST /api/organizations).
+        finalOrgId = (await resolveOrganization(resolution)).organizationId;
+      }
+      const dealPayload = {
+        organizationId: finalOrgId,
+        // unitId can only have been chosen from the currently linked org's
+        // units (the follow-effect clears it on every org switch).
+        organizationUnitId: finalOrgId ? unitId || null : null,
+        organizationSubtypeId: subtypeId || null,
+      };
+      // Deal owns the type ONLY when there is no organization.
+      if (!finalOrgId) dealPayload.organizationTypeId = typeId || null;
+      await api.deals.update(deal.id, dealPayload);
 
-        // When an org is linked, the organization is the source of truth for its
-        // own name + type — written straight to the org (one update), never copied
-        // onto the deal.
-        if (finalOrgId) {
-          const orgPayload = {};
-          if (typeId !== (orgFull?.organizationTypeId || '')) orgPayload.organizationTypeId = typeId || null;
-          if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
-          if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
-        }
+      // When an EXISTING org is linked, the organization is the source of truth
+      // for its own name + type — written straight to the org (one update),
+      // never copied onto the deal. Only once ITS full record loaded — the
+      // name/type baseline must belong to the org actually being written.
+      if (finalOrgId && resolution?.isExisting && orgFull?.id === finalOrgId) {
+        const orgPayload = {};
+        if (typeId !== (orgFull?.organizationTypeId || '')) orgPayload.organizationTypeId = typeId || null;
+        if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
+        if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
       }
       await onSaved?.();
       onClose?.();
@@ -205,7 +204,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
           </button>
           <button
             onClick={save}
-            disabled={busy}
+            disabled={busy || !!resolution?.invalid}
             className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
           >
             {busy ? 'שומר…' : 'שמור'}
@@ -214,84 +213,63 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
       }
     >
       <div className="space-y-3">
-        <Field label="ארגון">
-          {creatingNew ? (
-            <div className="flex items-center gap-2">
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="שם הארגון החדש"
-                autoFocus
-                className={FIELD}
-              />
-              <button type="button" onClick={cancelCreate} className="text-[12px] text-gray-500 whitespace-nowrap hover:underline">
-                בחר קיים
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <select value={orgId} onChange={(e) => chooseOrg(e.target.value)} className={FIELD}>
-                <option value="">— ללא ארגון —</option>
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
-              <button type="button" onClick={startCreate} className="text-[12px] text-blue-700 whitespace-nowrap hover:underline">
-                + ארגון חדש
-              </button>
-            </div>
-          )}
-        </Field>
+        {pickerInit === undefined ? (
+          <div className="h-10 rounded-lg bg-gray-100 animate-pulse" />
+        ) : (
+          <OrgPicker
+            serverSearch
+            allowCreateDialog
+            types={types}
+            initialSelected={pickerInit}
+            onResolve={setResolution}
+          />
+        )}
 
-        {orgId && !creatingNew && (
+        {orgId && (
           <Field label="שם הארגון">
             <input value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
           </Field>
         )}
 
         {orgId && (
-          <Field label="יחידה (אופציונלי)">
-            <select
-              value={unitId}
-              onChange={(e) => setUnitId(e.target.value)}
-              disabled={!units.length}
-              className={`${FIELD} disabled:bg-gray-100`}
-            >
+          <UnitPicker
+            orgId={orgId}
+            units={units}
+            value={unitId}
+            onChange={setUnitId}
+            onCreated={reloadOrgFull}
+          />
+        )}
+
+        {/* Type: OrgPicker owns it for a NEW org (required there); here it is
+            editable for a linked org (writes to the ORG) or a bare deal. */}
+        {!isNew && (
+          <Field label="סוג ארגון">
+            <select value={typeId} onChange={(e) => { setTypeId(e.target.value); setSubtypeId(''); }} className={FIELD}>
               <option value="">— ללא —</option>
-              {units.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
+              {types.map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {orgId
+                ? 'נשמר על הארגון — ישפיע על כל הדילים של אותו ארגון.'
+                : 'נשמר על הדיל עד שיקושר ארגון.'}
+            </p>
+          </Field>
+        )}
+
+        {/* Hidden entirely when the effective type has no subtypes. */}
+        {scopedSubtypes.length > 0 && (
+          <Field label="תת-סוג (של הדיל)">
+            <select value={subtypeId} onChange={(e) => setSubtypeId(e.target.value)} className={FIELD}>
+              <option value="">— ללא —</option>
+              {scopedSubtypes.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
               ))}
             </select>
           </Field>
         )}
-
-        <Field label="סוג ארגון">
-          <select value={typeId} onChange={(e) => { setTypeId(e.target.value); setSubtypeId(''); }} className={FIELD}>
-            <option value="">— ללא —</option>
-            {types.map((t) => (
-              <option key={t.id} value={t.id}>{t.label}</option>
-            ))}
-          </select>
-          <p className="text-[11px] text-gray-400 mt-1">
-            {creatingNew
-              ? 'ייווצר ארגון חדש עם הסוג שנבחר.'
-              : orgId
-                ? 'נשמר על הארגון — ישפיע על כל הדילים של אותו ארגון.'
-                : 'נשמר על הדיל עד שיקושר ארגון.'}
-          </p>
-        </Field>
-
-        <Field label="תת-סוג (של הדיל)">
-          <select value={subtypeId} onChange={(e) => setSubtypeId(e.target.value)} className={FIELD}>
-            <option value="">— ללא —</option>
-            {scopedSubtypes.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-          {typeId && scopedSubtypes.length === 0 && (
-            <p className="text-[11px] text-gray-400 mt-1">לסוג זה אין תת-סוגים מוגדרים.</p>
-          )}
-        </Field>
 
         {/* Collapsible: manage the org's linked contacts inline (reuses the same
             shared section as the full Organization page). */}

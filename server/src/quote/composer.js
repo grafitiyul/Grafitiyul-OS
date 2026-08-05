@@ -22,6 +22,7 @@ import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
 import { getQuoteTemplate, SECTION_TITLE_DEFAULTS } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 import { effectiveOrgType, effectiveOrgTypeId } from '../deals/classification.js';
+import { signedLineAmountMinor } from '../../../shared/lineMath.mjs';
 export { DEFAULT_QUOTE_BLOCKS };
 
 const isFilled = (v) => typeof v === 'string' && v.trim() !== '';
@@ -347,7 +348,10 @@ function buildPricing({ deal, lines, displayName, lang, template }) {
       kind: l.kind,
       quantity: qty,
       unitPriceMinor: unit,
-      lineTotalMinor: unit * qty, // qty × frozen unit price — not a price calculation
+      // sign × qty × frozen unit price — not a price calculation. The sign
+      // matters: a discount line must render negative on the customer quote,
+      // exactly as the Builder totals it (shared/lineMath.mjs).
+      lineTotalMinor: signedLineAmountMinor(l),
       vatMode: l.vatMode || 'inherit',
       vatRate: l.vatRate ?? null,
       overridden: !!l.overridden,

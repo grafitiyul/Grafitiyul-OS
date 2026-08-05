@@ -11,8 +11,7 @@
 import { splitVat } from './engine.js';
 import { applyCardFirstLineNotes } from './cardNotes.js';
 import { effectiveLineVatMode } from '../../../shared/vatMode.mjs';
-
-const SIGN = (kind) => (kind === 'discount' || kind === 'credit' ? -1 : 1);
+import { lineSign as SIGN } from '../../../shared/lineMath.mjs';
 
 export function composeBuilderLines({
   inputLines,

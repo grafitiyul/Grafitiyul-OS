@@ -1,6 +1,7 @@
 import { createDoc, docInfo, searchDocs, findClient, upsertClient, isIcountConfigured } from './icount.js';
 import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.js';
 import { resolveBuilderVatMode, effectiveLineVatMode } from '../../shared/vatMode.mjs';
+import { lineSign } from '../../shared/lineMath.mjs';
 import { normalizeDocumentVatMode, documentRowCalc, documentTotals } from '../../shared/documentVat.mjs';
 import { GENERIC_PRODUCT_LINE_EN, GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 import { normalizeDocumentNotes, documentNotesText } from './documentNotes.js';
@@ -125,7 +126,7 @@ export function buildDocumentDefaults(deal, { vatDefault = null } = {}) {
     ? quoteLines.map((l) => {
         const effMode = effectiveLineVatMode(l.vatMode, docVatMode);
         const rate = l.vatRate != null ? Number(l.vatRate) : fallbackRate;
-        const sign = l.kind === 'discount' || l.kind === 'credit' ? -1 : 1;
+        const sign = lineSign(l.kind);
         let unitPriceIls = (sign * Number(l.unitPriceMinor)) / 100;
         if (effMode !== docVatMode && effMode !== 'exempt') {
           // Explicit per-line override in the OTHER money semantics — convert
