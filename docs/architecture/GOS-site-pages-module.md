@@ -146,6 +146,24 @@ empty labels would look broken.
 
 ---
 
+## 4a) Public GOS-hosted pages (2026-08-05 — live NOW, not waiting for WordPress)
+
+`GET /pages/:slug` on the GOS app origin serves every published page as a full
+server-rendered HTML document — ONE generic route (`routes/publicPages.js` +
+`sitePages/publicPage.js`), no per-slug code. Public shell: brand header,
+accessible עברית|English switcher, mobile-first, `Cache-Control: no-store`,
+no admin metadata. `GET /pages/sitemap.xml` lists indexable pages only.
+
+- **Language**: `?lang=he|en` always wins and survives deep links/refresh;
+  otherwise `SitePage.defaultLanguage` (per-page config, editor-set; the agents
+  price list defaults to **en**). Never guessed from the browser.
+- **Strict locales**: rendering never falls back across languages. Empty fields
+  hide; a locale with zero content serves an honest noindex "version coming
+  soon" page (the restaurant page's English, until translated).
+- **Canonical owner**: `publicLinks.js` — page URLs derive from
+  `SITE_PAGES_PUBLIC_BASE || <app origin>/pages`. When WordPress takes over,
+  change that ONE base and every link, canonical and sitemap entry follows.
+
 ## 5) Public rendering
 
 `GET /api/public/site-pages/:slug?locale=he|en` → the frozen payload:
