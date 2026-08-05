@@ -12,14 +12,18 @@
 //
 //   DATABASE_URL="<prod public url>" node scripts/backfill-won-actor.mjs [--apply]
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { buildWonActor } from '../src/deals/wonActor.js';
 
 const APPLY = process.argv.includes('--apply');
 const prisma = new PrismaClient();
 
+// Json-null filtering: `equals: null` matches NOTHING for Json columns — the
+// documented Prisma trap. AnyNull covers both DB NULL and a stored JSON null.
+const NO_ACTOR = { equals: Prisma.AnyNull };
+
 const wonDeals = await prisma.deal.findMany({
-  where: { status: 'won', wonActor: { equals: null } },
+  where: { status: 'won', wonActor: NO_ACTOR },
   select: { id: true, orderNo: true, wonAt: true },
 });
 console.log(`WON deals with no frozen actor: ${wonDeals.length}`);
@@ -54,7 +58,7 @@ for (const deal of wonDeals) {
   if (APPLY) {
     // Fill-only guard repeated at write time — a concurrent live transition wins.
     await prisma.deal.updateMany({
-      where: { id: deal.id, wonActor: { equals: null } },
+      where: { id: deal.id, wonActor: NO_ACTOR },
       data: { wonActor: actor },
     });
   }
