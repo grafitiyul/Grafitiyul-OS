@@ -219,32 +219,71 @@ test('focusing the empty field shows recent searches, most recent first', async 
   await unmount();
 });
 
-test('clicking a recent search runs that query again', async () => {
+test('clicking a recent search reruns it IMMEDIATELY — no debounce gap, no refocus', async () => {
   seedRecents(['דנה כהן']);
   const { container, input, unmount } = await render();
 
   await focus(input);
   await mousedown(rows(container)[0]);
   assert.equal(input.value, 'דנה כהן');
-  await act(async () => { await sleep(320); });
 
-  const searchCalls = calls.filter((c) => c.url.includes('/api/search'));
-  assert.ok(
-    searchCalls.some((c) => decodeURIComponent(c.url).includes('q=דנה כהן')),
-    'the recent query was re-run against the canonical search endpoint',
+  // Immediately after the click — with NO debounce wait and NO further
+  // interaction — the search has fired and the panel is still mounted,
+  // showing loading or the results (never closed, never the recents rows).
+  const immediateSearch = calls.filter(
+    (c) => c.url.includes('/api/search') && decodeURIComponent(c.url).includes('q=דנה כהן'),
   );
-  // …and its results are on screen.
-  assert.ok(rows(container).some((r) => r.textContent.includes('דנה כהן')));
+  assert.ok(immediateSearch.length >= 1, 'the search fired without waiting for the debounce');
+  assert.ok(!container.textContent.includes('חיפושים אחרונים'), 'history rows are replaced');
+  assert.ok(
+    container.textContent.includes('מחפש…') || rows(container).some((r) => r.textContent.includes('דנה כהן')),
+    'panel stays open with loading or results',
+  );
+
+  // After the response settles: the normal rich result rows, same components
+  // as a typed search — clickable right away.
+  await act(async () => { await sleep(50); });
+  const resultRow = rows(container).find((r) => r.textContent.includes('דנה כהן'));
+  assert.ok(resultRow, 'rich result row rendered without any extra interaction');
+  await mousedown(resultRow);
+  // Selecting it records the reused query back at the top of the history.
+  const stored = JSON.parse(window.localStorage.getItem(RECENTS_KEY));
+  assert.equal(stored.items[0].q, 'דנה כהן');
   await unmount();
 });
 
-test('keyboard: Enter on the highlighted recent re-runs it', async () => {
+test('a mousedown whose target our own re-render detached is NOT an outside click', async () => {
+  seedRecents(['דנה כהן', 'יוסי לוי']);
+  const { container, input, unmount } = await render();
+  await focus(input);
+
+  // Simulate the real-browser ordering: React flushed the recent-click update
+  // synchronously, so by the time the document-level listener sees the same
+  // mousedown its target is already detached from the DOM.
+  const detached = document.createElement('div');
+  const ev = new window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'target', { value: detached });
+  await act(async () => { document.dispatchEvent(ev); });
+
+  assert.ok(
+    container.textContent.includes('חיפושים אחרונים'),
+    'panel stayed open — a detached-target mousedown never dismisses it',
+  );
+  await unmount();
+});
+
+test('keyboard: Enter on the highlighted recent re-runs it and shows rich results', async () => {
   seedRecents(['0501234567', 'דנה כהן']);
-  const { input, unmount } = await render();
+  const { container, input, unmount } = await render();
 
   await focus(input);
   await keydown(input, 'Enter'); // first row is highlighted by default
   assert.equal(input.value, '0501234567');
+  await act(async () => { await sleep(50); }); // no debounce needed
+  assert.ok(
+    rows(container).some((r) => r.textContent.includes('דנה כהן')),
+    'result rows rendered straight after Enter',
+  );
   await unmount();
 });
 

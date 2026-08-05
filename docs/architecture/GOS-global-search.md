@@ -206,6 +206,15 @@ system, no new endpoints.
 - A search is committed to history when the operator ACTS on it — selects a
   result, opens "+ ליד", or dismisses the completed panel — never per
   keystroke, so prefixes don't pollute the list.
+- Picking a recent search reruns it EXACTLY like a typed query, but settles
+  the query immediately (no 250ms debounce gap): the panel stays mounted and
+  flips history → "מחפש…" → the same rich result rows, focus kept, one click.
+  Related hard-won fix: the document-level outside-click listener must ignore
+  a mousedown whose target is no longer `isConnected` — React 18 flushes
+  discrete-event updates synchronously, so clicking a row that the update
+  unmounts leaves a detached `e.target` by the time the native event reaches
+  the document listener, which `contains()` then misreads as an outside click
+  (this silently closed the panel after every recent-click).
 - Store: `localStorage`, versioned payload, key namespaced by the logged-in
   admin username (`gos.globalSearch.recents.v1:<username>`) so operators
   sharing a browser profile never see each other's history. Only

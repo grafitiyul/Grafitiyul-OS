@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import useDebouncedValue from './useDebouncedValue.js';
 import SearchResultRow from './SearchResultRow.jsx';
 import CreateDealModal from '../../admin/deals/CreateDealModal.jsx';
 import { dealPath } from '../../admin/deals/config.js';
@@ -66,8 +65,17 @@ export default function GlobalSearch() {
   // prefixes like "דנ", "דנה" never pollute the history.
   const lastCompletedRef = useRef(null);
 
-  const debouncedQ = useDebouncedValue(q, 250);
-  const meaningful = debouncedQ.trim().length >= MIN_QUERY_LENGTH;
+  // The SETTLED query — what the search actually runs on. Typing settles
+  // through a 250ms debounce; picking a recent search settles IMMEDIATELY
+  // (setQ + setSettledQ together), so the panel switches straight from
+  // history rows to loading/results with no debounce gap and no unmount.
+  const [settledQ, setSettledQ] = useState('');
+  useEffect(() => {
+    if (q === settledQ) return undefined;
+    const t = setTimeout(() => setSettledQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q, settledQ]);
+  const meaningful = settledQ.trim().length >= MIN_QUERY_LENGTH;
 
   // Per-operator recent searches (localStorage; loads once per login identity).
   useEffect(() => {
@@ -92,13 +100,13 @@ export default function GlobalSearch() {
     setError(null);
     setCrossTotal(null);
     api.search
-      .query({ q: debouncedQ, category })
+      .query({ q: settledQ, category })
       .then((res) => {
         if (reqIdRef.current !== id) return;
         setData(res);
         setActiveIndex(0);
         setLoading(false);
-        lastCompletedRef.current = { q: debouncedQ.trim() };
+        lastCompletedRef.current = { q: settledQ.trim() };
         const count = (res?.groups || []).reduce((n, g) => n + (g.results?.length || 0), 0);
         if (count > 0) {
           setCrossTotal(null);
@@ -115,7 +123,7 @@ export default function GlobalSearch() {
         }
         setCrossTotal('loading');
         api.search
-          .query({ q: debouncedQ, category: 'all' })
+          .query({ q: settledQ, category: 'all' })
           .then((allRes) => {
             if (reqIdRef.current !== id) return;
             const total = (allRes?.groups || []).reduce((n, g) => n + (g.total || 0), 0);
@@ -132,7 +140,7 @@ export default function GlobalSearch() {
         setError(e);
         setLoading(false);
       });
-  }, [debouncedQ, category, meaningful]);
+  }, [settledQ, category, meaningful]);
 
   // Commit the last completed search to the per-operator history.
   function commitRecent() {
@@ -151,7 +159,13 @@ export default function GlobalSearch() {
   // Close on outside click.
   useEffect(() => {
     function onDown(e) {
-      if (boxRef.current && !boxRef.current.contains(e.target)) dismiss();
+      if (!boxRef.current || boxRef.current.contains(e.target)) return;
+      // React 18 flushes discrete-event updates synchronously, so a row we
+      // just removed/re-rendered (recent click, ✕) can already be DETACHED by
+      // the time this document-level listener sees the same mousedown. A
+      // detached target was an inside interaction — never an outside click.
+      if (e.target instanceof Node && !e.target.isConnected) return;
+      dismiss();
     }
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -186,9 +200,12 @@ export default function GlobalSearch() {
     navigate(result.path);
   }
 
-  // A recent-search row was chosen: run that search again.
+  // A recent-search row was chosen: rerun that query EXACTLY like a manually
+  // typed search, but settled immediately — no debounce gap, so the panel
+  // stays mounted and flips straight to loading/results.
   function applyRecent(item) {
     setQ(item.q);
+    setSettledQ(item.q);
     setOpen(true);
     setActiveIndex(0);
     inputRef.current?.focus();
@@ -211,12 +228,15 @@ export default function GlobalSearch() {
   // ————— what the panel currently shows —————
   const recentsMode = open && q.trim().length === 0;
   const showResultsPanel = open && meaningful;
-  const showEmpty = showResultsPanel && !loading && !error && flat.length === 0;
+  // Empty state only after a COMPLETED response (data non-null) — never in the
+  // frame between a recent-click render and its search effect, and never while
+  // loading. Until then the panel shows "מחפש…".
+  const showEmpty = showResultsPanel && !loading && !error && data !== null && flat.length === 0;
   // "+ ליד" appears ONLY when: the search completed empty, the cross-category
   // check confirmed zero everywhere, and the input classifies as creatable.
   const intent = useMemo(
-    () => (showEmpty ? classifySearchInput(debouncedQ) : null),
-    [showEmpty, debouncedQ],
+    () => (showEmpty ? classifySearchInput(settledQ) : null),
+    [showEmpty, settledQ],
   );
   const showCreate = showEmpty && crossTotal === 0 && isCreatable(intent);
   const showCrossHits = showEmpty && typeof crossTotal === 'number' && crossTotal > 0;
@@ -402,9 +422,12 @@ export default function GlobalSearch() {
                     החיפוש נכשל. נסה שוב.
                   </div>
                 )}
+                {!data && !error && (
+                  <div className="px-3 py-3 text-[13px] text-gray-500">מחפש…</div>
+                )}
                 {showEmpty && (
                   <div className="px-3 pt-4 pb-2 text-[13px] text-gray-500">
-                    אין תוצאות עבור “{debouncedQ}”
+                    אין תוצאות עבור “{settledQ}”
                   </div>
                 )}
                 {crossTotal === 'loading' && (
