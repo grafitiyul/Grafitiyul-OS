@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFileDrop } from '../admin/common/useFileDrop.js';
 
 // THE shared profile-photo crop tool — used by BOTH the admin person card
 // and the Guide Portal (single implementation by product rule). Upload →
@@ -20,6 +21,7 @@ const DEFAULT_LABELS = {
   title: 'מיקום התמונה',
   loading: 'טוען תמונה…',
   loadFailed: 'טעינת התמונה נכשלה',
+  unsupportedFile: 'קובץ לא נתמך — יש לבחור קובץ תמונה (JPG / PNG / WEBP)',
   renderFailed: 'יצירת התמונה נכשלה',
   zoomAria: 'זום',
   previewNote: 'כך התמונה תוצג במערכת',
@@ -47,7 +49,22 @@ export default function AvatarCropDialog({
   onRemove = null, // () => void — remove the current photo (confirmed inline)
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const pickRef = useRef(null);
+  // Non-fatal message for a rejected drop/pick (wrong file type) — shown next
+  // to the secondary actions, never replacing the crop UI like `error` does.
+  const [pickError, setPickError] = useState(null);
+  // "Pick another photo" — click OR drag a file anywhere onto the dialog
+  // panel (shared useFileDrop hook; headless, works for admin and portal).
+  const pickDrop = useFileDrop({
+    accept: 'image/jpeg,image/png,image/webp',
+    onFiles: (files) => {
+      setPickError(null);
+      if (files[0]) onPickNew?.(files[0]);
+    },
+    disabled: saving || !onPickNew,
+    // Portal callers pass translated labels without the new key — fall back
+    // to their translated loadFailed rather than showing untranslated Hebrew.
+    onReject: () => setPickError(labels.unsupportedFile || labels.loadFailed),
+  });
   const [img, setImg] = useState(null); // HTMLImageElement, loaded
   const [zoom, setZoom] = useState(initialCrop?.zoom || 1);
   // Offset of the image center from the viewport center, in css px.
@@ -159,8 +176,11 @@ export default function AvatarCropDialog({
       onClick={saving ? undefined : onCancel}
     >
       <div
-        className="w-full max-w-md rounded-t-2xl bg-white p-4 shadow-xl sm:rounded-2xl"
+        className={`w-full max-w-md rounded-t-2xl bg-white p-4 shadow-xl sm:rounded-2xl ${
+          pickDrop.dragOver ? 'ring-2 ring-blue-400' : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
+        {...(onPickNew ? pickDrop.dropProps : {})}
       >
         <h2 className="mb-3 text-[15px] font-bold text-gray-900">{labels.title}</h2>
 
@@ -229,23 +249,16 @@ export default function AvatarCropDialog({
               <>
                 <button
                   type="button"
-                  onClick={() => pickRef.current?.click()}
+                  onClick={pickDrop.open}
                   disabled={saving}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   {labels.pickAnother}
                 </button>
-                <input
-                  ref={pickRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = '';
-                    if (f) onPickNew(f);
-                  }}
-                />
+                <input {...pickDrop.inputProps} />
+                {pickError && (
+                  <span className="text-[12px] text-red-600" role="alert">{pickError}</span>
+                )}
               </>
             )}
             {onRemove &&

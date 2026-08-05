@@ -6,6 +6,7 @@ import GalleryLightbox from '../gallery/GalleryLightbox.jsx';
 import UploadQueuePanel from '../gallery/UploadQueuePanel.jsx';
 import { portalDir, portalStrings } from './i18n.js';
 import { fmtDate } from './format.js';
+import { useFileDrop } from '../admin/common/useFileDrop.js';
 
 // Guide Portal → one tour's gallery. MOBILE-FIRST: guides shoot on phones and
 // upload big real-world batches over unstable connections — the huge upload
@@ -54,7 +55,6 @@ export default function GuideTourGallery() {
   const t = portalStrings(lang);
   const dir = portalDir(lang);
   const rtl = dir === 'rtl';
-  const fileInputRef = useRef(null);
 
   const uploader = useMemo(
     () =>
@@ -79,6 +79,16 @@ export default function GuideTourGallery() {
       ),
     [base, tourEventId],
   );
+
+  // Click OR drag files anywhere onto the page (desktop guides drag straight
+  // from their photo folder; on phones the button/input flow is unchanged).
+  // Same uploader queue either way. Hook runs before the early returns below.
+  const fileDrop = useFileDrop({
+    accept: 'image/*,video/*',
+    multiple: true,
+    onFiles: (files) => uploader.addFiles(files),
+    disabled: !data || data.tourStatus === 'cancelled',
+  });
 
   const load = useCallback(async () => {
     try {
@@ -194,7 +204,14 @@ export default function GuideTourGallery() {
   const canUpload = data.tourStatus !== 'cancelled';
 
   return (
-    <div dir={dir} className="min-h-screen bg-gray-50 pb-28">
+    <div dir={dir} className="relative min-h-screen bg-gray-50 pb-28" {...(canUpload ? fileDrop.dropProps : {})}>
+      {fileDrop.dragOver && (
+        <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center bg-blue-500/10 ring-4 ring-inset ring-blue-400">
+          <span className="rounded-xl bg-white px-4 py-2 text-[14px] font-bold text-blue-700 shadow-lg">
+            {t.gallery.uploadCta}
+          </span>
+        </div>
+      )}
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-3 py-2.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center gap-2.5">
@@ -277,7 +294,7 @@ export default function GuideTourGallery() {
           <div className="mx-auto max-w-2xl">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={fileDrop.open}
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-blue-600/25 active:bg-blue-700"
             >
               {t.gallery.uploadCta}
@@ -286,17 +303,7 @@ export default function GuideTourGallery() {
         </div>
       )}
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept="image/*,video/*"
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files?.length) uploader.addFiles(e.target.files);
-          e.target.value = '';
-        }}
-      />
+      <input {...fileDrop.inputProps} />
 
       {lightboxMedia && (
         <GalleryLightbox

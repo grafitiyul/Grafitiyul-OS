@@ -11,6 +11,7 @@ import StaffMessageHistory from './StaffMessageHistory.jsx';
 import { resolveAccountId, readRememberedAccountId, rememberAccountId } from '../whatsapp/senderAccount.js';
 import { htmlToWhatsApp } from '../../../../shared/waMarkup.mjs';
 import { api } from '../../lib/api.js';
+import { useFileDrop } from '../common/useFileDrop.js';
 
 // שליחת וואטסאפ לצוות — bulk-personalized sends over the CANONICAL WhatsApp
 // pipeline. This modal only prepares a batch: the server renders each
@@ -98,7 +99,6 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
   // accepts an external value while unfocused, so remount it deliberately.
   const [editorNonce, setEditorNonce] = useState(0);
   const idemKeyRef = useRef(null);
-  const fileInputRef = useRef(null);
 
   // The roster this modal offers: active, non-former staff (the same "active
   // roster" default the list screen shows). Eligibility truth stays server-side.
@@ -224,6 +224,15 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
       setUploading(false);
     }
   }
+
+  // Click OR drag files onto the attachments section — same attachFiles path
+  // (any file kind, like the picker; per-file size/count rules live there).
+  const attachDrop = useFileDrop({
+    accept: '*',
+    multiple: true,
+    onFiles: attachFiles,
+    disabled: uploading || attachments.length >= 10 || meta?.storageConfigured === false,
+  });
 
   async function submit() {
     const n = validRecipients.length;
@@ -572,7 +581,10 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
               <span className="text-[13px] font-semibold text-gray-800">קבצים מצורפים</span>
               <span className="text-[11.5px] text-gray-400">עד 10 קבצים · 16MB לקובץ</span>
             </div>
-            <div className="space-y-1.5">
+            <div
+              className={`space-y-1.5 rounded-lg transition ${attachDrop.dragOver ? 'bg-blue-50 ring-2 ring-blue-300' : ''}`}
+              {...attachDrop.dropProps}
+            >
               {attachments.map((a, i) => (
                 <div key={a.key} className="flex items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12.5px]">
                   <span>{ATT_ICON[a.kind] || '📄'}</span>
@@ -588,20 +600,18 @@ export default function StaffWhatsAppModal({ open, onClose, people, preselectedI
                   </button>
                 </div>
               ))}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => { attachFiles(e.target.files || []); e.target.value = ''; }}
-              />
+              <input {...attachDrop.inputProps} />
               <button
                 type="button"
                 disabled={uploading || attachments.length >= 10 || meta?.storageConfigured === false}
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-1.5 text-[12.5px] font-medium text-gray-600 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-50"
+                onClick={attachDrop.open}
+                className={`rounded-lg border border-dashed px-3 py-1.5 text-[12.5px] font-medium disabled:opacity-50 ${
+                  attachDrop.dragOver
+                    ? 'border-blue-400 bg-blue-50 text-blue-700'
+                    : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:bg-gray-50'
+                }`}
               >
-                {uploading ? 'מעלה…' : '📎 צירוף קבצים'}
+                {uploading ? 'מעלה…' : attachDrop.dragOver ? 'שחררו כאן' : '📎 צירוף קבצים — לחיצה או גרירה'}
               </button>
               {meta?.storageConfigured === false && (
                 <div className="text-[11.5px] text-amber-700">{ERROR_HE.storage_not_configured}</div>

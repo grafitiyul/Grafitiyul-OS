@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
@@ -6,6 +6,7 @@ import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import BankDetailsFields from '../../profile/BankDetailsFields.jsx';
 import AvatarCropDialog from '../../avatar/AvatarCropDialog.jsx';
 import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
+import { useFileDrop } from '../common/useFileDrop.js';
 
 // "+ איש צוות חדש" — create a staff member directly in GOS (someone who did NOT
 // come from recruitment). Reuses the canonical PersonRef/PersonProfile model
@@ -58,7 +59,6 @@ export default function NewStaffDialog({ open, onClose, onCreated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null); // inline string
   const [conflict, setConflict] = useState(null); // { person, matchedOn }
-  const fileRef = useRef(null);
 
   function set(k, v) {
     setF((s) => ({ ...s, [k]: v }));
@@ -94,6 +94,15 @@ export default function NewStaffDialog({ open, onClose, onCreated }) {
     if (!file) return;
     setCropState({ src: URL.createObjectURL(file), originalFile: file });
   }
+
+  // Click OR drag-and-drop onto the avatar — same shared hook as every other
+  // upload field; the picked/dropped file goes through the same crop dialog.
+  const photoDrop = useFileDrop({
+    accept: 'image/jpeg,image/png,image/webp',
+    onFiles: onPickFile,
+    disabled: busy,
+    onReject: () => setError('קובץ לא נתמך — יש לבחור קובץ תמונה (JPG / PNG / WEBP).'),
+  });
 
   function onCropSave(blob, crop) {
     setPhoto({
@@ -186,32 +195,25 @@ export default function NewStaffDialog({ open, onClose, onCreated }) {
       <form id="new-staff-form" onSubmit={submit} className="space-y-4">
         {/* Photo + name/status lead the form. */}
         <div className="flex items-start gap-4">
-          <div className="flex shrink-0 flex-col items-center gap-1.5">
+          <div className="flex shrink-0 flex-col items-center gap-1.5" {...photoDrop.dropProps}>
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
-              className="rounded-full ring-1 ring-gray-200 transition hover:ring-2 hover:ring-blue-200"
-              title="הוספת תמונה"
+              onClick={photoDrop.open}
+              className={`rounded-full ring-1 transition hover:ring-2 hover:ring-blue-200 ${
+                photoDrop.dragOver ? 'ring-2 ring-blue-400' : 'ring-gray-200'
+              }`}
+              title="הוספת תמונה — לחיצה או גרירת קובץ"
             >
               <StaffAvatar src={photo?.previewUrl} name={f.displayName || '·'} className="h-16 w-16" />
             </button>
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
+              onClick={photoDrop.open}
               className="text-[11px] text-blue-600 hover:underline"
             >
-              {photo ? 'החלפת תמונה' : 'תמונה'}
+              {photoDrop.dragOver ? 'שחררו כאן' : photo ? 'החלפת תמונה' : 'תמונה'}
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(e) => {
-                onPickFile(e.target.files);
-                e.target.value = '';
-              }}
-            />
+            <input {...photoDrop.inputProps} />
           </div>
 
           <div className="min-w-0 flex-1 space-y-3">

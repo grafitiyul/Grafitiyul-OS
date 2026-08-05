@@ -9,7 +9,7 @@ import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import FontFamily from '@tiptap/extension-font-family';
 import Highlight from '@tiptap/extension-highlight';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Slice, Fragment } from '@tiptap/pm/model';
 import { plainTextToParagraphs } from './pastePlainText.js';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
@@ -17,8 +17,9 @@ import { FontSize } from './FontSize.js';
 import { MediaImage } from './MediaImage.jsx';
 import { MediaVideo } from './MediaVideo.jsx';
 import { MediaEmbed } from './MediaEmbed.jsx';
-import Toolbar from './Toolbar.jsx';
+import Toolbar, { TOOLBAR_PRESETS } from './Toolbar.jsx';
 import { EDITOR_PRESETS } from './editorPresets.js';
+import { splitImageFiles, isImageFilePaste, uploadImagesIntoEditor } from './imageDropPaste.js';
 import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
@@ -90,6 +91,15 @@ export default function RichEditor({
   const contentMin = collapsible ? (focused ? 110 : 84) : minContentHeight;
   const showToolbar = !collapsible || focused;
   const [uploadState, setUploadState] = useState({ phase: 'idle' });
+  // Direct image drop/paste is a capability, not chrome: it exists exactly
+  // where the toolbar's image button exists. A 'lite' editor (no image tool)
+  // must not gain a hidden upload path through drag-and-drop.
+  const canUploadImages = (TOOLBAR_PRESETS[effToolbar] || TOOLBAR_PRESETS.full)
+    .flat()
+    .includes('image');
+  // Handlers below are created once (useEditor config is not re-built), so
+  // they reach the live editor instance through a ref.
+  const editorRef = useRef(null);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -161,6 +171,50 @@ export default function RichEditor({
         // instead of forcing a new block.
         return new Slice(Fragment.from(nodes), 1, 1);
       },
+      // Dropping an image file uploads it through the SAME path as the toolbar
+      // image button and inserts it at the drop position. Files that aren't
+      // images are rejected with a visible banner — never silently.
+      handleDrop: canUploadImages
+        ? (view, event, _slice, moved) => {
+            if (moved) return false; // internal drag of existing content
+            const files = event.dataTransfer?.files;
+            if (!files?.length) return false;
+            event.preventDefault();
+            const { images, others } = splitImageFiles(files);
+            if (!images.length) {
+              setUploadState({
+                phase: 'error',
+                error: 'ניתן לגרור לכאן קבצי תמונה בלבד (JPG / PNG / GIF / WEBP).',
+              });
+              return true;
+            }
+            const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            uploadImagesIntoEditor({
+              editor: editorRef.current,
+              files: images,
+              pos: coords?.pos ?? null,
+              setUploadState,
+              skippedCount: others.length,
+            });
+            return true;
+          }
+        : undefined,
+      // Pasting a screenshot / copied image FILE uploads it the same way.
+      // Pastes that also carry text/html (web pages, Word) keep the existing
+      // sanitized-HTML paste path untouched.
+      handlePaste: canUploadImages
+        ? (_view, event) => {
+            if (!isImageFilePaste(event.clipboardData)) return false;
+            event.preventDefault();
+            const { images } = splitImageFiles(event.clipboardData.files);
+            uploadImagesIntoEditor({
+              editor: editorRef.current,
+              files: images,
+              setUploadState,
+            });
+            return true;
+          }
+        : undefined,
       attributes: {
         class: 'rt-editor-prose',
         dir: 'rtl',
@@ -168,6 +222,7 @@ export default function RichEditor({
       },
     },
   });
+  editorRef.current = editor;
 
   // Expose the TipTap instance to the parent (additive; no consumer is
   // affected unless it passes the prop). Enables cursor-position insertion —
