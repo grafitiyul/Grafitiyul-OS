@@ -17,10 +17,17 @@
 //
 // The toolbar `full`/`lite` values map 1:1 to TOOLBAR_PRESETS in Toolbar.jsx —
 // the toolbar itself is defined as data there.
+// `rhythm` is the typography contract of the surface (see pastePlainText.js):
+//   'spaced' — paragraphs separated by a visible margin (standard face);
+//   'tight'  — zero paragraph margins, Enter reads like a line break (note
+//              face, .rt-editor-compact / .gos-prose-tight). Paste
+//              normalisation maps the author's blank lines per this rhythm.
+// The `collapsible` prop on RichEditor also forces 'tight' — a collapsed
+// composer is always the note face.
 export const EDITOR_PRESETS = {
-  full: { toolbar: 'full', tone: 'default' },
-  lite: { toolbar: 'lite', tone: 'default' },
-  note: { toolbar: 'full', tone: 'note' },
+  full: { toolbar: 'full', tone: 'default', rhythm: 'spaced' },
+  lite: { toolbar: 'lite', tone: 'default', rhythm: 'spaced' },
+  note: { toolbar: 'full', tone: 'note', rhythm: 'tight' },
   title: { singleLine: true },
   // "דפי אתר" rich sections: exactly what the site-page sanitizer keeps —
   // headings/lists/links/images/direction, no fonts/colors/video (those would

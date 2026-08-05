@@ -25,7 +25,10 @@ import { richHtmlForDisplay } from './htmlNormalize.js';
 // `className` is for LAYOUT (margins, width) only — never for typography;
 // the content styling contract belongs to .gos-prose alone.
 export default function RichText({ html, dir, tight = false, className = '' }) {
-  const rendered = richHtmlForDisplay(html || '');
+  // The tight face has zero paragraph margins — the display normaliser must
+  // keep every authored blank line as an explicit empty paragraph (rhythm
+  // contract, see pastePlainText.js).
+  const rendered = richHtmlForDisplay(html || '', tight ? 'tight' : 'spaced');
   if (!rendered) return null;
   return (
     <div

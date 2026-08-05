@@ -96,7 +96,7 @@ export default function CollapsibleNote({ id, label, value, rich = false, placeh
               ref={contentRef}
               style={clip}
               className="gos-prose gos-prose-tight text-[15px] text-gray-900"
-              dangerouslySetInnerHTML={{ __html: normalizeRichHtml(value) }}
+              dangerouslySetInnerHTML={{ __html: normalizeRichHtml(value, 'tight') }}
             />
           ) : (
             // Plain note: keep the author's line breaks (pre-wrap), never flatten.

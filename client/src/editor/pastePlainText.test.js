@@ -33,3 +33,27 @@ test('whitespace-only input produces nothing', () => {
   assert.deepEqual(plainTextToParagraphs('  \n \n'), []);
   assert.deepEqual(plainTextToParagraphs(''), []);
 });
+
+// ---- 'tight' rhythm (note face — zero paragraph margins) ----
+// A paragraph break renders as NOTHING there, so every blank line must become
+// an explicit empty paragraph or the author's paragraphs collapse into one
+// dense block (the Deal-note paste bug).
+
+test('tight: every blank line survives as an explicit empty paragraph', () => {
+  assert.deepEqual(
+    plainTextToParagraphs('שלום רב,\nרצינו לבדוק לגבי הסיור.\n\nתודה,\nורד', 'tight'),
+    [['שלום רב,', 'רצינו לבדוק לגבי הסיור.'], [], ['תודה,', 'ורד']],
+  );
+});
+
+test('tight: n blank lines become n empty paragraphs', () => {
+  assert.deepEqual(plainTextToParagraphs('א\n\n\nב', 'tight'), [['א'], [], [], ['ב']]);
+});
+
+test('tight: edges are still trimmed', () => {
+  assert.deepEqual(plainTextToParagraphs('\n\nראשון\n\nשני\n\n\n', 'tight'), [
+    ['ראשון'],
+    [],
+    ['שני'],
+  ]);
+});

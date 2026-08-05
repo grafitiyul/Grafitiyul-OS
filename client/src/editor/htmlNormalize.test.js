@@ -39,3 +39,27 @@ test('plain text is HTML-escaped before wrapping', () => {
   const out = richHtmlForDisplay('a < b & c');
   assert.match(out, /a &lt; b &amp; c/);
 });
+
+// ---- 'tight' rhythm (note face — zero paragraph margins) ----
+// On tight surfaces a paragraph boundary renders as nothing, so every authored
+// blank line must survive as an explicit empty paragraph.
+
+test('tight: plain-text blank line becomes an explicit empty paragraph', () => {
+  const out = richHtmlForDisplay('פסקה ראשונה\n\nפסקה שנייה', 'tight');
+  assert.equal(out, '<p>פסקה ראשונה</p><p></p><p>פסקה שנייה</p>');
+});
+
+test('tight: double-<br> split keeps the authored blank line as an empty paragraph', () => {
+  const out = richHtmlForDisplay('<p>א<br><br>ב</p>', 'tight');
+  assert.equal(out, '<p>א</p><p></p><p>ב</p>');
+});
+
+test('spaced: triple-<br> keeps the EXTRA blank as an empty paragraph (margin renders the first)', () => {
+  const out = richHtmlForDisplay('<p>א<br><br><br>ב</p>');
+  assert.equal(out, '<p>א</p><p></p><p>ב</p>');
+});
+
+test('spaced: double-<br> split stays a plain paragraph break (no empty paragraph)', () => {
+  const out = richHtmlForDisplay('<p>א<br><br>ב</p>');
+  assert.equal(out, '<p>א</p><p>ב</p>');
+});

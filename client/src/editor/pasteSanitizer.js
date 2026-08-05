@@ -4,6 +4,31 @@
 //   - strip all inline styles except a narrow allow-list (text-align)
 //   - preserve dynamic-field chip markers (data-type, data-field-key)
 //   - preserve <a href> so links survive
+//   - normalise the SOURCE's visible line/paragraph structure into the
+//     structure that renders identically on the TARGET surface (see
+//     pastePlainText.js for the two rhythms, 'spaced' and 'tight')
+//
+// Structure normalisation recognises the two ways HTML sources encode
+// multi-line text:
+//
+//   LINE-MODEL sources — each visual line is a bare <div> (Gmail compose,
+//   VS Code, many chat apps), an inline run inside a block container
+//   (anonymous box), or a literal \n inside inline/pre-wrap markup
+//   (WhatsApp Web, Gmail plain-text bodies). Divs/anonymous boxes render
+//   with NO margins at the source, so consecutive lines are visually tight
+//   and a blank line is an explicit `<div><br></div>`. These are rebuilt
+//   through the ONE plain-text contract: lines group into paragraphs with
+//   soft <br> breaks; blank lines map per the target rhythm.
+//
+//   PARAGRAPH-MODEL sources — real <p>/<h*>/<ul>/<blockquote> blocks
+//   (ChatGPT, Word, Docs, articles). These render WITH margins at the
+//   source, so adjacent blocks already look separated. They pass through
+//   as blocks; on a 'tight' target (zero margins) the gap the author saw
+//   is materialised as an explicit empty paragraph between blocks.
+//
+// Leading/trailing blank blocks are always trimmed (same edge rule as the
+// plain-text contract) — a sloppy source selection must not inject blank
+// lines before/after the pasted content.
 //
 // It never rewrites text content — so `{{key}}` patterns in pasted text
 // still reach the DynamicField paste rule intact.
@@ -171,7 +196,7 @@ const KEEP_ATTRS_BY_TAG = {
   ]),
 };
 
-export function sanitizePastedHtml(html) {
+export function sanitizePastedHtml(html, rhythm = 'spaced') {
   if (!html) return html;
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -184,7 +209,7 @@ export function sanitizePastedHtml(html) {
     // white-space:pre-wrap divs) collapse into one unformatted block when the
     // DOM treats \n as ordinary whitespace. Restore the structure BEFORE any
     // other pass — see the function for the (deliberately narrow) rules.
-    restoreLiteralNewlines(doc, doc.body);
+    restoreLiteralNewlines(doc, doc.body, rhythm);
     // Emoji/tiny-icon <img> normalization MUST run before cleanAttributes
     // strips width/height/class — that sizing evidence is what identifies an
     // inline emoji sprite vs a real content image.
@@ -213,12 +238,18 @@ export function sanitizePastedHtml(html) {
     // headings stay headings ("reasonable headings") instead of being dropped
     // to plain paragraphs by the schema parser.
     downgradeHeadings(doc, doc.body);
-    // Web pages (and some Word/Docs fragments) express paragraphs and line
-    // blocks as <div>, which StarterKit has no node for — runs of <div>s would
-    // otherwise collapse and lose paragraph separation. Normalise leaf <div>s to
-    // <p> and unwrap structural (block-containing) <div>s. Runs last, after list
-    // and heading normalisation, so only genuine paragraph divs remain.
-    convertDivsToParagraphs(doc, doc.body);
+    // LINE-MODEL normalisation: unwrap structural <div>s, then rebuild runs
+    // of line-divs (Gmail compose et al) into real paragraphs through the
+    // plain-text contract. Runs after list and heading normalisation, so only
+    // genuine line divs remain.
+    convertDivsToParagraphs(doc, doc.body, rhythm);
+    // 'tight' targets render paragraph margins as ZERO — the gap the author
+    // saw between paragraph-model blocks must become an explicit blank line.
+    if (rhythm === 'tight') insertTightGaps(doc, doc.body);
+    // Edge rule (same as the plain-text contract): no blank lines at the
+    // start or end of the pasted fragment, whatever the source selection
+    // dragged in.
+    trimEdgeBlankBlocks(doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
@@ -326,13 +357,16 @@ function textToBreaks(doc, container) {
 
 // Rebuild a container whose only structure is literal newlines into real
 // paragraphs. Child nodes are walked in order: text nodes split the flow
-// (\n\n+ = paragraph boundary, extras = empty paragraphs, \n = <br>); inline
-// ELEMENTS are moved whole into the current paragraph (their own inner
-// newlines become soft breaks). Edge-empty paragraphs are dropped.
-function restructureIntoParagraphs(doc, container) {
+// (blank lines map per the rhythm — see pastePlainText.js — and \n = <br>);
+// inline ELEMENTS are moved whole into the current paragraph (their own inner
+// newlines become soft breaks). Edge-empty paragraphs are dropped. Produced
+// paragraphs are tagged as line-derived (see LINE_MARK) so the tight-gap pass
+// never spaces them apart.
+function restructureIntoParagraphs(doc, container, rhythm) {
   const paragraphs = [];
   let current = doc.createElement('p');
   const flush = () => {
+    current.setAttribute(LINE_MARK, '1');
     paragraphs.push(current);
     current = doc.createElement('p');
   };
@@ -342,9 +376,13 @@ function restructureIntoParagraphs(doc, container) {
       for (const seg of segments) {
         if (!seg) continue;
         if (/^\n{2,}$/.test(seg)) {
+          // A run of n newlines = (n-1) blank lines in the author's source.
+          // 'spaced': the first blank is the paragraph separator, each one
+          // beyond it is an intentional empty line. 'tight': every blank
+          // line is an explicit empty paragraph.
           flush();
-          // Each blank line beyond the separator is an intentional empty line.
-          for (let i = 2; i < seg.length; i += 1) flush();
+          const from = rhythm === 'tight' ? 1 : 2;
+          for (let i = from; i < seg.length; i += 1) flush();
           continue;
         }
         const lines = seg.split('\n');
@@ -358,7 +396,7 @@ function restructureIntoParagraphs(doc, container) {
       current.appendChild(node);
     }
   }
-  paragraphs.push(current);
+  flush();
 
   const isEmptyPara = (p) => !p.textContent.trim() && !p.querySelector('img, video, br');
   while (paragraphs.length && isEmptyPara(paragraphs[0])) paragraphs.shift();
@@ -377,14 +415,14 @@ function restructureIntoParagraphs(doc, container) {
 
 const BLOCK_LEVEL = new Set(['DIV', 'P', 'BLOCKQUOTE', 'TD', 'LI', 'BODY']);
 
-function restoreLiteralNewlines(doc, body) {
+function restoreLiteralNewlines(doc, body, rhythm) {
   // Rule 2 first: explicit inline pre-wrap declarations (checked before the
   // attribute stripper removes them). <pre> itself is left to the schema.
   for (const el of Array.from(body.querySelectorAll('[style]'))) {
     if (el.tagName === 'PRE') continue;
     const ws = parseInlineStyles(el.getAttribute('style') || '')['white-space'] || '';
     if (/^pre(-wrap|-line)?$/.test(ws) && el.textContent.includes('\n')) {
-      if (BLOCK_LEVEL.has(el.tagName)) restructureIntoParagraphs(doc, el);
+      if (BLOCK_LEVEL.has(el.tagName)) restructureIntoParagraphs(doc, el, rhythm);
       else textToBreaks(doc, el);
     }
   }
@@ -404,7 +442,7 @@ function restoreLiteralNewlines(doc, body) {
       }
       break;
     }
-    restructureIntoParagraphs(doc, target);
+    restructureIntoParagraphs(doc, target, rhythm);
     if (target !== body) {
       const dir = (target.getAttribute('dir') || '').toLowerCase();
       for (const p of Array.from(target.children)) {
@@ -430,46 +468,213 @@ function stripComments(root) {
 }
 
 // Block-level tags used to decide whether a <div> is a structural wrapper
-// (contains other blocks → unwrap) or a leaf paragraph (inline content → <p>).
+// (contains other blocks → unwrap) or a leaf line (inline content only).
 const BLOCK_TAGS = new Set([
   'DIV', 'P', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
   'BLOCKQUOTE', 'PRE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH',
   'FIGURE', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'ASIDE', 'NAV', 'MAIN', 'HR',
 ]);
 
-function convertDivsToParagraphs(doc, root) {
-  // Reverse document order = deepest-first: inner divs resolve before the
-  // outer divs that contain them, so unwrapping never orphans a converted child.
-  const divs = Array.from(root.querySelectorAll('div')).reverse();
-  for (const div of divs) {
+// Marker for paragraphs REBUILT from line-model sources (literal newlines,
+// div-per-line). The tight-gap pass must not space these apart — their source
+// rendered them margin-less. Never survives into the output: cleanAttributes
+// strips every non-whitelisted attribute at the end of the pipeline.
+const LINE_MARK = 'data-gos-line';
+
+// LINE-MODEL normalisation for div-based sources (Gmail compose, VS Code,
+// chat apps): a bare <div> renders with NO margin at the source, so a run of
+// sibling leaf divs is a run of LINES, and `<div><br></div>` is an explicit
+// blank line — the exact plain-text contract, just spelled in DOM. Rebuild
+// each run through that contract so a Gmail paste and a text/plain paste of
+// the same message produce the same structure.
+//
+// Two phases:
+//   1. Structural <div>s (containing other blocks) are unwrapped, after
+//      first wrapping any bare inline runs among their children into
+//      synthetic line-divs. That inline-run wrapping is not a guess — the
+//      CSS box model renders such runs as anonymous block boxes, i.e. as
+//      margin-less LINES (Gmail's first message line is exactly this shape).
+//   2. Runs of sibling leaf divs become paragraphs: consecutive non-blank
+//      lines join into one <p> with soft <br> breaks; blank divs map per the
+//      rhythm ('spaced': paragraph separator, extras become empty
+//      paragraphs; 'tight': every blank is an explicit empty paragraph).
+//      A change of dir/text-align closes the current paragraph (those are
+//      block-level attributes and must survive per line-group).
+function convertDivsToParagraphs(doc, root, rhythm) {
+  // Phase 1 — reverse document order = deepest-first: inner divs resolve
+  // before the outer divs that contain them, so unwrapping never orphans a
+  // child.
+  for (const div of Array.from(root.querySelectorAll('div')).reverse()) {
     // Our own structural wrappers (media embeds) carry data-type and rebuild
     // themselves on parse — never touch them or their inner divs.
     if (div.closest('[data-type]')) continue;
-
-    const hasBlockChild = Array.from(div.children).some((c) =>
-      BLOCK_TAGS.has(c.tagName),
-    );
     const parent = div.parentNode;
     if (!parent) continue;
+    const hasBlockChild = Array.from(div.children).some((c) => BLOCK_TAGS.has(c.tagName));
+    if (!hasBlockChild) continue; // leaf line div — phase 2 material
+    wrapInlineRunsAsLines(doc, div);
+    while (div.firstChild) parent.insertBefore(div.firstChild, div);
+    parent.removeChild(div);
+  }
 
-    if (hasBlockChild) {
-      // Structural wrapper → unwrap: splice its children up into the parent.
-      while (div.firstChild) parent.insertBefore(div.firstChild, div);
-      parent.removeChild(div);
-    } else {
-      // Leaf block of inline content → a real paragraph, carrying dir and any
-      // text-align so alignment/direction survive.
-      const p = doc.createElement('p');
-      const dir = (div.getAttribute('dir') || '').toLowerCase();
-      if (dir === 'ltr' || dir === 'rtl') p.setAttribute('dir', dir);
-      const ta = parseInlineStyles(div.getAttribute('style') || '')['text-align'];
-      if (ta && /^(left|right|center|justify)$/i.test(ta)) {
-        p.setAttribute('style', `text-align: ${ta.toLowerCase()}`);
+  // Phase 2 — group each run of sibling leaf divs. Collect the runs' parents
+  // (a leaf div can now only sit under body or a surviving block container).
+  const parents = new Set();
+  for (const div of root.querySelectorAll('div')) {
+    if (div.closest('[data-type]')) continue;
+    if (div.parentNode) parents.add(div.parentNode);
+  }
+  for (const parent of parents) groupLineDivRuns(doc, parent, rhythm);
+}
+
+// Wrap every maximal run of inline children (text / spans / <b> / <a> / <br>…)
+// of a block-containing container into a synthetic <div>, so phase 2 treats it
+// as the line the browser rendered it as (anonymous block box).
+function wrapInlineRunsAsLines(doc, container) {
+  const isInline = (n) =>
+    (n.nodeType === 3 && n.nodeValue.trim()) ||
+    (n.nodeType === 1 && !BLOCK_TAGS.has(n.tagName) && !n.hasAttribute?.('data-type'));
+  let run = null;
+  for (const node of Array.from(container.childNodes)) {
+    if (isInline(node)) {
+      if (!run) {
+        run = doc.createElement('div');
+        container.insertBefore(run, node);
       }
-      while (div.firstChild) p.appendChild(div.firstChild);
-      parent.replaceChild(p, div);
+      run.appendChild(node);
+    } else if (!(node.nodeType === 3 && !node.nodeValue.trim())) {
+      run = null; // block boundary (whitespace-only text doesn't break a run)
     }
   }
+}
+
+// A leaf div with no visible text and no meaningful content is a blank-line
+// marker (`<div><br></div>`, `<div>&nbsp;</div>`, empty divs).
+function isBlankLineDiv(div) {
+  if (div.querySelector('img, video, figure, iframe')) return false;
+  return !div.textContent.replace(/ /g, ' ').trim();
+}
+
+function lineGroupKey(div) {
+  const dir = (div.getAttribute('dir') || '').toLowerCase();
+  const ta = (parseInlineStyles(div.getAttribute('style') || '')['text-align'] || '').toLowerCase();
+  return [
+    dir === 'ltr' || dir === 'rtl' ? dir : '',
+    /^(left|right|center|justify)$/.test(ta) ? ta : '',
+  ].join('|');
+}
+
+function groupLineDivRuns(doc, parent, rhythm) {
+  // Snapshot: we splice replacements in while walking.
+  let group = null; // current open <p>
+  let groupKey = null;
+  let pendingBlanks = 0;
+  let runStarted = false;
+
+  const closeGroup = () => {
+    group = null;
+    groupKey = null;
+  };
+  const openGroup = (afterNode, key) => {
+    group = doc.createElement('p');
+    group.setAttribute(LINE_MARK, '1');
+    const [dir, ta] = key.split('|');
+    if (dir) group.setAttribute('dir', dir);
+    if (ta) group.setAttribute('style', `text-align: ${ta}`);
+    parent.insertBefore(group, afterNode);
+    groupKey = key;
+  };
+  const emitBlanks = (beforeNode) => {
+    if (!pendingBlanks) return;
+    // Blank lines mid-run: 'spaced' → the first blank is the paragraph
+    // separator (extras are explicit empty paragraphs); 'tight' → every
+    // blank line is an explicit empty paragraph. Leading blanks (before any
+    // text line) are dropped here and the edge-trim pass guards the tail.
+    if (runStarted) {
+      const empties = rhythm === 'tight' ? pendingBlanks : pendingBlanks - 1;
+      for (let i = 0; i < empties; i += 1) {
+        const empty = doc.createElement('p');
+        empty.setAttribute(LINE_MARK, '1');
+        parent.insertBefore(empty, beforeNode);
+      }
+    }
+    pendingBlanks = 0;
+    closeGroup();
+  };
+
+  for (const node of Array.from(parent.childNodes)) {
+    const isLeafLineDiv =
+      node.nodeType === 1 &&
+      node.tagName === 'DIV' &&
+      !node.hasAttribute('data-type') &&
+      !Array.from(node.children).some((c) => BLOCK_TAGS.has(c.tagName));
+
+    if (!isLeafLineDiv) {
+      if (node.nodeType === 3 && !node.nodeValue.trim()) continue; // formatting whitespace
+      // Any real block/inline boundary ends the current line run.
+      pendingBlanks = 0;
+      runStarted = false;
+      closeGroup();
+      continue;
+    }
+
+    if (isBlankLineDiv(node)) {
+      pendingBlanks += 1;
+      parent.removeChild(node);
+      continue;
+    }
+
+    emitBlanks(node);
+    const key = lineGroupKey(node);
+    if (!group || key !== groupKey) openGroup(node, key);
+    else group.appendChild(doc.createElement('br'));
+    // Move the line's content in, dropping a purely-trailing <br> (it renders
+    // nothing at the end of a source line).
+    while (node.lastChild && node.lastChild.nodeName === 'BR') node.removeChild(node.lastChild);
+    while (node.firstChild) group.appendChild(node.firstChild);
+    parent.removeChild(node);
+    runStarted = true;
+  }
+}
+
+// 'tight' faces render paragraph margins as zero, but PARAGRAPH-MODEL blocks
+// (<p>, headings, lists, blockquote, pre) were visually separated by margins
+// at the source. Materialise that gap as one explicit empty paragraph between
+// adjacent blocks — except between two line-derived paragraphs (their source
+// was margin-less) and never next to an already-blank paragraph (an explicit
+// blank must not be doubled).
+const TIGHT_GAP_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'UL', 'OL', 'BLOCKQUOTE', 'PRE']);
+
+function isBlankParagraph(el) {
+  if (el.tagName !== 'P') return false;
+  if (el.querySelector('img, video, figure, iframe, [data-type]')) return false;
+  const onlyBreaks = !Array.from(el.childNodes).some(
+    (n) => !(n.nodeName === 'BR' || (n.nodeType === 3 && !n.nodeValue.replace(/ /g, ' ').trim())),
+  );
+  return onlyBreaks;
+}
+
+function insertTightGaps(doc, body) {
+  for (const el of Array.from(body.children)) {
+    const next = el.nextElementSibling;
+    if (!next) continue;
+    if (!TIGHT_GAP_TAGS.has(el.tagName) || !TIGHT_GAP_TAGS.has(next.tagName)) continue;
+    const bothLineDerived = el.hasAttribute(LINE_MARK) && next.hasAttribute(LINE_MARK);
+    if (bothLineDerived) continue;
+    if (isBlankParagraph(el) || isBlankParagraph(next)) continue;
+    body.insertBefore(doc.createElement('p'), next);
+  }
+}
+
+// No blank lines at the start or end of the pasted fragment — the edge rule
+// of the plain-text contract, applied to the HTML path (sloppy selections
+// commonly drag in leading/trailing `<div><br></div>` / `<p>&nbsp;</p>`).
+function trimEdgeBlankBlocks(body) {
+  const isBlankEdge = (n) =>
+    (n.nodeType === 3 && !n.nodeValue.trim()) ||
+    (n.nodeType === 1 && (n.tagName === 'BR' || isBlankParagraph(n)));
+  while (body.firstChild && isBlankEdge(body.firstChild)) body.removeChild(body.firstChild);
+  while (body.lastChild && isBlankEdge(body.lastChild)) body.removeChild(body.lastChild);
 }
 
 // Rebuild Word "list paragraphs" into real <ul>/<ol>. Word exports each list

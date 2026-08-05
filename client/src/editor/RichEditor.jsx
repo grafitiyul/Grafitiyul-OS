@@ -81,6 +81,12 @@ export default function RichEditor({
   const presetCfg = EDITOR_PRESETS[preset] || EDITOR_PRESETS.full;
   const effTone = tone ?? presetCfg.tone ?? 'default';
   const effToolbar = toolbar ?? presetCfg.toolbar ?? 'full';
+  // Typography rhythm of this surface (see pastePlainText.js): 'tight' =
+  // zero paragraph margins (note face). A collapsible composer is always the
+  // note face; the note preset is tight even when not collapsible (NoteCard's
+  // edit mode must match the tight display it round-trips with — editing and
+  // display parity). Paste normalisation maps blank lines per this rhythm.
+  const rhythm = collapsible || presetCfg.rhythm === 'tight' ? 'tight' : 'spaced';
   const noteTone = effTone === 'note';
   const shellTone = noteTone
     ? 'border-amber-200 bg-amber-50 focus-within:ring-amber-200 focus-within:border-amber-300'
@@ -98,8 +104,12 @@ export default function RichEditor({
     .flat()
     .includes('image');
   // Handlers below are created once (useEditor config is not re-built), so
-  // they reach the live editor instance through a ref.
+  // they reach the live editor instance through a ref. Same for the rhythm —
+  // constant in practice, but read through a ref so the paste hooks always see
+  // the current value.
   const editorRef = useRef(null);
+  const rhythmRef = useRef(rhythm);
+  rhythmRef.current = rhythm;
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -149,16 +159,19 @@ export default function RichEditor({
       onChange?.(isEmptyHtml(html) ? '' : html);
     },
     editorProps: {
-      transformPastedHTML: sanitizePastedHtml,
+      // Both paste paths run the canonical rhythm-aware structure contract
+      // (pastePlainText.js): the pasted content must render on THIS surface
+      // with the line/blank-line structure the author saw at the source.
+      transformPastedHTML: (html) => sanitizePastedHtml(html, rhythmRef.current),
       // text/plain pastes (WhatsApp, Notepad, terminals…): ProseMirror's
       // default splits EVERY line into its own paragraph and drops blank
       // lines — a pasted message became one-paragraph-per-visual-line with no
       // paragraph structure. The canonical contract (pastePlainText.js):
-      // blank line = paragraph break (extras preserved as empty paragraphs),
-      // single newline = soft break, edges trimmed.
+      // single newline = soft break, blank lines per the surface rhythm,
+      // edges trimmed.
       clipboardTextParser: (text, $context) => {
         const schema = $context.doc.type.schema;
-        const paragraphs = plainTextToParagraphs(text);
+        const paragraphs = plainTextToParagraphs(text, rhythmRef.current);
         const nodes = paragraphs.map((lines) => {
           const content = [];
           lines.forEach((line, i) => {
@@ -263,7 +276,7 @@ export default function RichEditor({
   return (
     <div
       className={`rt-editor-shell border rounded-md focus-within:ring-2 ${shellTone} flex flex-col ${
-        collapsible ? 'rt-editor-compact' : ''
+        rhythm === 'tight' ? 'rt-editor-compact' : ''
       }`}
       style={{ maxHeight }}
     >

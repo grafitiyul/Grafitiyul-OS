@@ -12,6 +12,14 @@
 //      soft line break (Shift+Enter), and keeping it tight is the
 //      whole point of distinguishing it from a paragraph break.
 //
+//      The split follows the surface's typography RHYTHM (see
+//      pastePlainText.js): a run of n `<br>`s = (n-1) authored blank
+//      lines. On a 'spaced' surface the paragraph margin renders the
+//      first blank, so only the extras become explicit empty
+//      paragraphs; on a 'tight' surface (.gos-prose-tight — zero
+//      margins) EVERY blank line must survive as an explicit empty
+//      paragraph or the author's spacing silently collapses.
+//
 //   2. Tag "inline-heading" paragraphs with the `gos-inline-heading`
 //      class. An inline heading is a `<p>` whose visible text sits
 //      ENTIRELY inside `<strong>`/`<u>`/`<b>` tags (any nesting) and
@@ -37,9 +45,14 @@
 //   * It does not add/remove tags inside the paragraph. Only the
 //     `<p>` opening tag's class attribute may change.
 
+import { plainTextToParagraphs } from './pastePlainText.js';
+
 const PARAGRAPH_RE = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
 // At-least-two `<br>` separated only by whitespace.
 const DOUBLE_BR_RE = /(?:<br\s*\/?>\s*){2,}/gi;
+// Split-with-capture variant: keeps the break runs in the parts array so the
+// run LENGTH (= number of authored blank lines + 1) is known per run.
+const DOUBLE_BR_CAPTURE_RE = /((?:<br\s*\/?>\s*){2,})/gi;
 const ANY_DOUBLE_BR_RE = /(?:<br\s*\/?>\s*){2,}/i;
 
 // Strong / underline / bold wrappers (no <em> — italic alone is not
@@ -60,7 +73,7 @@ const INLINE_HEADING_MAX_LEN = 100;
 // untouched; plain text becomes <p> blocks (\n\n) with <br> soft breaks (\n).
 // Read-only surfaces (preview/portal) call richHtmlForDisplay so they match the
 // editor exactly.
-function plainTextToHtml(raw) {
+function plainTextToHtml(raw, rhythm) {
   if (!raw) return '';
   // Already HTML? leave it (edited-in-GOS content, or pasted rich HTML).
   if (/<[a-z][a-z0-9]*[\s>/]/i.test(raw)) return raw;
@@ -68,26 +81,41 @@ function plainTextToHtml(raw) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  return esc
-    .split(/\n{2,}/)
-    .map((block) => `<p>${block.split('\n').join('<br>')}</p>`)
+  // ONE structure contract with the editor's paste path (pastePlainText.js):
+  // lines group into paragraphs with <br> soft breaks; blank lines map per
+  // the surface rhythm; edges are trimmed.
+  return plainTextToParagraphs(esc, rhythm)
+    .map((lines) => `<p>${lines.join('<br>')}</p>`)
     .join('');
 }
 
 // The authoritative read-only renderer input: plain-text→HTML, then the same
 // paragraph/heading normalisation used everywhere else.
-export function richHtmlForDisplay(raw) {
-  return normalizeRichHtml(plainTextToHtml(raw));
+export function richHtmlForDisplay(raw, rhythm = 'spaced') {
+  return normalizeRichHtml(plainTextToHtml(raw, rhythm), rhythm);
 }
 
-export function normalizeRichHtml(html) {
+export function normalizeRichHtml(html, rhythm = 'spaced') {
   if (typeof html !== 'string' || html.length === 0) return '';
 
-  // Pass 1: split paragraphs on double-<br>.
+  // Pass 1: split paragraphs on double-<br>. A run of n breaks = (n-1)
+  // authored blank lines → 'spaced': the paragraph margin renders one, the
+  // rest become explicit empty paragraphs; 'tight': all of them do.
   const splitOnBr = html.replace(PARAGRAPH_RE, (match, attrs, inner) => {
     if (!ANY_DOUBLE_BR_RE.test(inner)) return match;
-    const parts = inner.split(DOUBLE_BR_RE);
-    return parts.map((piece) => `<p${attrs}>${piece}</p>`).join('');
+    const parts = inner.split(DOUBLE_BR_CAPTURE_RE);
+    const out = [];
+    for (const piece of parts) {
+      if (piece == null || piece === '') continue;
+      if (ANY_DOUBLE_BR_RE.test(piece) && !piece.replace(DOUBLE_BR_RE, '').trim()) {
+        const breaks = (piece.match(/<br/gi) || []).length;
+        const empties = Math.max(0, breaks - (rhythm === 'tight' ? 1 : 2));
+        for (let i = 0; i < empties; i += 1) out.push(`<p${attrs}></p>`);
+        continue;
+      }
+      out.push(`<p${attrs}>${piece}</p>`);
+    }
+    return out.join('');
   });
 
   // Pass 2: tag inline-heading paragraphs.

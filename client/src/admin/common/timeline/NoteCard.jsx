@@ -194,7 +194,7 @@ export default function NoteCard({
             </div>
           </div>
         ) : expanded ? (
-          <div className="gos-prose gos-prose-tight text-[15px]" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(entry.body || '') }} />
+          <div className="gos-prose gos-prose-tight text-[15px]" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(entry.body || '', 'tight') }} />
         ) : (
           // Collapsed → single preview line (click to expand).
           <button type="button" onClick={onToggleExpand} className="block w-full text-right text-sm text-gray-600 truncate">

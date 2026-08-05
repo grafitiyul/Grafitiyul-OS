@@ -433,10 +433,18 @@
   border-top: 1px solid rgb(229 231 235);
   margin: 1em 0;
 }
-/* Truly-empty paragraphs from TipTap (e.g. delete-key trailing) shouldn't
-   eat vertical space. Empty-with-only-<br> paragraphs still occupy a line
-   because the user typed a hard return — preserve those. */
-.gos-prose p:empty { display: none; }
+/* An INTERIOR empty <p> is an authored blank line — the paste/display
+   contract (pastePlainText.js) stores intentional blank lines as explicit
+   empty paragraphs, and the editor renders them as a full line
+   (ProseMirror trailing break). Display parity: give them one line box
+   (1.55em = the face line-height). Hiding them (the old rule here) made
+   authored blank lines vanish on every read surface while the editor
+   showed them.
+   EDGE empties stay hidden: they're TipTap junk (delete-key trailing) or
+   legacy content — and the contract trims edges anyway. */
+.gos-prose p:empty { min-height: 1.55em; }
+.gos-prose p:empty:first-child,
+.gos-prose p:empty:last-child { display: none; }
 .gos-prose span[data-type='dynamic-field'] {
   display: inline-block;
   background: rgb(219 234 254);

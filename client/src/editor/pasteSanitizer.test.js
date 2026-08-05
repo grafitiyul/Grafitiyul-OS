@@ -94,13 +94,38 @@ test('empty / falsy input is passed through safely', () => {
   assert.equal(sanitizePastedHtml(null), null);
 });
 
-// ---- div-based paragraphs → real paragraphs (preserve spacing) ----
+// ---- div-per-line sources (Gmail compose, VS Code, chat apps) ----
+// A bare <div> renders with NO margin at the source, so a run of sibling leaf
+// divs is a run of LINES and `<div><br></div>` is the explicit blank line —
+// the plain-text contract spelled in DOM. Rebuilding through that contract
+// makes an HTML paste and a text/plain paste of the same content identical.
 
-test('sibling <div> blocks become separate <p> paragraphs', () => {
+test('sibling line <div>s join into ONE paragraph with soft breaks (they were adjacent lines)', () => {
   const out = sanitizePastedHtml('<div>first</div><div>second</div>');
-  assert.match(out, /<p>first<\/p>/);
-  assert.match(out, /<p>second<\/p>/);
-  assert.doesNotMatch(out, /<div/);
+  assert.equal(out, '<p>first<br>second</p>');
+});
+
+test('Gmail shape: <div><br></div> is a paragraph break; bare first line joins the run', () => {
+  const out = sanitizePastedHtml(
+    '<div dir="rtl">שלום רב,<div>שורה שנייה</div><div><br></div><div>פסקה שנייה</div></div>',
+  );
+  assert.equal(out, '<p>שלום רב,<br>שורה שנייה</p><p>פסקה שנייה</p>');
+});
+
+test('Gmail shape (tight): the blank line becomes an explicit empty paragraph', () => {
+  const out = sanitizePastedHtml(
+    '<div>שורה ראשונה</div><div><br></div><div>שורה שנייה</div>',
+    'tight',
+  );
+  assert.equal(out, '<p>שורה ראשונה</p><p></p><p>שורה שנייה</p>');
+});
+
+test('leading/trailing blank divs are trimmed — no blank lines before/after the paste', () => {
+  const out = sanitizePastedHtml(
+    '<div><br></div><div>תוכן</div><div><br></div><div><br></div>',
+    'tight',
+  );
+  assert.equal(out, '<p>תוכן</p>');
 });
 
 test('nested/structural <div> is unwrapped, inner leaf becomes <p>', () => {
@@ -274,4 +299,38 @@ test('multi-paragraph Word-style paste keeps separate paragraphs (regression)', 
   const paras = (out.match(/<p/g) || []).length;
   assert.ok(paras >= 3, `paragraphs preserved (got ${paras})`);
   assert.match(out, /<b>הדגשה<\/b>|<strong>הדגשה<\/strong>/);
+});
+
+// ---- 'tight' rhythm (note face — zero paragraph margins) ----
+
+test('tight: paragraph-model blocks (ChatGPT/Word <p>s) get an explicit blank line between them', () => {
+  const out = sanitizePastedHtml('<p>פסקה ראשונה.</p><p>פסקה שנייה.</p>', 'tight');
+  assert.equal(out, '<p>פסקה ראשונה.</p><p></p><p>פסקה שנייה.</p>');
+});
+
+test('tight: no gap is inserted next to an already-blank paragraph (Word &nbsp; blanks)', () => {
+  const out = sanitizePastedHtml('<p>א</p><p>&nbsp;</p><p>ב</p>', 'tight');
+  const empties = (out.match(/<p[^>]*>(?:&nbsp;|\s)*<\/p>/g) || []).length;
+  assert.equal(empties, 1, `exactly the author's one blank survives: ${out}`);
+});
+
+test('tight: WhatsApp literal-newline paste keeps every blank line', () => {
+  const out = sanitizePastedHtml(
+    '<span class="copyable-text">שלום רב,\nרצינו לבדוק.\n\nתודה,\nורד</span>',
+    'tight',
+  );
+  assert.equal(out, '<p>שלום רב,<br>רצינו לבדוק.</p><p></p><p>תודה,<br>ורד</p>');
+});
+
+test('tight: the line-derived marker attribute never leaks into the output', () => {
+  const out = sanitizePastedHtml(
+    '<div>שורה</div><div><br></div><p>פסקה</p>',
+    'tight',
+  );
+  assert.doesNotMatch(out, /data-gos-line/);
+});
+
+test('edge blanks are trimmed in spaced rhythm too (<p>&nbsp;</p> selection junk)', () => {
+  const out = sanitizePastedHtml('<p>&nbsp;</p><p>תוכן</p><p><br></p>');
+  assert.equal(out, '<p>תוכן</p>');
 });
