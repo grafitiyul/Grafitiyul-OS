@@ -24,6 +24,20 @@ import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
 
+// Opt-in live paste diagnostics — set `localStorage.gos_paste_debug = '1'` in
+// DevTools (any environment, production included), paste, and read
+// `window.__gosPasteDebug` / the `[gos-paste-debug]` console records. Each
+// record captures the pipeline stage-by-stage: raw clipboard text/html +
+// text/plain → sanitizer output → the ProseMirror doc JSON → the editor DOM.
+// Zero effect when the flag is off.
+function pasteDebugOn() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('gos_paste_debug') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function isEmptyHtml(html) {
   if (!html) return true;
   const stripped = html.replace(/\s+/g, '');
@@ -159,10 +173,40 @@ export default function RichEditor({
       onChange?.(isEmptyHtml(html) ? '' : html);
     },
     editorProps: {
+      // Paste diagnostics (opt-in, see pasteDebugOn above). Never consumes the
+      // event — capture only.
+      handleDOMEvents: {
+        paste: (_view, event) => {
+          if (!pasteDebugOn()) return false;
+          const rec = {
+            at: new Date().toISOString(),
+            rhythm: rhythmRef.current,
+            clipboardHtml: event.clipboardData?.getData('text/html') ?? null,
+            clipboardText: event.clipboardData?.getData('text/plain') ?? null,
+          };
+          (window.__gosPasteDebug = window.__gosPasteDebug || []).push(rec);
+          setTimeout(() => {
+            const ed = editorRef.current;
+            rec.docJson = ed?.getJSON?.();
+            rec.docHtml = ed?.getHTML?.();
+            rec.editorDom = ed?.view?.dom?.innerHTML ?? null;
+            // eslint-disable-next-line no-console
+            console.log('[gos-paste-debug]', rec);
+          }, 0);
+          return false;
+        },
+      },
       // Both paste paths run the canonical rhythm-aware structure contract
       // (pastePlainText.js): the pasted content must render on THIS surface
       // with the line/blank-line structure the author saw at the source.
-      transformPastedHTML: (html) => sanitizePastedHtml(html, rhythmRef.current),
+      transformPastedHTML: (html) => {
+        const out = sanitizePastedHtml(html, rhythmRef.current);
+        if (pasteDebugOn()) {
+          const rec = (window.__gosPasteDebug || []).slice(-1)[0];
+          if (rec) rec.sanitizedHtml = out;
+        }
+        return out;
+      },
       // text/plain pastes (WhatsApp, Notepad, terminals…): ProseMirror's
       // default splits EVERY line into its own paragraph and drops blank
       // lines — a pasted message became one-paragraph-per-visual-line with no

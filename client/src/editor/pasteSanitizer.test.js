@@ -358,6 +358,71 @@ test('a plain inline snippet (no blocks, no breaks) stays inline so it merges at
   assert.doesNotMatch(out, /<p/, `inline paste must stay inline: ${out}`);
 });
 
+// ---- table-layout emails (transactional/marketing — the dense-block collapse) ----
+// The editor schema has no tables; ProseMirror CONCATENATES unknown cells'
+// text into one paragraph. Cells must be linearized into block flow instead.
+
+test('table cells become separate paragraphs — never one run-together block (tight)', () => {
+  const out = sanitizePastedHtml(
+    '<table width="600"><tbody><tr><td style="padding:12px">כותרת הניוזלטר</td></tr><tr><td style="padding:12px">פסקה ראשונה של תוכן.</td></tr><tr><td>פסקה שנייה.<br>עם שורה נוספת.</td></tr></tbody></table>',
+    'tight',
+  );
+  assert.equal(
+    out,
+    '<p>כותרת הניוזלטר</p><p></p><p>פסקה ראשונה של תוכן.</p><p></p><p>פסקה שנייה.<br>עם שורה נוספת.</p>',
+  );
+});
+
+test('table cells stay separate paragraphs in spaced rhythm too', () => {
+  const out = sanitizePastedHtml('<table><tbody><tr><td>א</td></tr><tr><td>ב</td></tr></tbody></table>');
+  assert.equal(out, '<p>א</p><p>ב</p>');
+});
+
+test('spacer cells (&nbsp;/empty) vanish; nested layout tables resolve inside-out', () => {
+  const out = sanitizePastedHtml(
+    '<table><tbody><tr><td>&nbsp;</td></tr><tr><td><table><tbody><tr><td>תוכן פנימי</td></tr></tbody></table></td></tr><tr><td></td></tr></tbody></table>',
+  );
+  assert.equal(out, '<p>תוכן פנימי</p>');
+});
+
+test('a cell with real block content keeps its own blocks', () => {
+  const out = sanitizePastedHtml('<table><tbody><tr><td><p>פסקה</p><ul><li>פריט</li></ul></td></tr></tbody></table>');
+  assert.match(out, /<p>פסקה<\/p>/);
+  assert.match(out, /<ul><li>פריט<\/li><\/ul>/);
+  assert.doesNotMatch(out, /<table/);
+});
+
+// ---- Outlook Web margin-0 paragraphs (line-model spelled with <p>) ----
+
+test('OWA <p style="margin:0"> lines are LINES: adjacent stay adjacent, blank stays one blank (tight)', () => {
+  const out = sanitizePastedHtml(
+    '<p style="margin:0">שלום,</p><p style="margin:0">שורה שנייה צמודה.</p><p style="margin:0"><br></p><p style="margin:0">פסקה שנייה.</p>',
+    'tight',
+  );
+  assert.equal(out, '<p>שלום,<br>שורה שנייה צמודה.</p><p></p><p>פסקה שנייה.</p>');
+});
+
+test('OWA lines in spaced rhythm follow the plain-text contract', () => {
+  const out = sanitizePastedHtml(
+    '<p style="margin:0cm">א</p><p style="margin:0cm">ב</p><p style="margin:0cm"><br></p><p style="margin:0cm">ג</p>',
+  );
+  assert.equal(out, '<p>א<br>ב</p><p>ג</p>');
+});
+
+test('a <p> WITHOUT explicit zero margins stays paragraph-model', () => {
+  const out = sanitizePastedHtml('<p>א</p><p>ב</p>', 'tight');
+  assert.equal(out, '<p>א</p><p></p><p>ב</p>');
+});
+
+test('Chrome span-wrapped blank paragraph still counts as the blank (no doubled gaps, tight)', () => {
+  const out = sanitizePastedHtml(
+    '<p>לפני</p><p><span style="color: rgb(34, 34, 34)"><br></span></p><p>אחרי</p>',
+    'tight',
+  );
+  const blanks = (out.match(/<p[^>]*>(?:<span[^>]*>)?(?:<br\s*\/?>)?(?:<\/span>)?<\/p>/g) || []).length;
+  assert.equal(blanks, 1, `exactly one blank between the paragraphs: ${out}`);
+});
+
 // ---- 'tight' rhythm (note face — zero paragraph margins) ----
 
 test('tight: paragraph-model blocks (ChatGPT/Word <p>s) get an explicit blank line between them', () => {

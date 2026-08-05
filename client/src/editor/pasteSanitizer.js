@@ -226,11 +226,21 @@ export function sanitizePastedHtml(html, rhythm = 'spaced') {
     // text-decoration: underline). If we strip styles first, these
     // formats are lost entirely.
     convertSemanticStylesToTags(doc, doc.body);
+    // TABLE LINEARIZATION — the editor schema has no tables, and ProseMirror's
+    // parser drops unknown table elements and CONCATENATES every cell's text
+    // into one paragraph (proven live: a table-layout email pasted into a Deal
+    // note became one dense run-together block — the production collapse bug).
+    // Faithful degradation instead: each cell's content becomes block flow
+    // (cells are block boxes), spacer cells vanish. Runs BEFORE the line-model
+    // pass so cell content joins the normal block machinery.
+    linearizeTables(doc, doc.body);
     // LINE-MODEL normalisation: unwrap structural <div>s, wrap bare inline
     // runs (CSS anonymous boxes — Chrome's clipboard serializer emits Gmail
     // plain-text bodies as `<span>…</span><br><span>…</span>` with no block
     // at all), then rebuild the line runs into real paragraphs through the
-    // plain-text contract. MUST run while the topology is still the source's:
+    // plain-text contract. Margin-less <p>s (Outlook Web writes
+    // `<p style="margin:0">` per LINE — they render adjacent at the source)
+    // are lines too. MUST run while the topology is still the source's:
     // in particular BEFORE promoteColorAndSizeToSpans, which used to wrap a
     // div's children — including block children and blank-line <br><br>
     // markers — in a <span>, destroying the very structure this pass reads
@@ -537,14 +547,69 @@ function convertDivsToParagraphs(doc, root, rhythm) {
   );
   if (bodyHasStructure) wrapInlineRunsAsLines(doc, root);
 
-  // Phase 2 — group each run of sibling leaf divs. Collect the runs' parents
-  // (a leaf div can now only sit under body or a surviving block container).
+  // Phase 2 — group each run of sibling line blocks (leaf divs and
+  // margin-less <p>s). Collect the runs' parents.
   const parents = new Set();
-  for (const div of root.querySelectorAll('div')) {
-    if (div.closest('[data-type]')) continue;
-    if (div.parentNode) parents.add(div.parentNode);
+  for (const el of root.querySelectorAll('div, p')) {
+    if (el.closest('[data-type]')) continue;
+    if (el.tagName === 'P' && !isMarginlessLineP(el)) continue;
+    if (el.parentNode) parents.add(el.parentNode);
   }
   for (const parent of parents) groupLineDivRuns(doc, parent, rhythm);
+}
+
+// Outlook Web (and several mail clients) compose each LINE as
+// `<p style="margin:0">…</p>` — the inline zero margin means the source
+// rendered those paragraphs ADJACENT, i.e. they are lines of a line-model
+// block, not spaced paragraphs. Reading that declared rendering from the
+// payload is the same principle as the white-space:pre-wrap rule. Both
+// vertical margins must be EXPLICITLY zero; a <p> without inline margins
+// keeps the UA default margin and stays paragraph-model.
+function isMarginlessLineP(el) {
+  if (el.tagName !== 'P') return false;
+  const st = parseInlineStyles(el.getAttribute('style') || '');
+  const zero = (v) => v != null && /^0(?:\.0+)?(?:px|cm|mm|in|pt|pc|em|rem|%)?$/.test(String(v).trim());
+  let top = st['margin-top'];
+  let bottom = st['margin-bottom'];
+  const shorthand = st['margin'];
+  if (shorthand) {
+    const p = shorthand.split(/\s+/);
+    // CSS shorthand: 1=all · 2=v h · 3=t h b · 4=t r b l
+    const shTop = p[0];
+    const shBottom = p.length === 1 ? p[0] : p.length === 2 ? p[0] : p[2];
+    if (top == null) top = shTop;
+    if (bottom == null) bottom = shBottom;
+  }
+  return zero(top) && zero(bottom);
+}
+
+// Email layouts are tables; the editor schema has none, and ProseMirror's
+// parser CONCATENATES unknown table cells' text into one paragraph (the
+// dense-block collapse). Faithful degradation: each cell is a block box —
+// lift every cell's content into block flow (inline-only cells become a
+// paragraph-model <p>; cells with block children keep their own blocks),
+// drop text-empty spacer cells, deepest-first so nested layout tables
+// resolve inside-out.
+function linearizeTables(doc, root) {
+  for (const table of Array.from(root.querySelectorAll('table')).reverse()) {
+    if (table.closest('[data-type]')) continue;
+    const parent = table.parentNode;
+    if (!parent) continue;
+    const frag = doc.createDocumentFragment();
+    for (const cell of table.querySelectorAll('td, th')) {
+      if (!hasVisibleContent(Array.from(cell.childNodes))) continue; // spacer cell
+      const hasBlockChild = Array.from(cell.children).some((c) => BLOCK_TAGS.has(c.tagName));
+      if (hasBlockChild) {
+        wrapInlineRunsAsLines(doc, cell);
+        while (cell.firstChild) frag.appendChild(cell.firstChild);
+      } else {
+        const p = doc.createElement('p');
+        while (cell.firstChild) p.appendChild(cell.firstChild);
+        frag.appendChild(p);
+      }
+    }
+    parent.replaceChild(frag, table);
+  }
 }
 
 // Wrap every maximal run of inline children (text / spans / <b> / <a> and the
@@ -680,9 +745,10 @@ function groupLineDivRuns(doc, parent, rhythm) {
   for (const node of Array.from(parent.childNodes)) {
     const isLeafLineDiv =
       node.nodeType === 1 &&
-      node.tagName === 'DIV' &&
-      !node.hasAttribute('data-type') &&
-      !Array.from(node.children).some((c) => BLOCK_TAGS.has(c.tagName));
+      (node.tagName === 'DIV'
+        ? !node.hasAttribute('data-type') &&
+          !Array.from(node.children).some((c) => BLOCK_TAGS.has(c.tagName))
+        : isMarginlessLineP(node));
 
     if (!isLeafLineDiv) {
       if (isWhitespaceText(node)) continue; // formatting whitespace between divs
@@ -714,11 +780,12 @@ const TIGHT_GAP_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'UL', 'OL', 'BLOCKQUOTE',
 
 function isBlankParagraph(el) {
   if (el.tagName !== 'P') return false;
-  if (el.querySelector('img, video, figure, iframe, [data-type]')) return false;
-  const onlyBreaks = !Array.from(el.childNodes).some(
-    (n) => !(n.nodeName === 'BR' || (n.nodeType === 3 && !n.nodeValue.replace(/ /g, ' ').trim())),
-  );
-  return onlyBreaks;
+  if (el.querySelector('[data-type]')) return false;
+  // Visible-content based (NOT literal <br>-children based): Chrome's
+  // clipboard serializer wraps even a blank paragraph's <br> in styled
+  // <span>s, and a wrapped blank must still count as blank — otherwise the
+  // tight-gap pass doubles the author's blank lines.
+  return !hasVisibleContent(Array.from(el.childNodes));
 }
 
 function insertTightGaps(doc, body) {
