@@ -1666,6 +1666,8 @@ model DealCollectionEvidence {
   //                       remaining balance AT THE MOMENT it was recorded, so
   //                       the balance reaches zero through a real number rather
   //                       than through a boolean that hides it.
+  // 'woo_payment'       — website (Woo) gateway money, machine-recorded by the
+  //                       order webhook; reference carries woo:<store>:<orderId>.
   kind           String
   direction      String // 'in' | 'out' — derived from kind, stored for query simplicity
   amountMinor    BigInt // always positive; `direction` carries the sign
@@ -1684,7 +1686,8 @@ model DealCollectionEvidence {
   reversedBy     String?
   reversedByName String?
   reversalReason String?
-  // 'operator' — a human recorded it; 'backfill' — the historical reconstruction.
+  // 'operator' — a human recorded it; 'backfill' — the historical
+  // reconstruction; 'woo' — the WooCommerce order webhook (machine-recorded).
   origin         String    @default("operator")
   createdBy      String? // loose AdminUser id
   createdByName  String?

@@ -15,6 +15,43 @@ const nextId = (p) => `${p}_${++seq}`;
 const contains = (haystack, needle) => String(haystack ?? '').includes(String(needle ?? ''));
 const ieq = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
 
+// Prisma-style update data → plain assignment ({ increment } handled).
+const applyPatch = (row, data) => {
+  for (const [k, v] of Object.entries(data)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date) && 'increment' in v) {
+      row[k] = (Number(row[k]) || 0) + v.increment;
+    } else {
+      row[k] = v;
+    }
+  }
+};
+
+// The where-shapes the registration chain uses, in one matcher. The relation
+// filter (`tourEvent: { kind }`) is resolved via the row's own tourEventId by
+// the caller-supplied resolver so the matcher stays table-agnostic.
+const makeRegMatch = (db) => (r, where) => {
+  if (where.id && r.id !== where.id) return false;
+  if (where.dealId && r.dealId !== where.dealId) return false;
+  if (where.bookingId && r.bookingId !== where.bookingId) return false;
+  if (where.source && r.source !== where.source) return false;
+  if (where.tourEventId) {
+    if (typeof where.tourEventId === 'object') {
+      if (where.tourEventId.in && !where.tourEventId.in.includes(r.tourEventId)) return false;
+    } else if (r.tourEventId !== where.tourEventId) return false;
+  }
+  if (where.status) {
+    if (typeof where.status === 'object') {
+      if (where.status.in && !where.status.in.includes(r.status)) return false;
+    } else if (r.status !== where.status) return false;
+  }
+  if (where.productVariantId?.not === null && r.productVariantId == null) return false;
+  if (where.tourEvent?.kind) {
+    const tour = db.tourEvent.find((t) => t.id === r.tourEventId);
+    if (!tour || tour.kind !== where.tourEvent.kind) return false;
+  }
+  return true;
+};
+
 export function createTestDb(seed = {}) {
   const db = {
     ingressEvent: [],
@@ -29,6 +66,22 @@ export function createTestDb(seed = {}) {
     dealContact: [],
     dealMarketing: [],
     timelineEntry: [],
+    // Woo operational chain (order → quote → WON → booking → registration).
+    wooVariationLink: seed.wooVariationLinks || [],
+    priceList: seed.priceLists || [],
+    priceRule: seed.priceRules || [],
+    ticketType: seed.ticketTypes || [],
+    productVariant: seed.productVariants || [],
+    tourEvent: seed.tourEvents || [],
+    openTourTemplateProduct: seed.openTourTemplateProducts || [],
+    tourEventActivityComponent: [],
+    quoteOffer: [],
+    quoteVersion: [],
+    quoteLine: [],
+    booking: [],
+    ticketRegistration: [],
+    dealCollectionEvidence: [],
+    reviewItem: [],
   };
 
   // Deliberately explicit: a P2002 is raised on the real unique constraint so
@@ -38,6 +91,8 @@ export function createTestDb(seed = {}) {
     e.code = 'P2002';
     return e;
   };
+
+  const regMatch = makeRegMatch(db);
 
   const client = {
     _tables: db,
@@ -249,11 +304,232 @@ export function createTestDb(seed = {}) {
       },
     },
 
-    // WON transition support. A deal born from an order has no quote, so the
-    // canonical wonQuoteRef lookup finds nothing — modelled explicitly rather
-    // than stubbed away, so the real code path runs.
-    quoteOffer: { findFirst: async () => null },
+    // ── Woo operational chain ────────────────────────────────────────────────
+    // Enough of the quote/tour/registration surface for the FULL order pipeline
+    // (compose → WON → booking → registration → capacity) to run for real.
+    // Same philosophy as above: the specific query shapes the chain uses,
+    // modelled faithfully; anything else fails loudly.
+
+    quoteOffer: {
+      findFirst: async ({ where = {} } = {}) =>
+        db.quoteOffer.find((o) => {
+          if (where.dealId && o.dealId !== where.dealId) return false;
+          if ('archivedAt' in where && (o.archivedAt ?? null) !== where.archivedAt) return false;
+          if (where.isPrimary !== undefined && !!o.isPrimary !== where.isPrimary) return false;
+          return true;
+        }) || null,
+      findUnique: async ({ where }) => db.quoteOffer.find((o) => o.id === where.id) || null,
+      aggregate: async ({ where = {} } = {}) => {
+        const rows = db.quoteOffer.filter((o) => (where.dealId ? o.dealId === where.dealId : true));
+        return { _max: { offerNo: rows.length ? Math.max(...rows.map((o) => o.offerNo || 0)) : null } };
+      },
+      create: async ({ data }) => {
+        const row = { id: nextId('qo'), archivedAt: null, isPrimary: false, contextMode: 'deal', ...data };
+        db.quoteOffer.push(row);
+        return row;
+      },
+    },
     quoteDocument: { findFirst: async () => null },
+
+    quoteVersion: {
+      findFirst: async ({ where = {} } = {}) =>
+        db.quoteVersion.find(
+          (v) =>
+            (where.dealId ? v.dealId === where.dealId : true) &&
+            (where.isWorking === undefined || !!v.isWorking === where.isWorking) &&
+            (where.sourceKind === undefined || (v.sourceKind ?? null) === where.sourceKind),
+        ) || null,
+      create: async ({ data }) => {
+        const row = { id: nextId('qv'), vatMode: null, ...data };
+        db.quoteVersion.push(row);
+        return row;
+      },
+      update: async ({ where, data }) => {
+        const row = db.quoteVersion.find((v) => v.id === where.id);
+        if (!row) throw new Error('testDb: quoteVersion.update missing row');
+        Object.assign(row, data);
+        return row;
+      },
+    },
+
+    quoteLine: {
+      findMany: async ({ where = {}, orderBy } = {}) => {
+        let rows = db.quoteLine.filter((l) => {
+          if (where.quoteVersionId && l.quoteVersionId !== where.quoteVersionId) return false;
+          if (where.sourceKind && l.sourceKind !== where.sourceKind) return false;
+          if (where.active !== undefined && !!l.active !== where.active) return false;
+          if (where.quantity?.gt !== undefined && !(Number(l.quantity) > where.quantity.gt)) return false;
+          return true;
+        });
+        if (orderBy?.sortOrder === 'asc') rows = [...rows].sort((a, b) => a.sortOrder - b.sortOrder);
+        // The one relation read from lines: ticketType.nameHe (offering labels).
+        return rows.map((l) => ({
+          ...l,
+          ticketType: db.ticketType.find((t) => t.id === l.ticketTypeId) || null,
+        }));
+      },
+      deleteMany: async ({ where = {} } = {}) => {
+        const keep = db.quoteLine.filter((l) => !(where.quoteVersionId && l.quoteVersionId === where.quoteVersionId));
+        const count = db.quoteLine.length - keep.length;
+        db.quoteLine = keep;
+        return { count };
+      },
+      createMany: async ({ data }) => {
+        for (const d of data) db.quoteLine.push({ id: nextId('ql'), ...d });
+        return { count: data.length };
+      },
+    },
+
+    wooVariationLink: {
+      findMany: async ({ where = {} } = {}) =>
+        db.wooVariationLink.filter((l) =>
+          where.wooVariationId?.in ? where.wooVariationId.in.includes(Number(l.wooVariationId)) : true,
+        ),
+    },
+
+    priceList: {
+      findFirst: async ({ where = {} } = {}) =>
+        db.priceList.find((p) => (where.isDefault === undefined ? true : !!p.isDefault === where.isDefault)) || null,
+    },
+
+    priceRule: {
+      findMany: async ({ where = {} } = {}) =>
+        db.priceRule.filter((r) => {
+          if (where.cardGroupId?.in && !where.cardGroupId.in.includes(r.cardGroupId)) return false;
+          if (where.availableForGroupTickets !== undefined && !!r.availableForGroupTickets !== where.availableForGroupTickets) return false;
+          if (where.active !== undefined && !!r.active !== where.active) return false;
+          if (where.priceModel && r.priceModel !== where.priceModel) return false;
+          return true;
+        }),
+    },
+
+    productVariant: {
+      findMany: async ({ where = {} } = {}) =>
+        db.productVariant.filter((v) => (where.id?.in ? where.id.in.includes(v.id) : true)),
+    },
+
+    tourEvent: {
+      findUnique: async ({ where, select }) => {
+        const row = db.tourEvent.find((t) => t.id === where.id) || null;
+        if (!row || !select) return row;
+        return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
+      },
+      update: async ({ where, data }) => {
+        const row = db.tourEvent.find((t) => t.id === where.id);
+        if (!row) throw new Error('testDb: tourEvent.update missing row');
+        applyPatch(row, data);
+        return row;
+      },
+      updateMany: async ({ where = {}, data }) => {
+        const rows = db.tourEvent.filter((t) => (where.id ? t.id === where.id : true));
+        for (const r of rows) applyPatch(r, data);
+        return { count: rows.length };
+      },
+    },
+
+    openTourTemplateProduct: {
+      findMany: async ({ where = {} } = {}) =>
+        db.openTourTemplateProduct.filter((p) => (where.templateId ? p.templateId === where.templateId : true)),
+      findFirst: async () => null,
+    },
+
+    tourEventActivityComponent: {
+      findMany: async ({ where = {} } = {}) =>
+        db.tourEventActivityComponent.filter((c) => (where.tourEventId ? c.tourEventId === where.tourEventId : true)),
+      deleteMany: async ({ where = {} } = {}) => {
+        const ids = new Set(where.id?.in || []);
+        const keep = db.tourEventActivityComponent.filter((c) => !ids.has(c.id));
+        const count = db.tourEventActivityComponent.length - keep.length;
+        db.tourEventActivityComponent = keep;
+        return { count };
+      },
+      createMany: async ({ data }) => {
+        for (const d of data) db.tourEventActivityComponent.push({ id: nextId('tac'), ...d });
+        return { count: data.length };
+      },
+    },
+
+    booking: {
+      findFirst: async ({ where = {}, include } = {}) => {
+        const row = db.booking.find(
+          (b) =>
+            (where.dealId ? b.dealId === where.dealId : true) &&
+            (where.status ? b.status === where.status : true),
+        ) || null;
+        if (!row) return null;
+        return include?.tourEvent ? { ...row, tourEvent: db.tourEvent.find((t) => t.id === row.tourEventId) || null } : row;
+      },
+      create: async ({ data }) => {
+        const row = { id: nextId('bk'), createdAt: new Date(), ...data };
+        db.booking.push(row);
+        return row;
+      },
+      groupBy: async () => [],
+    },
+
+    ticketRegistration: {
+      findFirst: async ({ where = {}, orderBy } = {}) => {
+        let rows = db.ticketRegistration.filter((r) => regMatch(r, where));
+        if (orderBy?.createdAt === 'desc') rows = [...rows].sort((a, b) => b.createdAt - a.createdAt);
+        return rows[0] || null;
+      },
+      findMany: async ({ where = {} } = {}) => db.ticketRegistration.filter((r) => regMatch(r, where)),
+      aggregate: async ({ where = {} } = {}) => {
+        const rows = db.ticketRegistration.filter((r) => regMatch(r, where));
+        return { _sum: { quantity: rows.reduce((n, r) => n + (Number(r.quantity) || 0), 0) } };
+      },
+      groupBy: async ({ by, where = {} } = {}) => {
+        const rows = db.ticketRegistration.filter((r) => regMatch(r, where));
+        const acc = new Map();
+        for (const r of rows) {
+          const k = r[by[0]];
+          acc.set(k, (acc.get(k) || 0) + (Number(r.quantity) || 0));
+        }
+        return [...acc.entries()].map(([k, q]) => ({ [by[0]]: k, _sum: { quantity: q } }));
+      },
+      create: async ({ data }) => {
+        const row = { id: nextId('tr'), createdAt: new Date(), ...data };
+        db.ticketRegistration.push(row);
+        return row;
+      },
+      update: async ({ where, data }) => {
+        const row = db.ticketRegistration.find((r) => r.id === where.id);
+        if (!row) throw new Error('testDb: ticketRegistration.update missing row');
+        Object.assign(row, data);
+        return row;
+      },
+      updateMany: async ({ where = {}, data }) => {
+        const rows = db.ticketRegistration.filter((r) => regMatch(r, where));
+        for (const r of rows) Object.assign(r, data);
+        return { count: rows.length };
+      },
+    },
+
+    dealCollectionEvidence: {
+      findFirst: async ({ where = {} } = {}) =>
+        db.dealCollectionEvidence.find(
+          (e) =>
+            (where.dealId ? e.dealId === where.dealId : true) &&
+            (where.kind ? e.kind === where.kind : true) &&
+            (where.reference ? e.reference === where.reference : true) &&
+            (where.status ? e.status === where.status : true),
+        ) || null,
+      create: async ({ data }) => {
+        const row = { id: nextId('ev$'), status: 'active', createdAt: new Date(), ...data };
+        db.dealCollectionEvidence.push(row);
+        return row;
+      },
+    },
+
+    reviewItem: {
+      create: async ({ data }) => {
+        if (db.reviewItem.some((r) => r.dedupeKey === data.dedupeKey)) throw uniqueViolation();
+        const row = { id: nextId('ri'), status: 'open', createdAt: new Date(), ...data };
+        db.reviewItem.push(row);
+        return row;
+      },
+      findUnique: async ({ where }) => db.reviewItem.find((r) => r.dedupeKey === where.dedupeKey) || null,
+    },
 
     dealContact: {
       findFirst: async ({ where }) => {
@@ -309,6 +585,57 @@ export function seedContact(client, { firstName = 'דור', lastName = 'כהן',
   if (phone) t.contactPhone.push({ id: nextId('cp'), contactId: contact.id, value: phone, isPrimary: true });
   if (email) t.contactEmail.push({ id: nextId('ce'), contactId: contact.id, value: email, isPrimary: true });
   return contact.id;
+}
+
+// A complete, minimal Woo-sellable catalog: one Pricing Card (adult ₪100 /
+// child ₪50, VAT included), its variant, one scheduled group slot and the two
+// WooVariationLinks the outbound sync would have written. Mirrors the REAL
+// production shape (one variable Woo product, one variation per ticket type).
+export function seedWooCatalog(client, {
+  tourEventId = 'tour_1',
+  cardGroupId = 'card_1',
+  wooProductId = 167,
+  adultVariationId = 2108,
+  childVariationId = 2109,
+  capacity = 30,
+  adultPriceMinor = 10000,
+  childPriceMinor = 5000,
+} = {}) {
+  const t = client._tables;
+  t.priceList.push({ id: 'pl_1', isDefault: true, defaultVatMode: 'included', defaultVatRate: 18 });
+  t.ticketType.push(
+    { id: 'tt_adult', nameHe: 'מבוגר', sortOrder: 0 },
+    { id: 'tt_child', nameHe: 'ילד', sortOrder: 1 },
+  );
+  t.productVariant.push({
+    id: 'pv_1', productId: 'prod_1', durationHours: 2,
+    activityComponents: [{ activityComponentId: 'comp_tour' }],
+  });
+  t.priceRule.push({
+    id: 'pr_1', cardGroupId, priceModel: 'ticket_types',
+    availableForGroupTickets: true, active: true,
+    productId: 'prod_1', productVariantId: 'pv_1',
+    vatMode: 'included', vatRate: null, cardSortOrder: 0, createdAt: new Date(0),
+    firstLineNote: null, multiGroupNote: null,
+    product: { nameHe: 'סיור גרפיטי תל אביב' },
+    ticketPrices: [
+      { ticketTypeId: 'tt_adult', priceMinor: adultPriceMinor, ticketType: { nameHe: 'מבוגר', sortOrder: 0 } },
+      { ticketTypeId: 'tt_child', priceMinor: childPriceMinor, ticketType: { nameHe: 'ילד', sortOrder: 1 } },
+    ],
+  });
+  t.tourEvent.push({
+    id: tourEventId, kind: 'group_slot', status: 'scheduled',
+    date: '2026-09-15', startTime: '10:00', tourLanguage: 'he',
+    locationId: 'loc_tlv', capacity,
+    productId: 'prod_1', productVariantId: 'pv_1',
+    productManualOverride: false, openTourTemplateId: null,
+    wooDesiredRevision: 0,
+  });
+  t.wooVariationLink.push(
+    { id: 'wvl_a', tourEventId, cardGroupId, variantKey: 'tt_adult', ticketTypeId: 'tt_adult', wooProductId, wooVariationId: adultVariationId, status: 'synced' },
+    { id: 'wvl_c', tourEventId, cardGroupId, variantKey: 'tt_child', ticketTypeId: 'tt_child', wooProductId, wooVariationId: childVariationId, status: 'synced' },
+  );
+  return { tourEventId, cardGroupId, adultVariationId, childVariationId };
 }
 
 export function seedOpenDeal(client, contactId, { createdAt = new Date(), status = 'open' } = {}) {

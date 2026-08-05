@@ -172,6 +172,12 @@ export async function resolveOrganization(db, normalized) {
  *
  * Deliberately NOT contact-based: two separate purchases by the same person are
  * two orders, and person-level dedupe (which leads use) must never merge them.
+ *
+ * Matches ANY event that produced a deal, not only 'processed' ones: the
+ * pipeline stamps dealId on the event right after the persist commit, BEFORE
+ * the post-commit operational chain runs — so an order whose operational step
+ * failed (event back to 'pending') still resolves to its deal on the next
+ * delivery instead of minting a second one.
  */
 export async function findDealForExternalOrder(db, { source, sourceKey = null, externalId }) {
   if (!source || !externalId) return null;
@@ -180,10 +186,9 @@ export async function findDealForExternalOrder(db, { source, sourceKey = null, e
       source,
       sourceKey: sourceKey ?? null,
       externalId: String(externalId),
-      status: 'processed',
       dealId: { not: null },
     },
-    orderBy: { processedAt: 'desc' },
+    orderBy: { receivedAt: 'desc' },
     select: { id: true, dealId: true, normalized: true, processedAt: true },
   });
   if (!prior) return null;

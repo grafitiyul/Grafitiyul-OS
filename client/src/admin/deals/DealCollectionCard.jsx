@@ -146,7 +146,11 @@ export function OpenDocumentButton({ dealId, row, label }) {
 // trust behind it is not, and the panel must never blur the two.
 function PaymentRow({ row, onReverse, dealId }) {
   const out = row.direction === 'out';
-  const manual = row.evidenceClass === 'manual';
+  // Evidence rows (operator-attested OR machine-recorded Woo money) render by
+  // their kind label and support reversal; document rows render by doc number.
+  // Keyed on rowType, NOT evidenceClass — a woo_payment evidence row carries
+  // evidenceClass 'provider' but is still evidence, not an iCount document.
+  const manual = row.rowType === 'evidence';
   const badge = EVIDENCE_CLASS_BADGE[row.evidenceClass] || EVIDENCE_CLASS_BADGE.verified;
 
   const title = manual

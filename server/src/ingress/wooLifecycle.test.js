@@ -155,13 +155,13 @@ test('woo: pending → processing → completed stays ONE deal, won exactly once
   assert.equal(deals(db)[0].status, 'won', 'paid ⇒ WON through the canonical transition');
   assert.equal(deals(db)[0].dealStageId, 'stage_won', 'and moved to the final stage');
   assert.ok(deals(db)[0].wonAt, 'wonAt stamped');
-  assert.equal(r2.won.wonNow, true, 'this delivery is the genuine transition');
+  assert.equal(r2.operational.settle.wonNow, true, 'this delivery is the genuine transition');
 
   const wonAt = deals(db)[0].wonAt;
   const r3 = await deliver(db, wooOrder({ status: 'completed', date_paid: '2026-08-04T10:00:00', date_completed: '2026-08-04T11:00:00' }));
   assert.equal(r3.outcome, 'updated_order_deal');
   assert.equal(deals(db).length, 1);
-  assert.equal(r3.won.wonNow, false, 'the second paid delivery must NOT win again');
+  assert.equal(r3.operational.settle.alreadyWon, true, 'the second paid delivery must NOT win again');
   assert.equal(deals(db)[0].wonAt, wonAt, 'wonAt is not restamped');
 
   assert.equal(pinned(db).length, 3, 'one pinned note per real transition');

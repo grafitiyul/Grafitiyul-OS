@@ -10,6 +10,7 @@ import { DOC_TYPE_LABELS } from './icountDocs.js';
 //   IN   קבלה (receipt), חשבונית מס קבלה (invrec)   — record money received
 //   IN   manual payment evidence                     — operator-attested money
 //   IN   settlement evidence                         — an explicit "settled" call
+//   IN   woo_payment evidence                        — website (Woo) gateway money
 //   OUT  חשבונית זיכוי (refund)                      — money returned
 //   OUT  manual credit evidence
 //
@@ -49,6 +50,9 @@ export const EVIDENCE_KIND_LABELS = {
   manual_payment: 'תשלום ידני',
   manual_credit: 'זיכוי ידני',
   settlement: 'סגירת יתרה ידנית',
+  // Machine-recorded website payment (Woo order webhook) — money received by
+  // the store's own gateway. origin 'woo', never operator-attested.
+  woo_payment: 'תשלום באתר',
 };
 
 const num = (v) => Number(v ?? 0);
@@ -140,7 +144,9 @@ function evidenceRow(e) {
   return {
     id: e.id,
     rowType: 'evidence',
-    evidenceClass: 'manual',
+    // Machine-recorded provider money (Woo) renders as provider evidence, so
+    // it can never be mistaken for an operator's manual attestation.
+    evidenceClass: e.origin === 'woo' ? 'provider' : 'manual',
     kind: e.kind,
     kindLabel: EVIDENCE_KIND_LABELS[e.kind] || e.kind,
     counts: true,

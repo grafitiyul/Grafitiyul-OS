@@ -24,6 +24,7 @@ import { websiteFormAdapter } from '../ingress/adapters/websiteForm.js';
 import { buildIdempotencyKey } from '../ingress/identity.js';
 import { metaConfigured, wooStoreConfigured, websiteFormConfigured, wooStoreConfig } from '../ingress/config.js';
 import { IngressError } from '../ingress/errors.js';
+import { assertIngressAllowed } from '../mirror/sourceRegistry.js';
 
 const router = Router();
 
@@ -139,6 +140,18 @@ router.post(
     const { storeKey } = req.params;
     if (!wooStoreConfig(storeKey)) return res.status(404).json({ ok: false, error: 'store_unknown' });
     if (!wooStoreConfigured(storeKey)) return res.status(503).json({ ok: false, error: 'source_not_configured' });
+
+    // ONE active writer per source (cutover registry): until the writer env
+    // flips to `direct`, this endpoint refuses loudly — accepting would run
+    // direct ingress ALONGSIDE the legacy Make→Pipedrive path and double every
+    // order. 409 is deliberate: the store operator sees a hard error, nothing
+    // is silently dropped, and flipping SOURCE_WRITER_* is the whole fix.
+    try {
+      assertIngressAllowed('woocommerce', storeKey);
+    } catch (err) {
+      console.error(`[ingress:woo:${storeKey}] refused — ${err.code}`);
+      return res.status(err.status || 409).json({ ok: false, error: err.code || 'source_not_cut_over' });
+    }
 
     try {
       wooAdapter.verify({ rawBody: req.rawBody, headers: req.headers, storeKey });

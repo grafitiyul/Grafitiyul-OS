@@ -39,8 +39,7 @@ import { platformConfig } from './config.js';
 import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
 import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 import { statusMeaning } from './adapters/woocommerce.js';
-import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
-import { publicOrigin } from '../communication/context.js';
+import { runWooOrderOperational } from '../deals/wooOrderOperational.js';
 
 export const MAX_ATTEMPTS = 8;
 const RETRY_BASE_MS = 60 * 1000; // 1m, 2m, 4m … capped at 1h
@@ -48,34 +47,6 @@ const RETRY_CAP_MS = 60 * 60 * 1000;
 
 export function retryDelayMs(attemptCount) {
   return Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** Math.max(0, attemptCount - 1));
-}
-
-/**
- * An order that has reached a PAID status wins the deal — through the canonical
- * transition, inside the caller's transaction.
- *
- * Idempotency is the service's own: transitionDealToWon guards on
- * `status != 'won'` atomically, so processing → completed wins once and the
- * second delivery is a no-op. Nothing here re-implements that.
- *
- * Non-paid statuses NEVER change the business status. In particular a refund or
- * a cancellation after payment leaves the deal WON with a loud pinned note —
- * reversing a win automatically would silently undo real revenue, tour bookings
- * and sent confirmations. That is an office decision, not a webhook's.
- *
- * Returns { wonNow, wonAt } so the caller can fire post-commit effects.
- */
-async function maybeWinOrder(tx, dealId, normalized) {
-  if (normalized.kind !== 'order' || !normalized.order?.paid) return { wonNow: false };
-  try {
-    const t = await transitionDealToWon(tx, { dealId, publicOrigin: publicOrigin() });
-    return { wonNow: t.wonNow, wonAt: t.wonAt };
-  } catch (err) {
-    // A missing final stage must not lose the order. The deal, its note and its
-    // history are already correct; the win is what failed, and it is visible.
-    console.error(`[ingress] WON transition failed for deal ${dealId}: ${err?.message || err}`);
-    return { wonNow: false, error: err?.code || 'won_transition_failed' };
-  }
 }
 
 // Record one attempt. Never throws — an audit-write failure must not mask the
@@ -273,12 +244,10 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
           outcome: 'updated_order_deal',
           createdAt: historyAt,
         });
-        const won = await maybeWinOrder(tx, decision.dealId, normalized);
         return {
           dealId: decision.dealId,
           contactId: match.contactId || priorOrder?.contactId || null,
           outcome: 'updated_order_deal',
-          won,
         };
       }
 
@@ -308,9 +277,27 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
         outcome: 'created_deal',
         createdAt: historyAt,
       });
-      const won = await maybeWinOrder(tx, created.dealId, normalized);
-      return { ...created, outcome: 'created_deal', won };
+      return { ...created, outcome: 'created_deal' };
     });
+
+    // ── Operational chain (Woo orders) ─────────────────────────────────────
+    // Everything a paid order means BEYOND the deal — canonical quote, payment
+    // evidence, WON via settleDealWon (booking + registrations + capacity +
+    // confirmation email) — runs AFTER the persist commit, through its own
+    // idempotent services, and BEFORE the event is marked processed: a failure
+    // here re-enters the normal retry ladder and the replay converges.
+    //
+    // The dealId is stamped on the event FIRST (status still 'pending') so the
+    // order→deal crosswalk survives a mid-flight failure — a retry finds the
+    // deal via findDealForExternalOrder and can never mint a second one.
+    let operational = null;
+    if (normalized.kind === 'order') {
+      await db.ingressEvent.update({ where: { id: eventId }, data: { dealId: result.dealId } });
+      operational = await runWooOrderOperational(
+        { dealId: result.dealId, normalized, storeKey: row.sourceKey },
+        { db },
+      );
+    }
 
     await db.ingressEvent.update({
       where: { id: eventId },
@@ -346,20 +333,7 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
       ensureInitialCallTask({ dealId: result.dealId });
     }
 
-    // Post-commit effects of a genuine WON transition — Communication Center
-    // triggers, Manager Report #26 and the confirmation email. Fired here, from
-    // the transaction that actually flipped the status, exactly as every other
-    // WON path does it. `cause` marks this as an automatic, order-driven win so
-    // nothing attributes it to a human who never clicked anything.
-    if (result.won?.wonNow) {
-      emitWonTransitionEffects({
-        dealId: result.dealId,
-        wonAt: result.won.wonAt,
-        cause: 'woo_order',
-        paymentAmountMinor: null,
-      });
-    }
-    return { status: 'processed', ...result };
+    return { status: 'processed', ...result, operational };
   } catch (err) {
     const ie = toIngressError(err, stage);
     // Permanent faults must not burn retries; transient ones retry with

@@ -57,7 +57,10 @@ export const SOURCES = Object.freeze([
     label: 'חנות חדשה (WooCommerce)',
     env: 'SOURCE_WRITER_WOO_NEW',
     ingressSource: 'woocommerce',
-    ingressSourceKey: 'new',
+    // MUST match ingress/config.js WOO_STORES vocabulary ('primary'/'secondary').
+    // The old value 'new' never matched a real storeKey, so the secondary store
+    // fell through sourceForIngress' loose match and resolved to woo_old.
+    ingressSourceKey: 'secondary',
     legacyMarker: [],
     requires: ['WOO_NEW_WEBHOOK_SECRET', 'WOO_NEW_BASE_URL'],
   },

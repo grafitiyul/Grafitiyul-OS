@@ -6,3 +6,4 @@ import './logisticsReport.js';
 import './participantChange.js';
 import './coordinationIssue.js';
 import './confirmationEmailReview.js';
+import './wooOrderAttention.js';

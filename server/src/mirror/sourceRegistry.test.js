@@ -93,7 +93,9 @@ test('ingress adapter keys resolve to registry sources, including per-store keys
   assert.equal(sourceForIngress('meta_lead_ads'), 'meta');
   assert.equal(sourceForIngress('website_form'), 'website_forms');
   assert.equal(sourceForIngress('woocommerce', 'primary'), 'woo_old');
-  assert.equal(sourceForIngress('woocommerce', 'new'), 'woo_new');
+  // 'secondary' is the ingress/config.js store vocabulary — the registry MUST
+  // speak the same one, or the second store silently resolves to woo_old.
+  assert.equal(sourceForIngress('woocommerce', 'secondary'), 'woo_new');
   assert.equal(sourceForIngress('nothing_like_this'), null);
 });
 
@@ -136,7 +138,7 @@ test('an unregistered source is a 404, never a silent accept', () => {
 test('the two Woo stores are switched independently', () => {
   const e = env({ SOURCE_WRITER_WOO_OLD: 'direct', WOO_PRIMARY_WEBHOOK_SECRET: 's' });
   assert.equal(assertIngressAllowed('woocommerce', 'primary', e), 'woo_old');
-  assert.throws(() => assertIngressAllowed('woocommerce', 'new', e), (x) => x.code === 'SOURCE_NOT_CUT_OVER');
+  assert.throws(() => assertIngressAllowed('woocommerce', 'secondary', e), (x) => x.code === 'SOURCE_NOT_CUT_OVER');
 });
 
 // ── status surface ────────────────────────────────────────────────────────────
