@@ -42,9 +42,13 @@ function coded(code) {
 
 // Serialize finance-contact work per organization. xact-scoped: released
 // automatically on commit/rollback. No-op for injected test fakes.
+// `IS NULL` wraps the lock call because pg_advisory_xact_lock() returns VOID,
+// which the Prisma engine refuses to deserialize — the bare SELECT 500'd every
+// org create/update that carried finance-contact fields in production (the
+// canonical "+ צור ארגון חדש" dialog always does).
 async function lockOrganization(tx, organizationId) {
   if (typeof tx.$queryRaw !== 'function') return;
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, 0))`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${organizationId}, 0)) IS NULL AS locked`;
 }
 
 // Match an existing Contact by the canonical identity rules, else create one.
