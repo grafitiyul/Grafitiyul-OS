@@ -70,12 +70,34 @@ async function migrateImage(originalUrl) {
     return url;
   }
 
-  const res = await fetch(WAYBACK(originalUrl), { signal: AbortSignal.timeout(90000) });
-  if (!res.ok) {
-    console.log(`    ! archive miss (${res.status}) for ${originalUrl}`);
+  // The Internet Archive rate-limits and occasionally refuses a connection. A
+  // transient failure must not abort a 32-image import that is otherwise fine,
+  // and must not silently drop the picture either — so retry with a backoff and
+  // only give up (visibly) after several attempts.
+  let res = null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      res = await fetch(WAYBACK(originalUrl), { signal: AbortSignal.timeout(60000) });
+      if (res.ok) break;
+      lastErr = `HTTP ${res.status}`;
+      res = null;
+    } catch (e) {
+      lastErr = String(e.cause?.code || e.message || e);
+      res = null;
+    }
+    if (attempt < 4) {
+      const wait = attempt * 4000;
+      console.log(`    … archive retry ${attempt}/3 in ${wait / 1000}s (${lastErr})`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  if (!res) {
+    console.log(`    ! archive unavailable after retries (${lastErr}) — ${originalUrl}`);
     imageCache.set(originalUrl, '');
     return '';
   }
+
   const body = Buffer.from(await res.arrayBuffer());
   const type = res.headers.get('content-type') || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
   if (body.length < 500) {
