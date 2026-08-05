@@ -335,3 +335,72 @@ test('refunds subtract and manual money is reported on its own line', async () =
   assert.equal(t.manualReceivedMinor, 5_000);
   assert.equal(t.collectedMinor, 85_000);
 });
+
+// ── Document visibility in the Deal panel (production bug 2026-08-05) ────────
+// A manually issued invrec was invisible in the Collection box. The SERVER
+// aggregation was always source-agnostic — these tests pin that contract so a
+// future "filter by source/UI-of-origin" can never pass review, and pin the
+// exactly-once counting around the manual-payment document flow.
+
+test('an issued invrec appears and counts REGARDLESS of source (user / webhook / linked)', () => {
+  for (const source of ['user', 'webhook', 'linked']) {
+    const c = computeCollection(deal(90_000), [doc('invrec', 90_000, { source })]);
+    assert.equal(c.payments.length, 1, `source=${source} appears in payments`);
+    assert.equal(c.payments[0].docnum ?? c.payments[0].id, c.payments[0].docnum ?? c.payments[0].id);
+    assert.equal(c.paidMinor, 90_000, `source=${source} counts`);
+    assert.equal(c.balanceMinor, 0);
+    assert.equal(c.status, 'paid');
+  }
+});
+
+test('deal-action billing paper (invoice/חשבון עסקה) appears as billing, never as money', () => {
+  const c = computeCollection(deal(100_000), [doc('invoice', 100_000, { docnum: '10551' }), doc('deal', 100_000, { docnum: '54513' })]);
+  assert.equal(c.billingDocuments.length, 2, 'both visible as billing context');
+  assert.equal(c.paidMinor, 0, 'paper is not money');
+  // …and closing the invoice with a receipt makes it paid, counted ONCE.
+  const closed = computeCollection(deal(100_000), [doc('invoice', 100_000), doc('receipt', 100_000)]);
+  assert.equal(closed.paidMinor, 100_000);
+  assert.equal(closed.status, 'paid');
+});
+
+test('a linked historical shared document appears, flagged, counted by its allocation', () => {
+  const c = computeCollection(deal(150_000), [
+    doc('receipt', 3_074_500, { source: 'linked', sharedHistorical: true, allocationMinor: 150_000, docnum: '9001' }),
+  ]);
+  assert.equal(c.payments.length, 1);
+  assert.equal(c.payments[0].sharedHistorical, true);
+  assert.equal(c.paidMinor, 150_000, 'the deal counts its allocation, not the face value');
+  assert.equal(c.status, 'paid');
+});
+
+test('the manual-payment flow document is counted exactly ONCE (no evidence row beside it)', () => {
+  // The atomic flow's contract: the issued invrec IS the money record and no
+  // manual_payment evidence is written next to it. One row, one count.
+  const c = computeCollection(deal(90_000), [doc('invrec', 90_000, { source: 'user', docnum: '38523' })], []);
+  assert.equal(c.payments.length, 1, 'shown once');
+  assert.equal(c.paidMinor, 90_000, 'counted once');
+  assert.equal(c.balanceMinor, 0, 'balance decreased once');
+  // If an evidence row WERE written beside the same money, the panel would
+  // honestly show overpaid rather than hiding it — the double-count is a
+  // write-side invariant (registerWithManualPayment), asserted there.
+  const doubled = computeCollection(deal(90_000), [doc('invrec', 90_000)], [ev('manual_payment', 90_000)]);
+  assert.equal(doubled.status, 'overpaid');
+});
+
+test('the same document appears exactly once in the panel rows', () => {
+  const c = computeCollection(deal(90_000), [doc('invrec', 90_000, { docnum: '38523' })]);
+  const rows = c.evidence.filter((r) => r.docnum === '38523');
+  assert.equal(rows.length, 1);
+});
+
+test('opening the Collection panel is a PURE READ — the resolver never writes', async () => {
+  const { dealCollection } = await import('./collection.js');
+  const forbid = () => { throw new Error('collection read attempted a WRITE'); };
+  const db = {
+    icountDocument: { findMany: async () => [doc('invrec', 90_000, { docnum: '38523' })], create: forbid, update: forbid, updateMany: forbid, delete: forbid },
+    dealCollectionEvidence: { findMany: async () => [], create: forbid, update: forbid, updateMany: forbid, delete: forbid },
+  };
+  const s = await dealCollection(db, deal(90_000, { id: 'd1' }));
+  assert.equal(s.paidMinor, 90_000);
+  assert.equal(s.payments[0].docnum, '38523');
+});

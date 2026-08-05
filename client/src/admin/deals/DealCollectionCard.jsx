@@ -11,6 +11,7 @@ import LinkExistingDocumentModal from './collection/LinkExistingDocumentModal.js
 import { formatMinor } from '../../lib/money.js';
 import { contactNameHe } from './config.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
+import { DEAL_TASKS_CHANGED_EVENT } from './tasks/taskEvents.js';
 import { ReviewStatusBadge } from '../collection/CollectionPage.jsx';
 import {
   COLLECTION_STATUS_LABELS,
@@ -266,11 +267,29 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
     }
   }, [deal.id]);
 
-  // Refetch on mount and whenever the Price Builder headline changes — the
-  // server total mirrors Deal.valueMinor and must never show stale.
+  // Refetch on mount and on EVERY parent deal refresh — not only when the
+  // headline total changes. An accounting document issued through a flow
+  // OUTSIDE this card (the manual-payment registration flow, a webhook
+  // auto-issue landing mid-session) changes the deal's financial rows without
+  // touching Deal.valueMinor; keying on valueMinor alone left the panel stale
+  // and the fresh document invisible (production bug). DealDetail.refresh()
+  // builds a new `deal` object after every action, so this refetches then.
   useEffect(() => {
     reload();
-  }, [reload, deal.valueMinor]);
+  }, [reload, deal]);
+
+  // Same-browser invalidation: ProduceDocumentModal / the Cardcom modal /
+  // registration flows emit the deal-changed hint on every issue regardless
+  // of which host mounted them (the SAME channel the timeline listens to).
+  // Any financial event on THIS deal refetches the summary — the source UI
+  // never determines visibility.
+  useEffect(() => {
+    const onExternal = (e) => {
+      if (e?.detail?.dealId === deal.id) reload();
+    };
+    window.addEventListener(DEAL_TASKS_CHANGED_EVENT, onExternal);
+    return () => window.removeEventListener(DEAL_TASKS_CHANGED_EVENT, onExternal);
+  }, [deal.id, reload]);
 
   // ── Payment actions (entry points only — flows live in their modals) ─────
   const [payBusy, setPayBusy] = useState(false);
