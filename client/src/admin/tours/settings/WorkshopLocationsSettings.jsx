@@ -244,6 +244,7 @@ function LocationForm({ draft, onClose, onSubmit }) {
         onEn={(v) => set('nameEn', v)}
         placeholderHe="שם המיקום"
         placeholderEn="Location name"
+        autoFocus
       />
       <BilingualField
         label="כתובת"

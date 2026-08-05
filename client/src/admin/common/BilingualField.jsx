@@ -27,7 +27,7 @@ const INPUT_CLS =
 
 function Control({ render, rows, ...props }) {
   if (typeof render === 'function') return render(props);
-  const { value, onChange, dir, ariaLabel, placeholder } = props;
+  const { value, onChange, dir, ariaLabel, placeholder, autoFocus } = props;
   const align = dir === 'ltr' ? 'text-left' : 'text-right';
   if (render === 'textarea') {
     return (
@@ -38,6 +38,7 @@ function Control({ render, rows, ...props }) {
         rows={rows || 2}
         aria-label={ariaLabel}
         placeholder={placeholder}
+        autoFocus={autoFocus}
         className={`${INPUT_CLS} h-auto resize-y py-2 ${align}`}
       />
     );
@@ -49,6 +50,7 @@ function Control({ render, rows, ...props }) {
       dir={dir}
       aria-label={ariaLabel}
       placeholder={placeholder}
+      autoFocus={autoFocus}
       className={`${INPUT_CLS} ${align}`}
     />
   );
@@ -65,6 +67,9 @@ export default function BilingualField({
   rows,
   placeholderHe,
   placeholderEn,
+  // Focus the HEBREW side on mount — Hebrew is the authoring language, so a
+  // new-row form should land the cursor there, not in the translation.
+  autoFocus = false,
   // 'html' for rich editors (the translator preserves markup), 'text' for
   // plain inputs — passed straight through to the shared translate service.
   format = 'text',
@@ -83,6 +88,7 @@ export default function BilingualField({
           dir="rtl"
           ariaLabel={label}
           placeholder={placeholderHe}
+          autoFocus={autoFocus}
         />
       </div>
       <div>

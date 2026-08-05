@@ -269,6 +269,69 @@ test('every bilingual admin write path accepts the English twin', () => {
   }
 });
 
+// ── THE operator rule ────────────────────────────────────────────────────────
+//
+// "If an operator is expected to translate it, there must be a normal admin
+//  screen where it can be edited."
+//
+// Nothing that the coverage report asks an operator to fill may live only in the
+// database. This pins the admin EDITOR for every such field — the gap that let
+// ActivityComponent.nameEn sit in the schema (and in the report) for months with
+// no input anywhere, on the very page whose other card was already bilingual.
+const OPERATOR_EDITABLE = [
+  // [what the report asks for, the admin screen, how that screen edits it]
+  ['ActivityComponent.nameEn', 'client/src/admin/tours/settings/ActivityComponentsSettings.jsx', 'nameEn'],
+  ['WorkshopLocation.*En', 'client/src/admin/tours/settings/WorkshopLocationsSettings.jsx', 'instructionsEn'],
+  ['Product.nameEn', 'client/src/admin/products/ProductDetail.jsx', 'nameEn'],
+  ['Location.nameEn', 'client/src/admin/products/LocationsSettings.jsx', 'nameEn'],
+  ['PayrollComponent.nameEn', 'client/src/admin/finance/settings/PayrollComponentsSettings.jsx', 'nameEn'],
+  ['GeneralActivityType.*En', 'client/src/admin/finance/settings/GeneralActivityTypesSettings.jsx', 'unitLabelSingularEn'],
+  ['Flow.titleEn', 'client/src/admin/procedures/flows/FlowEditor.jsx', 'titleEn'],
+  ['Tour.titleEn', 'client/src/admin/tour-content/StationsPane.jsx', 'titleEn'],
+  ['TourStation.titleEn', 'client/src/admin/tour-content/StationEditor.jsx', 'titleEn'],
+  ['TourContentBlock.bodyEn', 'client/src/admin/tour-content/StationEditor.jsx', 'bodyEn'],
+];
+
+test('every field the report asks an operator to translate has an admin editor', () => {
+  for (const [what, file, token] of OPERATOR_EDITABLE) {
+    const full = path.join(CLIENT_SRC, '..', '..', file);
+    assert.ok(fs.existsSync(full), `${what}: admin screen ${file} does not exist`);
+    const src = fs.readFileSync(full, 'utf8');
+    assert.ok(
+      src.includes(token),
+      `${what} is in the English-coverage report but ${file} has no way to edit it — ` +
+        'nothing requiring English may exist only in the database',
+    );
+  }
+});
+
+// Reachability: an editor nobody can navigate to is the same problem one step
+// later. Each screen above must be routed AND linked from its settings hub.
+test('every bilingual admin screen is routed and reachable', () => {
+  const app = fs.readFileSync(path.join(CLIENT_SRC, 'App.jsx'), 'utf8');
+  const routes = [
+    'settings/tours/components',
+    'settings/finance/payroll-components',
+    'settings/finance/activity-types',
+    'settings/crm/locations',
+  ];
+  for (const r of routes) assert.ok(app.includes(r), `route ${r} is not registered in App.jsx`);
+  // Procedures (flows) is a top-level module, not a settings page.
+  assert.match(app, /path="flows"/);
+
+  const nav = fs.readFileSync(path.join(CLIENT_SRC, 'admin', 'settings', 'settingsNav.js'), 'utf8');
+  for (const r of routes) {
+    assert.ok(nav.includes(r), `${r} has no breadcrumb/nav entry — an operator cannot find it`);
+  }
+  const financeHome = fs.readFileSync(
+    path.join(CLIENT_SRC, 'admin', 'settings', 'FinanceSettingsHome.jsx'),
+    'utf8',
+  );
+  for (const r of ['payroll-components', 'activity-types']) {
+    assert.ok(financeHome.includes(r), `Finance settings home does not link to ${r}`);
+  }
+});
+
 test('the English snapshot never copies Hebrew into an English column', async () => {
   // PayrollActivity/GeneralActivity freeze a title at creation. With no
   // English anywhere in the source, the English snapshot must stay NULL.

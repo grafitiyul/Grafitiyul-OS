@@ -64,12 +64,12 @@ async function collect() {
       field: 'nameEn',
       screen: 'Upcoming tours · Past tours · Tour detail · Gallery · Participants breakdown',
       impact: 'The tour name shows in Hebrew on every card and heading.',
-      adminPath: '/admin/products',
+      adminPath: 'Settings → CRM → מוצרים → (the product)',
       kind: 'catalog',
       total: products.length,
       rows: products
         .filter((p) => blank(p.nameEn))
-        .map((p) => ({ id: p.id, he: p.nameHe, url: `${BASE}/admin/products/${p.id}` })),
+        .map((p) => ({ id: p.id, he: p.nameHe, url: `${BASE}/admin/settings/crm/products/${p.id}` })),
     }),
   );
 
@@ -83,12 +83,12 @@ async function collect() {
       field: 'nameEn',
       screen: 'Upcoming tours · Past tours · Tour detail · Parallel tours',
       impact: 'The city half of every tour title shows in Hebrew.',
-      adminPath: '/admin/settings/products/locations',
+      adminPath: 'Settings → CRM → מיקומים',
       kind: 'catalog',
       total: locations.length,
       rows: locations
         .filter((l) => blank(l.nameEn))
-        .map((l) => ({ id: l.id, he: l.nameHe, url: `${BASE}/admin/settings/products/locations` })),
+        .map((l) => ({ id: l.id, he: l.nameHe, url: `${BASE}/admin/settings/crm/locations` })),
     }),
   );
 
@@ -103,7 +103,7 @@ async function collect() {
       field: 'nameEn',
       screen: 'Tour detail — activity component chips + workshop rows',
       impact: 'Component chips show in Hebrew.',
-      adminPath: '/admin/settings/tours/components',
+      adminPath: 'Settings → סיורים → מרכיבי הפעילות ומיקומי הסדנה (card 1)',
       kind: 'catalog',
       total: components.length,
       rows: components
@@ -123,12 +123,12 @@ async function collect() {
       field: 'nameEn',
       screen: 'Tour detail — participants breakdown',
       impact: 'Ticket-type rows show in Hebrew.',
-      adminPath: '/admin/settings/products/ticket-types',
+      adminPath: 'Settings → CRM → סוגי כרטיסים',
       kind: 'catalog',
       total: ticketTypes.length,
       rows: ticketTypes
         .filter((t) => blank(t.nameEn))
-        .map((t) => ({ id: t.id, he: t.nameHe, url: `${BASE}/admin/settings/products/ticket-types` })),
+        .map((t) => ({ id: t.id, he: t.nameHe, url: `${BASE}/admin/settings/crm/ticket-types` })),
     }),
   );
 
@@ -156,7 +156,7 @@ async function collect() {
         id: w.id,
         he: w.nameHe,
         fields,
-        url: `${BASE}/admin/settings/tours/workshop-locations`,
+        url: `${BASE}/admin/settings/tours/components`,
       });
     }
   }
@@ -167,7 +167,7 @@ async function collect() {
       screen: 'Tour detail — workshop locations',
       impact:
         'HIGHEST operational risk: this is where the guide is told where to go, the address, and how to get in.',
-      adminPath: '/admin/settings/tours/workshop-locations',
+      adminPath: 'Settings → סיורים → מרכיבי הפעילות ומיקומי הסדנה (card 2)',
       kind: 'catalog',
       total: workshops.length,
       rows: workshopRows,
@@ -186,7 +186,7 @@ async function collect() {
       field: 'titleEn / descriptionEn',
       screen: 'Training content — list + station header',
       impact: 'The training set name shows in Hebrew.',
-      adminPath: '/admin/tour-content',
+      adminPath: 'מערכי הדרכה (tour content) → pick the tour / station',
       kind: 'content',
       total: tours.length,
       rows: tours
@@ -200,7 +200,7 @@ async function collect() {
               ? { field: 'descriptionEn', he: short(t.descriptionHe) }
               : null,
           ].filter(Boolean),
-          url: `${BASE}/admin/tour-content/${t.id}`,
+          url: `${BASE}/admin/tour-content/tours/${t.id}`,
         })),
     }),
   );
@@ -220,7 +220,7 @@ async function collect() {
       field: 'titleEn / descriptionEn',
       screen: 'Training content — station list + station page',
       impact: 'Station names and summaries show in Hebrew.',
-      adminPath: '/admin/tour-content',
+      adminPath: 'מערכי הדרכה (tour content) → pick the tour / station',
       kind: 'content',
       total: stations.length,
       rows: stations
@@ -234,7 +234,7 @@ async function collect() {
               ? { field: 'descriptionEn', he: short(s.descriptionHe) }
               : null,
           ].filter(Boolean),
-          url: `${BASE}/admin/tour-content/${s.tourId}/stations/${s.id}`,
+          url: `${BASE}/admin/tour-content/tours/${s.tourId}/stations/${s.id}`,
         })),
     }),
   );
@@ -258,7 +258,7 @@ async function collect() {
       field: 'titleEn / bodyEn',
       screen: 'Training content — station page body',
       impact: 'The teaching content itself shows in Hebrew. Highest VOLUME gap.',
-      adminPath: '/admin/tour-content',
+      adminPath: 'מערכי הדרכה (tour content) → pick the tour / station',
       kind: 'content',
       total: blocks.length,
       rows: blocks
@@ -274,7 +274,7 @@ async function collect() {
               !blank(b.bodyHe) && blank(b.bodyEn) ? { field: 'bodyEn', he: short(b.bodyHe) } : null,
             ].filter(Boolean),
             url: place
-              ? `${BASE}/admin/tour-content/${place.station.tourId}/stations/${place.stationId}`
+              ? `${BASE}/admin/tour-content/tours/${place.station.tourId}/stations/${place.stationId}`
               : `${BASE}/admin/tour-content`,
           };
         }),
@@ -291,7 +291,7 @@ async function collect() {
       field: 'titleEn',
       screen: 'Training content — media and links',
       impact: 'Media/link captions show in Hebrew.',
-      adminPath: '/admin/tour-content',
+      adminPath: 'מערכי הדרכה (tour content) → pick the tour / station',
       kind: 'content',
       total: assets.length,
       rows: assets
@@ -312,7 +312,7 @@ async function collect() {
       field: 'nameEn',
       screen: 'Pay — line names inside each entry',
       impact: 'Payroll line names show in Hebrew. Applies to PAST payslips too (resolved live).',
-      adminPath: '/admin/settings/finance/payroll-components',
+      adminPath: 'Settings → כספים → רכיבי שכר',
       kind: 'catalog',
       total: payComponents.length,
       rows: payComponents
@@ -336,7 +336,7 @@ async function collect() {
       field: 'nameEn / unitLabelSingularEn / unitLabelPluralEn',
       screen: 'Pay — general-addition entries and their "₪40 per hour × 1.5 hours" breakdown',
       impact: 'Activity names and unit nouns show in Hebrew inside otherwise-English pay cards.',
-      adminPath: '/admin/settings/finance/activity-types',
+      adminPath: 'Settings → כספים → סוגי תוספת כללית',
       kind: 'catalog',
       total: activityTypes.length,
       rows: activityTypes
@@ -374,7 +374,7 @@ async function collect() {
       field: 'titleEn / descriptionEn',
       screen: 'Procedures — task cards',
       impact: 'Procedure titles show in Hebrew.',
-      adminPath: '/admin/procedures/flows',
+      adminPath: 'נהלים → (the flow) — English title in the editor header',
       kind: 'content',
       total: flows.length,
       rows: flows
@@ -408,7 +408,7 @@ async function collect() {
       field: 'firstNameEn / lastNameEn',
       screen: 'Portal header (own name) · Profile · Tour detail — team',
       impact: 'Staff names show in Hebrew for an English-reading guide.',
-      adminPath: '/admin/people',
+      adminPath: 'אנשים → (the person)',
       kind: 'people',
       total: profiles.length,
       rows: profiles
@@ -441,7 +441,7 @@ async function collect() {
       field: "supportedLanguages missing 'en'",
       screen: 'Tour detail — tour summary form / coordination form',
       impact: "The form opens in the template's default language.",
-      adminPath: '/admin/settings/tours',
+      adminPath: 'Settings → סיורים',
       kind: 'content',
       total: questionnaires.length,
       rows: questionnaires

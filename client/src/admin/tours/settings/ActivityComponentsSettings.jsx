@@ -4,6 +4,7 @@ import ReorderableList from '../../common/ReorderableList.jsx';
 import AlertDialog from '../../common/AlertDialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import { COMPONENT_TONES, COMPONENT_TONE_DOTS, componentToneStyle } from '../config.js';
+import BilingualField from '../../common/BilingualField.jsx';
 
 // Settings → Tours → "מרכיבי פעילות". The reusable catalog of operational
 // building blocks a Product / TourEvent is made of. Drag to reorder; toggle
@@ -13,7 +14,7 @@ import { COMPONENT_TONES, COMPONENT_TONE_DOTS, componentToneStyle } from '../con
 const INPUT =
   'h-9 rounded-lg border border-gray-300 bg-white px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 
-const emptyDraft = { nameHe: '', icon: '', color: 'slate', isWorkshop: false };
+const emptyDraft = { nameHe: '', nameEn: '', icon: '', color: 'slate', isWorkshop: false };
 
 export default function ActivityComponentsSettings() {
   const [items, setItems] = useState([]);
@@ -75,6 +76,7 @@ export default function ActivityComponentsSettings() {
           <h2 className="text-[15px] font-semibold text-gray-900">מרכיבי פעילות</h2>
           <p className="text-[12.5px] text-gray-500 mt-0.5">
             אבני הבניין שמרכיבות כל סיור. מרכיב מסוג סדנה מקבל מיקום סדנה משלו בכל סיור.
+            השם באנגלית מוצג למדריכים דוברי אנגלית בפורטל.
           </p>
         </div>
         {!adding && !loading && (
@@ -140,6 +142,16 @@ export default function ActivityComponentsSettings() {
                       סדנה
                     </span>
                   )}
+                  {/* Operator-visible content gap: an English-speaking guide
+                      would read this chip in Hebrew. */}
+                  {item.isActive && !String(item.nameEn || '').trim() && (
+                    <span
+                      className="text-[11px] rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-200"
+                      title="אין שם באנגלית — מדריך דובר אנגלית יראה את השם בעברית"
+                    >
+                      חסר אנגלית
+                    </span>
+                  )}
                   <div className="flex-1" />
                   {!item.isActive && (
                     <span className="shrink-0 text-[11px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">
@@ -192,6 +204,7 @@ export default function ActivityComponentsSettings() {
 function ComponentForm({ draft, onClose, onSubmit }) {
   const [f, setF] = useState({
     nameHe: draft.nameHe || '',
+    nameEn: draft.nameEn || '',
     icon: draft.icon || '',
     color: draft.color || 'slate',
     isWorkshop: !!draft.isWorkshop,
@@ -205,7 +218,14 @@ function ComponentForm({ draft, onClose, onSubmit }) {
     if (!f.nameHe.trim()) return;
     setBusy(true);
     try {
-      await onSubmit({ ...f, nameHe: f.nameHe.trim(), icon: f.icon.trim() || null });
+      // Empty English clears the column back to "no English content yet" — it is
+      // never backfilled from the Hebrew.
+      await onSubmit({
+        ...f,
+        nameHe: f.nameHe.trim(),
+        nameEn: f.nameEn.trim() || null,
+        icon: f.icon.trim() || null,
+      });
     } catch (e) {
       setAlertMsg('שגיאה בשמירה: ' + (e.payload?.error || e.message));
       setBusy(false);
@@ -227,14 +247,7 @@ function ComponentForm({ draft, onClose, onSubmit }) {
           className={`${INPUT} w-14 text-center text-base`}
           title="אימוג'י / אייקון"
         />
-        <input
-          value={f.nameHe}
-          onChange={(e) => set('nameHe', e.target.value)}
-          placeholder="שם המרכיב"
-          className={`${INPUT} min-w-[10rem] flex-1`}
-          autoFocus
-        />
-        <label className="flex items-center gap-1.5 text-[13px] text-gray-700">
+        <label className="flex items-center gap-1.5 text-[13px] text-gray-700 ms-auto">
           <input
             type="checkbox"
             checked={f.isWorkshop}
@@ -243,6 +256,19 @@ function ComponentForm({ draft, onClose, onSubmit }) {
           סדנה
         </label>
       </div>
+      {/* The same shared He/En pair the workshop-locations card uses directly
+          below — He right/RTL, En left/LTR, with the canonical translate
+          action. Saving stays on this form's own save button. */}
+      <BilingualField
+        label="שם המרכיב"
+        he={f.nameHe}
+        en={f.nameEn}
+        onHe={(v) => set('nameHe', v)}
+        onEn={(v) => set('nameEn', v)}
+        placeholderHe="שם המרכיב"
+        placeholderEn="Component name"
+        autoFocus
+      />
       <div className="flex items-center gap-1.5">
         <span className="text-[12px] text-gray-500">צבע:</span>
         {COMPONENT_TONES.map((t) => (
