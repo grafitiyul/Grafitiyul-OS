@@ -7,6 +7,7 @@ import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
 import { sendReservationDocument } from '../reservations/document.js';
 import { classifyNameScript } from '../../../shared/nameLanguage.mjs';
+import { dealsForContact, contactDealsPanel } from '../crm/dealResolution.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
 // the future Deals/Activities workflow.
@@ -101,6 +102,20 @@ router.get(
     });
     if (!contact) return res.status(404).json({ error: 'not_found' });
     res.json(withFullNames(contact));
+  }),
+);
+
+// The contact's deals — the "דילים קודמים" panel on the Contact page. ONE
+// source of truth: the canonical DealContact relation via the SHARED
+// dealsForContact query (same as the WhatsApp/Email deal-resolution flows) —
+// never name/phone/email/org matching. Compact whitelisted DTO, canonical
+// activity-desc ordering. BigInt valueMinor is handled by the global
+// serializer (index.js).
+router.get(
+  '/:id/deals',
+  handle(async (req, res) => {
+    const deals = await dealsForContact(req.params.id);
+    res.json(contactDealsPanel(deals));
   }),
 );
 

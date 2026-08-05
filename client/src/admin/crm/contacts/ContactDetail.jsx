@@ -12,6 +12,7 @@ import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
 import FileEntryList from '../../common/files/FileEntryList.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 import CreateDealModal from '../../deals/CreateDealModal.jsx';
+import ContactDealsSection from './ContactDealsSection.jsx';
 import { dealPath } from '../../deals/config.js';
 
 function fmtDate(iso) {
@@ -164,6 +165,11 @@ export default function ContactDetail() {
         onReorder={(ids) => api.contacts.reorderEmails(id, ids)}
         onChange={refresh}
       />
+
+      {/* דילים קודמים — the contact's linked deals (canonical DealContact
+          relation), each a clickable row; header = the SECOND entry point into
+          the SAME create-deal flow as the page header's main button. */}
+      <ContactDealsSection contact={contact} onCreateDeal={() => setShowCreateDeal(true)} />
 
       <MembershipsSection contact={contact} onChange={refresh} />
 

@@ -43,6 +43,23 @@ const CONTACT = {
 
 let calls = [];
 
+// Mutable per-test response of GET /api/contacts/:id/deals (the panel).
+let dealsResponse = [];
+const DEALS = [
+  { id: 'dl1', orderNo: 27101, title: 'סיור קבוצתי', status: 'open', activityType: 'group',
+    tourDate: '2026-09-01', valueMinor: 0, currency: 'ILS', stageName: 'ליד חדש',
+    organizationName: null, productName: 'סיור גרפיטי', createdAt: '2026-08-01T00:00:00Z',
+    lastMeaningfulActivityAt: '2026-08-02T00:00:00Z' },
+  { id: 'dl2', orderNo: 27050, title: 'סיור שנסגר', status: 'won', activityType: 'business',
+    tourDate: '2026-03-01', valueMinor: 150000, currency: 'ILS', stageName: 'WON',
+    organizationName: 'בית ספר אורט', productName: null, createdAt: '2026-02-01T00:00:00Z',
+    lastMeaningfulActivityAt: '2026-03-02T00:00:00Z' },
+  { id: 'dl3', orderNo: 27020, title: 'סיור שלא יצא', status: 'lost', activityType: null,
+    tourDate: null, valueMinor: 0, currency: 'ILS', stageName: null,
+    organizationName: null, productName: null, createdAt: '2026-01-01T00:00:00Z',
+    lastMeaningfulActivityAt: null },
+];
+
 let React;
 let MemoryRouter;
 let Routes;
@@ -109,6 +126,7 @@ before(async () => {
     let body = {};
     if (method === 'GET') {
       if (/\/api\/contacts\/[^/]+\/files/.test(u)) body = [];
+      else if (/\/api\/contacts\/[^/]+\/deals/.test(u)) body = dealsResponse;
       else if (/\/api\/contacts\/[^/]+\/reservation-link/.test(u)) body = { eligible: false, link: null };
       else if (/\/api\/contacts\/[^/]+/.test(u)) body = CONTACT;
       else if (u.includes('/api/timeline/aggregate')) body = [];
@@ -190,6 +208,7 @@ function findButton(container, text) {
 
 test('header shows the prominent create-deal button; opening + cancel change nothing', async () => {
   calls = [];
+  dealsResponse = [];
   const { container, unmount } = await render();
 
   const btn = findButton(container, 'פתיחת דיל חדש');
@@ -215,8 +234,57 @@ test('header shows the prominent create-deal button; opening + cancel change not
   await unmount();
 });
 
+test('previous-deals panel: all linked deals as toned clickable rows + second create button', async () => {
+  calls = [];
+  dealsResponse = DEALS;
+  const { container, unmount } = await render();
+
+  // Section header + row per linked deal.
+  assert.match(container.innerHTML, /דילים קודמים \(3\)/);
+  const rows = [...container.querySelectorAll('a[href^="/admin/crm/deals/"]')];
+  assert.equal(rows.length, 3, 'every linked deal renders as a row LINK to its deal page');
+  assert.deepEqual(
+    rows.map((a) => a.getAttribute('href')),
+    ['/admin/crm/deals/27101', '/admin/crm/deals/27050', '/admin/crm/deals/27020'],
+    'rows keep the canonical server order and link by orderNo',
+  );
+
+  // Status treatment: soft background per status + the TEXT label stays visible.
+  const [open, won, lost] = rows;
+  assert.match(open.className, /bg-blue-50/, 'OPEN row → light blue');
+  assert.match(open.textContent, /OPEN/);
+  assert.match(won.className, /bg-emerald-50/, 'WON row → soft green');
+  assert.match(won.textContent, /WON/);
+  assert.match(lost.className, /bg-red-50/, 'LOST row → soft red');
+  assert.match(lost.textContent, /LOST/);
+
+  // Row content: order number, title, product/activity, org, amount.
+  assert.match(open.textContent, /#27101/);
+  assert.match(open.textContent, /סיור גרפיטי/);
+  assert.match(won.textContent, /בית ספר אורט/);
+  assert.match(won.textContent, /1,500/); // ₪1,500.00 from 150000 minor
+
+  // The section header carries the SECOND create button — same flow.
+  const createButtons = [...container.querySelectorAll('button')].filter((b) =>
+    b.textContent.includes('פתיחת דיל חדש'),
+  );
+  assert.equal(createButtons.length, 2, 'two entry points: page header + panel header');
+  await act(async () => createButtons[1].click());
+  assert.match(container.innerHTML, /לא ייווצר איש קשר חדש/, 'panel button opens the SAME preset modal');
+  await unmount();
+});
+
+test('previous-deals panel: empty state', async () => {
+  calls = [];
+  dealsResponse = [];
+  const { container, unmount } = await render();
+  assert.match(container.innerHTML, /אין דילים קודמים לאיש קשר זה/);
+  await unmount();
+});
+
 test('submit creates the deal for THIS contact (no duplicate) and navigates to it', async () => {
   calls = [];
+  dealsResponse = [];
   const { container, unmount } = await render();
 
   await act(async () => findButton(container, 'פתיחת דיל חדש').click());

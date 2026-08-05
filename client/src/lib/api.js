@@ -396,6 +396,9 @@ export const api = {
     // qs(undefined) === '' so existing param-less callers are unchanged.
     list: (params) => request(`/api/contacts${qs(params)}`),
     get: (id) => request(`/api/contacts/${id}`),
+    // The contact's linked deals (canonical DealContact relation only) for the
+    // "דילים קודמים" panel — compact DTO, latest-activity first.
+    deals: (id) => request(`/api/contacts/${id}/deals`),
     // Unified Files list for the contact (system-generated canonical files,
     // e.g. agent reservation summaries — same DTO shape as api.dealFiles.list).
     files: (id) => request(`/api/contacts/${id}/files`),
