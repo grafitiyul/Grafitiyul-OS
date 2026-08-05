@@ -81,6 +81,38 @@ export function createIngest({ prisma, socket, log, accountId }) {
     mediaChain = mediaChain.then(fn, fn).catch(() => undefined);
   };
 
+  // ALL configured accounts' own numbers (not just this bridge's) — the
+  // cross-account self-identity set. A private chat whose remote side is one
+  // of OUR OWN numbers is an internal business-to-business conversation and
+  // must never carry a customer contact link (production incident #26316:
+  // a merge transplanted a customer contactId onto the מכירות↔שירות chat and
+  // the Deal panel presented our office number as the customer). Cached 60s.
+  let ownNumbersCache = { at: 0, set: new Set() };
+  async function ownAccountNumbers() {
+    if (ownNumbersCache.set.size && Date.now() - ownNumbersCache.at < 60_000) return ownNumbersCache.set;
+    try {
+      const accounts = await prisma.whatsAppAccount.findMany({ select: { phoneJid: true } });
+      const set = new Set();
+      for (const a of accounts) {
+        const m = /^(\d+)(?::\d+)?@/.exec(String(a.phoneJid || ''));
+        if (m) set.add(m[1]);
+      }
+      ownNumbersCache = { at: Date.now(), set };
+    } catch (err) {
+      log.warn({ err: errSummary(err) }, 'ownAccountNumbers lookup failed; keeping previous set');
+    }
+    return ownNumbersCache.set;
+  }
+  const isOwnBusinessRemote = (row, ownSet) => {
+    if (!row || !ownSet?.size) return false;
+    const facets = [
+      String(row.phoneNumber || '').replace(/\D/g, '') || null,
+      jidToPhone(row.phoneJid ?? ''),
+      jidToPhone(row.externalChatId ?? ''),
+    ];
+    return facets.some((d) => d && ownSet.has(d));
+  };
+
   // ── chat identity resolution + duplicate merge ─────────────────────────
   // v7 reports the SAME private conversation under different JID forms across
   // event types (@lid on one message, @s.whatsapp.net on another — the exact
@@ -106,8 +138,16 @@ export function createIngest({ prisma, socket, log, accountId }) {
     if (prisma.whatsAppScheduledMessage) {
       await prisma.whatsAppScheduledMessage.updateMany({ where: { chatId: dup.id }, data: { chatId: survivor.id } });
     }
+    // An internal chat (remote = one of OUR OWN business numbers) must never
+    // inherit a customer contact link through a merge — that transplant is
+    // exactly how #26316 ended up presenting our office number as a customer.
+    const ownSet = await ownAccountNumbers();
+    const internal = isOwnBusinessRemote(survivor, ownSet) || isOwnBusinessRemote(dup, ownSet);
+    const FILL_FIELDS = internal
+      ? ['pushName', 'savedContactName', 'phoneNumber', 'lidJid', 'phoneJid', 'profilePictureUrl']
+      : ['pushName', 'savedContactName', 'phoneNumber', 'lidJid', 'phoneJid', 'profilePictureUrl', 'contactId', 'matchSource'];
     const fill = {};
-    for (const f of ['pushName', 'savedContactName', 'phoneNumber', 'lidJid', 'phoneJid', 'profilePictureUrl', 'contactId', 'matchSource']) {
+    for (const f of FILL_FIELDS) {
       if (!survivor[f] && dup[f]) fill[f] = dup[f];
     }
     // The duplicate's externalChatId is a legitimate alias — keep it findable.

@@ -13,6 +13,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../../src/whatsapp/phone.js';
+import { ownAccountPhoneSet, isInternalRemote } from '../../src/whatsapp/selfIdentity.js';
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v ?? true]; }),
@@ -40,9 +41,11 @@ console.log(`chats: ${chats.length} (${priv.length} private, ${groups.length} gr
 // ── R1: exactly-one auto-match (safe repair) ────────────────────────────────
 const phones = await prisma.contactPhone.findMany({ select: { contactId: true, value: true } });
 const index = buildPhoneIndex(phones);
+const ownNumbers = await ownAccountPhoneSet({ db: prisma, fresh: true });
 const matchable = [];
 for (const c of priv) {
   if (c.contactId || !c.phoneNumber) continue;
+  if (isInternalRemote(c, ownNumbers)) continue; // internal chats are never customer-linkable (#26316)
   const cid = matchContactId(normalizePhoneIntl(c.phoneNumber), index);
   if (cid) matchable.push({ chatId: c.id, phone: c.phoneNumber, contactId: cid });
 }

@@ -312,6 +312,16 @@ export default function ChatListRow({
           <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-500">
             👥 קבוצה
           </span>
+        ) : chat.internal ? (
+          // INTERNAL business-to-business conversation — the remote side is one
+          // of OUR OWN connected numbers (server-derived, #26316). Never a
+          // customer: no שיוך chip, no deal chip.
+          <span
+            className="rounded-full bg-slate-700 px-2 py-0.5 text-[10.5px] font-bold text-white shadow-sm"
+            title="שיחה פנימית בין המספרים העסקיים שלנו"
+          >
+            פנימי
+          </span>
         ) : chat.staff ? (
           // INTERNAL STAFF conversation — canonical Staff-module identity
           // (PersonRef, matched server-side). Replaces the CRM chips entirely:

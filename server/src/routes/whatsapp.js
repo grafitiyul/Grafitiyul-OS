@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
+import { ownAccountPhoneSet, isInternalRemote } from '../whatsapp/selfIdentity.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
 import {
@@ -333,7 +334,13 @@ function isSnoozedNow(chat, now = new Date()) {
 // worker; matchSource='phone' keeps it reviewable, and it never touches the
 // Contact itself (link-only, reversible).
 async function autoMatchChats(chats) {
-  const candidates = chats.filter((c) => !c.contactId && c.type === 'private' && c.phoneNumber);
+  // Internal chats (the remote side is one of OUR OWN numbers) are never
+  // customer conversations — production #26316: a customer-linked internal
+  // chat presented our office number as the customer.
+  const ownNumbers = await ownAccountPhoneSet();
+  const candidates = chats.filter(
+    (c) => !c.contactId && c.type === 'private' && c.phoneNumber && !isInternalRemote(c, ownNumbers),
+  );
   if (candidates.length === 0) return;
   const phones = await prisma.contactPhone.findMany({ select: { contactId: true, value: true } });
   const index = buildPhoneIndex(phones);
@@ -497,15 +504,20 @@ router.get(
     if (contactIds.length === 0) return res.json({ chats: [], contacts: [], primaryContactId: null });
 
     // Proactive matching for THIS subject's phones only (cheap, targeted).
+    const ownNumbers = await ownAccountPhoneSet();
     const ownPhones = await prisma.contactPhone.findMany({
       where: { contactId: { in: contactIds } },
       select: { value: true },
     });
-    const wanted = [...new Set(ownPhones.map((p) => normalizePhoneIntl(p.value)).filter(Boolean))];
+    const wanted = [
+      ...new Set(ownPhones.map((p) => normalizePhoneIntl(p.value)).filter(Boolean)),
+      // A contact carrying one of OUR OWN numbers (legacy imports do) must not
+      // pull the internal business-to-business chats onto a customer surface.
+    ].filter((p) => !ownNumbers.has(p));
     if (wanted.length > 0) {
       const candidates = await prisma.whatsAppChat.findMany({
         where: { contactId: null, type: 'private', phoneNumber: { in: wanted } },
-        select: { id: true, phoneNumber: true },
+        select: { id: true, phoneNumber: true, type: true, phoneJid: true, externalChatId: true, lidJid: true },
       });
       if (candidates.length > 0) {
         const allPhones = await prisma.contactPhone.findMany({
@@ -513,6 +525,7 @@ router.get(
         });
         const index = buildPhoneIndex(allPhones);
         for (const chat of candidates) {
+          if (isInternalRemote(chat, ownNumbers)) continue; // never link internal chats
           const contactId = matchContactId(normalizePhoneIntl(chat.phoneNumber) ?? chat.phoneNumber, index);
           if (!contactId) continue; // shared number → stays unmatched
           await prisma.whatsAppChat.update({
@@ -523,7 +536,7 @@ router.get(
       }
     }
 
-    const chats = await prisma.whatsAppChat.findMany({
+    const chatsRaw = await prisma.whatsAppChat.findMany({
       where: { contactId: { in: contactIds } },
       orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       include: {
@@ -532,6 +545,11 @@ router.get(
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
+    // Defense in depth (production #26316): even a WRONGLY-linked internal
+    // chat must never be presented as a customer conversation on a Deal — the
+    // operator would be typing to our own other business number believing it
+    // is the customer.
+    const chats = chatsRaw.filter((c) => !isInternalRemote(c, ownNumbers));
     // The subject's FULL contact list (not just contacts that already have a
     // chat) — the Deal panel shows a tab per contact, including ones with no
     // WhatsApp thread yet. Order: primary first, then linkage order.
@@ -596,8 +614,17 @@ router.post(
       orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: { value: true },
     });
-    const phones = [...new Set(phoneRows.map((p) => normalizePhoneIntl(p.value)).filter(Boolean))];
-    if (phones.length === 0) return res.status(422).json({ error: 'contact_has_no_phone' });
+    const allPhones = [...new Set(phoneRows.map((p) => normalizePhoneIntl(p.value)).filter(Boolean))];
+    // A number that IS one of our own business numbers has no "customer
+    // conversation" to ensure — that would mint/adopt the internal
+    // business-to-business chat as a customer thread (production #26316).
+    const ownNumbers = await ownAccountPhoneSet();
+    const phones = allPhones.filter((p) => !ownNumbers.has(p));
+    if (phones.length === 0) {
+      return res
+        .status(422)
+        .json({ error: allPhones.length ? 'internal_number' : 'contact_has_no_phone' });
+    }
     // phoneToJid is THE private-JID form used by every send path — the chat we
     // create must be keyed exactly the way the bridge would key it.
     const jids = phones.map((p) => phoneToJid(p)).filter(Boolean);
@@ -801,14 +828,19 @@ router.get(
     // phone) driving the per-chat `staff` field, the ללא-שיוך row exclusion
     // and the ללא-שיוך counter below.
     const staffMap = await staffPhoneMap();
+    const ownNumbers = await ownAccountPhoneSet();
     // Snoozed chats leave the active work queue (until they wake); they stay
     // findable under 'all', in search, and in the unmatched repair view.
     // STAFF chats leave the unmatched repair view entirely: an internal staff
     // conversation is not CRM repair work even when no Contact is linked (it
-    // still shows under שיחות/הכל with its צוות badge).
+    // still shows under שיחות/הכל with its צוות badge). Same rule for
+    // INTERNAL chats (our own other business number on the remote side) —
+    // they are unlinkable by design, so they are never repair work.
     let chats =
       scope === 'active' && !search ? chatsRaw.filter((c) => !isSnoozedNow(c)) : chatsRaw;
-    if (scope === 'unmatched') chats = chats.filter((c) => !staffFor(c, staffMap));
+    if (scope === 'unmatched') {
+      chats = chats.filter((c) => !staffFor(c, staffMap) && !isInternalRemote(c, ownNumbers));
+    }
     // The repair badge counts only chats that need ACTIVE work — not ones
     // archived/deleted on the phone or manually hidden, and not staff chats.
     // Same where-shape as the unmatched scope + the SAME staffMap test as the
@@ -823,9 +855,11 @@ router.get(
         hiddenAt: null,
         ...(accountId ? { accountId } : {}),
       },
-      select: { type: true, phoneNumber: true },
+      select: { type: true, phoneNumber: true, phoneJid: true, externalChatId: true, lidJid: true },
     });
-    const unmatchedCount = unmatchedRows.filter((c) => !staffFor(c, staffMap)).length;
+    const unmatchedCount = unmatchedRows.filter(
+      (c) => !staffFor(c, staffMap) && !isInternalRemote(c, ownNumbers),
+    ).length;
     // Attach the CONFIDENTLY-resolved deal per linked conversation (same
     // exactly-one candidate rule as deal-resolution: open deals + WON deals
     // toured ≤7 days ago) so the row can show the deal's activity type.
@@ -910,6 +944,9 @@ router.get(
         ...toClientChat(c),
         account: c.account,
         staff: staffFor(c, staffMap),
+        // Remote side = one of OUR OWN business numbers → the inbox badges it
+        // "פנימי" and it is never customer-linkable.
+        internal: isInternalRemote(c, ownNumbers),
         deal: c.contactId ? dealByContact.get(c.contactId) ?? null : null,
       })),
       unmatchedCount,
@@ -1066,6 +1103,15 @@ router.put(
       return res.json(toClientChat(row));
     }
     if (chat.type !== 'private') return res.status(400).json({ error: 'group_not_linkable' });
+    // An internal chat (remote = one of OUR OWN numbers) is never a customer
+    // conversation — not even by explicit operator link (production #26316).
+    const fullChat = await prisma.whatsAppChat.findUnique({
+      where: { id: chat.id },
+      select: { type: true, phoneNumber: true, phoneJid: true, externalChatId: true, lidJid: true },
+    });
+    if (isInternalRemote(fullChat, await ownAccountPhoneSet())) {
+      return res.status(422).json({ error: 'internal_chat' });
+    }
     const contact = await prisma.contact.findUnique({ where: { id: String(contactId) }, select: { id: true } });
     if (!contact) return res.status(400).json({ error: 'contact_not_found' });
     const row = await prisma.whatsAppChat.update({

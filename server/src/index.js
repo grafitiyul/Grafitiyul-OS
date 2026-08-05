@@ -877,6 +877,14 @@ app.listen(port, () => {
     .then(({ repairDeal26333WhatsAppIdentity }) => repairDeal26333WhatsAppIdentity(prisma, { log: console }))
     .catch((e) => console.warn('[maintenance] deal 26333 WhatsApp identity repair failed:', e?.message));
 
+  // WhatsApp self-identity invariant (production #26316): a private chat whose
+  // remote side is one of OUR OWN business numbers is internal and must never
+  // carry a customer contact link. Runs every boot — heals any writer that
+  // slips past the runtime guards. Link-only, touches nothing else.
+  import('./maintenance/unlinkInternalWhatsAppChats.js')
+    .then(({ unlinkInternalWhatsAppChats }) => unlinkInternalWhatsAppChats(prisma, { log: console }))
+    .catch((e) => console.warn('[maintenance] internal WhatsApp chat unlink failed:', e?.message));
+
   // Collection WORK QUEUE classification. Operational only — it reads the
   // canonical collection resolver and writes nothing but the review status.
   // Re-runs on every boot so the future-tour rule stays true as tours pass into
