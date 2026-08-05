@@ -293,7 +293,22 @@ test('payments: methods map onto the verified iCount blocks', () => {
 test('payments: duplicate non-cheque method / bad amount / unknown method are rejected', () => {
   assert.throws(() => buildPaymentBlocks([{ method: 'cash', amount: 1 }, { method: 'cash', amount: 2 }]), /payment_method_duplicate/);
   assert.throws(() => buildPaymentBlocks([{ method: 'cash', amount: 0 }]), /payment_amount_invalid/);
-  assert.throws(() => buildPaymentBlocks([{ method: 'bit', amount: 10 }]), /payment_method_invalid/);
+  assert.throws(() => buildPaymentBlocks([{ method: 'applepay', amount: 10 }]), /payment_method_invalid/);
+});
+
+test('payments: ביט/פייבוקס map onto the canonical payment_app block (confirmed vs real doc 38236)', () => {
+  const bit = buildPaymentBlocks([{ method: 'bit', amount: 250 }]);
+  assert.deepEqual(bit.payment_app, { card_brand: 'bit', sum: '250' });
+  const paybox = buildPaymentBlocks([{ method: 'paybox', amount: 90.5 }]);
+  assert.deepEqual(paybox.payment_app, { card_brand: 'paybox', sum: '90.5' });
+  // Never silently recorded as cash or as a credit card.
+  assert.equal(bit.cash, undefined);
+  assert.equal(bit.cc, undefined);
+  // One payment_app block per document — two app payments are a duplicate.
+  assert.throws(
+    () => buildPaymentBlocks([{ method: 'bit', amount: 10 }, { method: 'paybox', amount: 5 }]),
+    /payment_method_duplicate/,
+  );
 });
 
 test('defaults: per-mode tax ids — org ח.פ vs contact ת.ז, contact fallback when no org', () => {

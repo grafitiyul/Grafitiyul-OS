@@ -24,7 +24,8 @@ export const PAYMENT_METHODS = [
   { key: 'cash', label: 'מזומן' },
   { key: 'cc', label: 'כרטיס אשראי' },
   { key: 'cheque', label: 'המחאה' },
-  { key: 'bit', label: 'ביט / אפליקציית תשלום' },
+  { key: 'bit', label: 'ביט' },
+  { key: 'paybox', label: 'פייבוקס' },
   { key: 'other', label: 'אחר' },
 ];
 const METHOD_KEYS = new Set(PAYMENT_METHODS.map((m) => m.key));

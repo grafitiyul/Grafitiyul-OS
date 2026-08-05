@@ -373,10 +373,16 @@ export function allocationRequirement({ doctype, rows, vatId, vatMode = 'include
   return { required: true, beforeVatIls, missing };
 }
 
-// Map the modal's payment rows onto iCount's payment blocks. Only the four
-// blocks verified against the iCount v3 doc/create contract are produced —
-// cash / cc (manual card record) / cheques / banktransfer. Amounts are major
-// units. At most one block per type (cheques accumulate) — enforced here.
+// Map the modal's payment rows onto iCount's payment blocks. Only blocks
+// verified against the iCount v3 doc/create contract are produced — cash / cc
+// (manual card record) / cheques / banktransfer / payment_app. Amounts are
+// major units. At most one block per type (cheques accumulate) — enforced here.
+//
+// payment_app (ביט / פייבוקס) is THE canonical mapping ported from the
+// challenge-system iCount integration and CONFIRMED against a real iCount
+// document (#38236): payments.payment_app { card_brand:'bit'|'paybox', sum }.
+// Never recorded as cash or as a credit card. (PayBox uses the same structure
+// by analogy — brand rendering not yet verified against a real PayBox doc.)
 export function buildPaymentBlocks(payments) {
   const body = {};
   for (const p of payments || []) {
@@ -414,6 +420,9 @@ export function buildPaymentBlocks(payments) {
         account: String(p.account || ''),
         number: String(p.reference || ''),
       });
+    } else if (p.method === 'bit' || p.method === 'paybox') {
+      if (body.payment_app) throw codedError('payment_method_duplicate');
+      body.payment_app = { card_brand: p.method, sum: String(amount) };
     } else {
       throw codedError('payment_method_invalid');
     }

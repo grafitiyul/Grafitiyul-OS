@@ -74,8 +74,10 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
   // the paid/manual-payment flow. When on, prices display as ₪0 and the ONLY
   // completion action is the green free-registration button.
   const [freeReg, setFreeReg] = useState(false);
-  // After a structured manual payment, chain the EXISTING הפק מסמך modal.
-  const [docOpen, setDocOpen] = useState(false);
+  // Atomic manual-payment flow: the EXISTING הפק מסמך builder opens FIRST
+  // (nothing written); only a successful issue triggers payment + WON.
+  // { method } while the document builder is open, null otherwise.
+  const [manualFlow, setManualFlow] = useState(null);
   const builderRef = useRef(null);
 
   useEffect(() => {
@@ -124,6 +126,39 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
       /* the builder surfaces other errors inline */
     } finally {
       setSaving(false);
+    }
+  }
+
+  // The continuation of the atomic manual-payment flow — runs ONLY after the
+  // document builder reported a successful issue. tour_full offers an explicit
+  // overbook (the money is real and documented, mirroring late-payment
+  // acceptance); any other failure is reported honestly: the document exists,
+  // the deal stayed open, and retrying never issues a second document.
+  async function finishManualPayment(doc, { allowOverbook = false } = {}) {
+    try {
+      await api.deals.registerManualPayment(deal.id, {
+        tourEventId: selectedTour.id,
+        mode: 'record',
+        icountDocumentId: doc.id,
+        method: manualFlow?.method || null,
+        allowOverbook,
+      });
+      setManualFlow(null);
+      onChanged?.();
+      onClose?.();
+    } catch (e) {
+      if (e.payload?.error === 'tour_full') {
+        if (window.confirm('הסיור מלא. המסמך כבר הופק והתשלום אמיתי — לאשר חריגה מקיבולת ולסגור את הדיל?')) {
+          return finishManualPayment(doc, { allowOverbook: true });
+        }
+      }
+      alert(
+        `המסמך הופק (${doc.docnum ? `#${doc.docnum}` : doc.doctypeLabel || ''}) אך רישום התשלום לא הושלם: ` +
+        (e.payload?.error || e.message) +
+        '\nהדיל נשאר פתוח — ניתן לנסות שוב; לא יופק מסמך נוסף.',
+      );
+      setManualFlow(null);
+      onChanged?.();
     }
   }
 
@@ -236,7 +271,7 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
               freeMode={freeReg}
               totalMinor={savedOffering?.valueMinor ?? deal.valueMinor ?? null}
               onDone={() => { onChanged?.(); onClose?.(); }}
-              onRecordedPayment={() => { onChanged?.(); setDocOpen(true); }}
+              onStartManualDocFlow={({ method }) => setManualFlow({ method })}
             />
           ) : (
             <div className="py-3 text-center text-[13px] text-gray-400">בחרו סיור תחילה.</div>
@@ -259,13 +294,18 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
           }}
         />
       )}
-      {/* Manual payment recorded → the EXISTING canonical document workspace.
-          Closing it finishes the whole registration flow. */}
-      {docOpen && (
+      {/* ATOMIC manual payment: document builder FIRST (defaults to חשבונית מס
+          קבלה). Only onIssued — a successfully-issued document — records the
+          payment and transitions to WON. Closing/cancelling the builder before
+          the issue returns to the registration modal with the deal UNCHANGED. */}
+      {manualFlow && selectedTour && (
         <ProduceDocumentModal
           dealId={deal.id}
           open
-          onClose={() => { setDocOpen(false); onChanged?.(); onClose?.(); }}
+          flow="manualPayment"
+          flowDefaults={{ method: manualFlow.method }}
+          onIssued={(doc) => finishManualPayment(doc)}
+          onClose={() => setManualFlow(null)}
         />
       )}
       {waiverPrompt && (

@@ -14,6 +14,7 @@ function makeStore(init = {}) {
     registrations: init.registrations ? [...init.registrations] : [],
     quoteVersion: init.quoteVersion || {},
     quoteLines: init.quoteLines || [],
+    icountDocs: init.icountDocs || [],
     bookings: [],
     timeline: [],
     evidence: [],
@@ -120,7 +121,15 @@ function makeStore(init = {}) {
         return { count };
       },
     },
-    // Manual-payment registration: the canonical collection-evidence write path.
+    // Manual-payment registration: the issued document (atomic flow) + the
+    // canonical collection-evidence write path (external_approved).
+    icountDocument: {
+      findFirst: async ({ where }) =>
+        (s.icountDocs || []).find(
+          (d) => d.id === where.id && d.dealId === where.dealId && d.status === where.status,
+        ) || null,
+      findMany: async () => [],
+    },
     dealCollectionEvidence: {
       create: async ({ data }) => {
         const r = { id: id('ev'), status: 'active', ...data };
@@ -134,7 +143,6 @@ function makeStore(init = {}) {
             (!where.status || e.status === where.status),
         ),
     },
-    icountDocument: { findMany: async () => [] },
     dealFile: { findFirst: async () => null },
     openTourTemplateProduct: { findMany: async () => [], findFirst: async () => null },
     productVariant: { findMany: async () => [] },
@@ -324,25 +332,24 @@ test('registerWithoutPayment (free) writes NO payment evidence and issues NO doc
 // ── manual payment (paid outside GOS) ────────────────────────────────────────
 import { registerWithManualPayment } from './registrationCompletion.js';
 
-test('manual payment (record): real price retained + canonical evidence row + WON once', async () => {
+test('manual payment (record): the issued DOCUMENT is the money record — no evidence row, WON once, price retained', async () => {
   const c = makeStore({
     deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27021, valueMinor: 90000n, currency: 'ILS' } },
     tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20, productVariantId: 'v', productId: 'p' } },
+    icountDocs: [{ id: 'doc1', dealId: 'd1', status: 'issued', docnum: '38600', doctype: 'invrec', amountMinor: 90000n }],
   });
   const res = await registerWithManualPayment(c, {
-    dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'bit', amountIls: 900,
+    dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'bit', icountDocumentId: 'doc1',
   });
   assert.equal(res.wonNow, true);
   assert.equal(c._s.deals.d1.status, 'won');
   // The commercial total is NEVER zeroed and no waiver is recorded.
   assert.equal(Number(c._s.deals.d1.valueMinor), 90000);
   assert.equal(c._s.deals.d1.noPaymentWaiver ?? null, null);
-  // Exactly one canonical manual-payment evidence row, through the ONE path.
-  const ev = c._s.evidence;
-  assert.equal(ev.length, 1);
-  assert.equal(ev[0].kind, 'manual_payment');
-  assert.equal(ev[0].method, 'bit');
-  assert.equal(Number(ev[0].amountMinor), 90000);
+  // The invrec is the canonical money record — an evidence row too would
+  // DOUBLE-COUNT the same money in collection.
+  assert.equal(c._s.evidence.length, 0, 'no manual_payment evidence next to the invrec');
+  assert.ok(c._s.timeline.some((t) => t.data?.event === 'manual_payment_won' && t.data?.docnum === '38600'));
   // One registration, confirmed, honest paymentStatus.
   const regs = c._s.registrations.filter((r) => r.dealId === 'd1');
   assert.equal(regs.length, 1);
@@ -350,16 +357,38 @@ test('manual payment (record): real price retained + canonical evidence row + WO
   assert.equal(regs[0].paymentStatus, 'paid');
 });
 
-test('manual payment: duplicate click → ONE WON transition and ONE evidence row', async () => {
+test('manual payment (record): ATOMIC — no document, no WON, nothing written', async () => {
+  const c = makeStore({
+    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 2, orderNo: 27025, valueMinor: 50000n, currency: 'ILS' } },
+    tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20 } },
+  });
+  // The doc flow was cancelled/failed → the registration call never carries a
+  // document id, and the server refuses BEFORE any state change.
+  await assert.rejects(
+    () => registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'bit' }),
+    (e) => e.code === 'document_required',
+  );
+  // A foreign/unissued document id is refused the same way.
+  await assert.rejects(
+    () => registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', icountDocumentId: 'nope' }),
+    (e) => e.code === 'document_required',
+  );
+  assert.equal(c._s.deals.d1.status, 'open', 'no WON');
+  assert.equal(c._s.evidence.length, 0, 'no payment');
+  assert.equal(c._s.registrations.length, 0, 'no partial state');
+});
+
+test('manual payment: duplicate click → ONE WON transition, no extra writes', async () => {
   const c = makeStore({
     deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 2, productVariantId: 'v_plain', orderNo: 27022, valueMinor: 50000n, currency: 'ILS' } },
     tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20, productVariantId: 'v', productId: 'p' } },
+    icountDocs: [{ id: 'doc1', dealId: 'd1', status: 'issued', docnum: '38601', doctype: 'invrec', amountMinor: 50000n }],
   });
-  const first = await registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'cash', amountIls: 500 });
-  const second = await registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'cash', amountIls: 500 });
+  const first = await registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'cash', icountDocumentId: 'doc1' });
+  const second = await registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', method: 'cash', icountDocumentId: 'doc1' });
   assert.equal(first.wonNow, true);
   assert.equal(second.alreadyWon, true);
-  assert.equal(c._s.evidence.length, 1, 'the duplicate click writes no second money record');
+  assert.equal(c._s.timeline.filter((t) => t.data?.event === 'manual_payment_won').length, 1);
   assert.equal(c._s.registrations.filter((r) => r.dealId === 'd1').length, 1);
 });
 
@@ -381,7 +410,7 @@ test('external approved (no payment details): real price retained, NO fabricated
   assert.ok(c._s.timeline.some((t) => t.data?.event === 'external_payment_won'));
 });
 
-test('manual payment validation: mode and amount are enforced', async () => {
+test('manual payment validation: an unknown mode is refused', async () => {
   const c = makeStore({
     deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 2, orderNo: 27024, valueMinor: 10000n, currency: 'ILS' } },
     tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20 } },
@@ -389,10 +418,6 @@ test('manual payment validation: mode and amount are enforced', async () => {
   await assert.rejects(
     () => registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'free' }),
     (e) => e.code === 'invalid_manual_mode',
-  );
-  await assert.rejects(
-    () => registerWithManualPayment(c, { dealId: 'd1', tourEventId: 'slot1', mode: 'record', amountIls: 0 }),
-    (e) => e.code === 'amount_invalid',
   );
   assert.equal(c._s.deals.d1.status, 'open'); // nothing settled
   assert.equal(c._s.evidence.length, 0);

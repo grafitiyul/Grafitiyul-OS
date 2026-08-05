@@ -1671,7 +1671,7 @@ model DealCollectionEvidence {
   amountMinor    BigInt // always positive; `direction` carries the sign
   currency       String    @default("ILS")
   paidAt         DateTime // when the money actually moved (operator-entered)
-  method         String? // 'banktransfer' | 'cash' | 'cc' | 'cheque' | 'bit' | 'other'
+  method         String? // 'banktransfer' | 'cash' | 'cc' | 'cheque' | 'bit' | 'paybox' | 'other'
   reference      String? // external reference / document number the operator has
   note           String?
   // Optional supporting document (bank confirmation, scanned receipt, external

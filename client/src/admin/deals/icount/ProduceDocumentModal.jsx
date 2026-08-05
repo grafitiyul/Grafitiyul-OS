@@ -44,6 +44,10 @@ const PAYMENT_METHODS = [
   { key: 'cc', label: 'אשראי / סליקה' },
   { key: 'cash', label: 'מזומן' },
   { key: 'cheque', label: 'שיק' },
+  // אפליקציות תשלום — server-side buildPaymentBlocks maps these onto iCount's
+  // payment_app block (the canonical mapping, confirmed vs. real doc #38236).
+  { key: 'bit', label: 'ביט' },
+  { key: 'paybox', label: 'פייבוקס' },
 ];
 
 const fmtIls = (n) =>
@@ -54,7 +58,12 @@ function newPayment(amount) {
   return { method: 'banktransfer', amount: amount || 0, date: today(), reference: '', cardType: 'VISA', cardLast4: '', installments: 1, holderName: '' };
 }
 
-export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow = false, onIssued }) {
+// `flow='manualPayment'` — the registration Builder's atomic manual-payment
+// flow: the document is issued FIRST and only then does the caller record the
+// payment + WON (via onIssued). Defaults: doctype חשבונית מס קבלה, one payment
+// row prefilled with the operator's chosen method (flowDefaults.method) over
+// the document total. Closing without issuing changes NOTHING on the deal.
+export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow = false, flow = null, flowDefaults = null, onIssued }) {
   const [defaults, setDefaults] = useState(null);
   const [prevDocs, setPrevDocs] = useState([]);
   const [liveError, setLiveError] = useState(null);
@@ -134,7 +143,16 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
         setNotesMap(d.notesByDoctype || null);
         setNotesEdited(false);
         setNotesWarning(null);
-        setPayments([]);
+        if (flow === 'manualPayment') {
+          // Manual payment AFTER the customer already paid → the default
+          // document is חשבונית מס קבלה (money received), operator may change.
+          setDoctype('invrec');
+          setNotes(d.notesByDoctype?.invrec ?? d.notes ?? '');
+          const gross = documentTotals(d.rows, d.vatMode || 'included', d.vatRate ?? 18).grossIls;
+          setPayments([{ ...newPayment(gross), method: flowDefaults?.method || 'bit' }]);
+        } else {
+          setPayments([]);
+        }
         setBaseDoc(null);
         setBaseError(null);
         setBaseNote(null);
@@ -372,9 +390,9 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       });
       idemKey.current = crypto.randomUUID(); // next issue is a NEW document
       emitDealTasksChanged(dealId); // refreshes the Deal timeline (pinned note)
-      if (sendFlow && onIssued) {
-        // Hand off to the sharing flow — the caller closes this modal and
-        // opens SendDocumentModal on the fresh document.
+      if ((sendFlow || flow === 'manualPayment') && onIssued) {
+        // Hand off to the caller's continuation — sharing (sendFlow) or the
+        // atomic manual-payment registration (record payment → WON).
         onIssued({ ...document, doctypeLabel: typeDef?.label || document.doctype });
         return;
       }
@@ -397,13 +415,25 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       </button>
       <button type="button" onClick={issue} disabled={!canIssue}
         className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-        {issuing ? 'מפיק…' : sendFlow ? 'הפקה והמשך לשליחה' : `הפקת ${typeDef?.label || 'מסמך'}`}
+        {issuing
+          ? 'מפיק…'
+          : sendFlow
+            ? 'הפקה והמשך לשליחה'
+            : flow === 'manualPayment'
+              ? `הפקת ${typeDef?.label || 'מסמך'} ורישום התשלום`
+              : `הפקת ${typeDef?.label || 'מסמך'}`}
       </button>
     </>
   );
 
   return (
-    <Dialog open={open} onClose={issuing ? null : onClose} title={sendFlow ? 'שלח חשבון עסקה חדש' : 'הפקת מסמך'} size="xl" footer={footer}>
+    <Dialog
+      open={open}
+      onClose={issuing ? null : onClose}
+      title={sendFlow ? 'שלח חשבון עסקה חדש' : flow === 'manualPayment' ? 'תשלום ידני — הפקת מסמך' : 'הפקת מסמך'}
+      size="xl"
+      footer={footer}
+    >
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען נתוני מסמך…</div>
       ) : loadError ? (
@@ -457,6 +487,13 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-800">
               יופק חשבון עסקה חדש לפי מצב הדיל הנוכחי — בדקו את השורות והסכומים לפני ההפקה.
               מיד לאחר ההפקה ייפתח חלון השליחה ללקוח (אימייל / וואטסאפ).
+            </div>
+          )}
+
+          {flow === 'manualPayment' && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">
+              תשלום ידני: קודם מופק המסמך, ורק לאחר הפקה מוצלחת נרשם התשלום והדיל נסגר (WON).
+              סגירת החלון לפני ההפקה לא משנה דבר בדיל — אין תשלום ואין סגירה חלקית.
             </div>
           )}
 

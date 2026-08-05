@@ -1346,10 +1346,12 @@ router.post(
 );
 
 // Register with a MANUAL payment (paid outside GOS) — two explicit modes:
-// 'record' (structured manual payment via the canonical collection evidence
-// path, real amount) or 'external_approved' (attested paid/approved outside
-// the system, no payment details — never labeled "free"). The commercial total
-// is NEVER zeroed. WON exactly once via the canonical transition.
+// 'record' (the atomic document-first flow: called ONLY after the accounting
+// document was successfully issued; the document id is verified against the
+// deal and the invrec is the money record) or 'external_approved' (attested
+// paid/approved outside the system, no payment details — never labeled
+// "free"). The commercial total is NEVER zeroed. WON exactly once via the
+// canonical transition, and only AFTER the document exists.
 router.post(
   '/:id/register/manual-payment',
   handle(async (req, res) => {
@@ -1364,9 +1366,8 @@ router.post(
         tourEventId: String(b.tourEventId),
         mode: b.mode,
         method: b.method || null,
-        amountIls: b.amountIls,
+        icountDocumentId: b.icountDocumentId || null,
         paidAt: b.paidAt || null,
-        reference: b.reference || null,
         note: b.note || null,
         allowOverbook: b.allowOverbook === true,
         userId: req.adminAuth?.userId || null,
@@ -1374,7 +1375,7 @@ router.post(
       });
       res.json({ alreadyWon: !!result.alreadyWon, deal: await loadDeal(req.params.id) });
     } catch (e) {
-      if (['invalid_manual_mode', 'amount_invalid', 'invalid_method', 'date_invalid'].includes(e.code)) {
+      if (['invalid_manual_mode', 'document_required', 'invalid_method', 'date_invalid'].includes(e.code)) {
         return res.status(422).json({ error: e.code });
       }
       if (e.code === 'tour_full') return res.status(409).json({ error: 'tour_full', ...e.details });

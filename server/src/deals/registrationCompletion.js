@@ -191,11 +191,16 @@ export async function registerWithoutPayment(client, { dealId, tourEventId, reas
 // NEITHER of which is "free" — the commercial total is NEVER zeroed and no
 // waiver is recorded:
 //
-//   mode 'record'            — the operator knows the amount: a canonical
-//     manual-payment evidence row (collectionEvidenceService.recordEvidence,
-//     the SAME write path as the גבייה panel) + WON. Collection balance
-//     reflects the recorded money; the document is issued separately through
-//     the existing הפק מסמך modal (the UI chains it).
+//   mode 'record'            — ONE ATOMIC BUSINESS FLOW with the accounting
+//     document, in this order: the operator issues the document FIRST (the
+//     existing הפק מסמך builder, defaulted to חשבונית מס קבלה), and only a
+//     SUCCESSFULLY-ISSUED document reaches this function (icountDocumentId is
+//     required and verified against the deal). Then payment/WON follow. If the
+//     document flow is cancelled, closed or fails, this is never called — no
+//     WON, no payment, no partial state. The issued invrec IS the canonical
+//     money record for collection (documents count toward paid), so NO
+//     manual-payment evidence row is written — writing one too would
+//     double-count the same money.
 //
 //   mode 'external_approved' — the operator attests the deal was paid/approved
 //     outside the system WITHOUT payment details: NO payment row is fabricated.
@@ -207,20 +212,14 @@ export async function registerWithoutPayment(client, { dealId, tourEventId, reas
 //
 // Both transition through the ONE canonical WON path (settleDealWon →
 // transitionDealToWon) exactly once. Duplicate clicks: the atomic WON guard
-// decides — an alreadyWon result SKIPS the evidence write, so no second
-// evidence row and no second WON.
+// decides — an alreadyWon result SKIPS every further write.
 export async function registerWithManualPayment(
   client,
-  { dealId, tourEventId, mode, method = null, amountIls = null, paidAt = null, reference = null, note = null, allowOverbook = false, userId = null, origin },
+  { dealId, tourEventId, mode, method = null, icountDocumentId = null, paidAt = null, note = null, allowOverbook = false, userId = null, origin },
 ) {
   if (mode !== 'record' && mode !== 'external_approved') {
     const e = new Error('invalid_manual_mode');
     e.code = 'invalid_manual_mode';
-    throw e;
-  }
-  if (mode === 'record' && !(Number(amountIls) > 0)) {
-    const e = new Error('amount_invalid');
-    e.code = 'amount_invalid';
     throw e;
   }
   const deal = await client.deal.findUnique({
@@ -233,30 +232,49 @@ export async function registerWithManualPayment(
     throw e;
   }
 
-  // 1) The ONE canonical WON transition + registration confirmation. The atomic
-  //    guard makes this exactly-once; a duplicate click lands on alreadyWon and
-  //    writes NOTHING further.
+  // 'record': the document must already exist — it is the proof AND the money
+  // record. Verified against THIS deal so a foreign document id can never
+  // close someone else's deal.
+  let doc = null;
+  if (mode === 'record') {
+    doc = icountDocumentId
+      ? await client.icountDocument.findFirst({
+          where: { id: String(icountDocumentId), dealId, status: 'issued' },
+          select: { id: true, docnum: true, doctype: true, amountMinor: true },
+        })
+      : null;
+    if (!doc) {
+      const e = new Error('document_required');
+      e.code = 'document_required';
+      throw e;
+    }
+  }
+
+  // The ONE canonical WON transition + registration confirmation. The atomic
+  // guard makes this exactly-once; a duplicate click lands on alreadyWon and
+  // writes NOTHING further.
   const result = await settleDealWon(client, {
     dealId,
     targetTourEventId: tourEventId,
     allowOverbook,
     origin,
     paymentStatus: 'paid',
-    paymentAmountMinor: mode === 'record' ? Math.round(Number(amountIls) * 100) : null,
+    paymentAmountMinor: mode === 'record' ? Number(doc.amountMinor) : null,
     cause: mode === 'record' ? 'manual_payment' : 'external_payment',
   });
   if (result.alreadyWon) return result;
 
-  // 2) The structured money record — canonical collection evidence.
   if (mode === 'record') {
-    await recordEvidence(client, deal, {
-      kind: 'manual_payment',
-      amountIls: Number(amountIls),
-      paidAt,
-      method,
-      reference,
-      note,
-    }, userId);
+    // The money record is the issued document (already emitted its own pinned
+    // accounting event) — record only the WON linkage for future staff.
+    await emitTimelineEvent(client, {
+      subjectType: 'deal',
+      subjectId: dealId,
+      kind: 'tour',
+      body: `💵 נרשם תשלום ידני — הדיל נסגר על סמך מסמך #${doc.docnum || doc.id}`,
+      data: { event: 'manual_payment_won', tourEventId: tourEventId || null, method: method || null, docnum: doc.docnum || null, doctype: doc.doctype, icountDocumentId: doc.id },
+      origin: origin || systemOrigin(),
+    });
   } else {
     // 'settlement' computes the outstanding balance itself; on a deal that
     // somehow has none it throws nothing_outstanding — the WON stands and the

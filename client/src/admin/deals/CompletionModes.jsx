@@ -31,9 +31,10 @@ const UNIT_LABELS = { minutes: 'דקות', hours: 'שעות', days: 'ימים' }
 const errText = (e) => 'שגיאה: ' + (e.payload?.error || e.message);
 
 // Static fallback only — the live list comes from the canonical server catalog
-// (collection summary's paymentMethods).
+// (collection summary's paymentMethods, which now includes ביט + פייבוקס).
 const FALLBACK_METHODS = [
-  { key: 'bit', label: 'ביט / פייבוקס / אפליקציית תשלום' },
+  { key: 'bit', label: 'ביט' },
+  { key: 'paybox', label: 'פייבוקס' },
   { key: 'cc', label: 'כרטיס אשראי' },
   { key: 'cash', label: 'מזומן' },
   { key: 'banktransfer', label: 'העברה בנקאית' },
@@ -49,7 +50,10 @@ export default function CompletionModes({
   freeMode = false,
   totalMinor = null,
   onDone,
-  onRecordedPayment,
+  // Starts the ATOMIC document-first manual-payment flow (the parent opens the
+  // הפק מסמך builder; payment + WON are recorded only after a successful
+  // issue). Nothing is written when this fires.
+  onStartManualDocFlow,
 }) {
   // Which WhatsApp number sends the link — the canonical model: this browser's
   // remembered number, overridable per send. Always resolved to something
@@ -81,8 +85,6 @@ export default function CompletionModes({
   // Manual-payment state (paid outside GOS).
   const [methods, setMethods] = useState(null);
   const [method, setMethod] = useState('bit');
-  const [amountIls, setAmountIls] = useState('');
-  const [reference, setReference] = useState('');
 
   const ctx = { tourEventId, ...context };
 
@@ -112,13 +114,6 @@ export default function CompletionModes({
       alive = false;
     };
   }, [mode, deal.id, methods]);
-
-  // Prefill the manual amount with the real commercial total once known.
-  useEffect(() => {
-    if (mode !== 'manual' || amountIls !== '') return;
-    if (totalMinor != null && Number(totalMinor) > 0) setAmountIls(String(Number(totalMinor) / 100));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, totalMinor]);
 
   async function run(fn, validate) {
     if (validate && !validate()) return;
@@ -177,22 +172,12 @@ export default function CompletionModes({
       onDone?.();
     });
   };
-  // Manual payment A — structured payment record, then the existing הפק מסמך
-  // modal (chained by the parent through onRecordedPayment).
-  const recordManual = () =>
-    run(
-      async () => {
-        await api.deals.registerManualPayment(deal.id, {
-          ...ctx,
-          mode: 'record',
-          method,
-          amountIls: Number(amountIls),
-          reference: reference.trim() || undefined,
-        });
-        (onRecordedPayment || onDone)?.();
-      },
-      () => Number(amountIls) > 0,
-    );
+  // Manual payment A — the ATOMIC flow: hand off to the document builder
+  // FIRST. Payment + WON are recorded by the parent only after a successful
+  // issue; this click itself writes nothing.
+  const recordManual = () => {
+    onStartManualDocFlow?.({ method });
+  };
   // Manual payment B — attested "paid/approved outside the system, no details".
   const approveExternal = () => {
     if (
@@ -322,32 +307,26 @@ export default function CompletionModes({
           <p className="text-[12.5px] text-gray-600">
             הלקוח שילם מחוץ למערכת (ביט, פייבוקס, אשראי חיצוני, מזומן, העברה בנקאית…). המחיר המסחרי של העסקה נשמר במלואו.
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="mb-1 block text-[12px] font-medium text-gray-600">אמצעי תשלום</span>
-              <select value={method} onChange={(e) => setMethod(e.target.value)} className={INPUT + ' w-full bg-white'}>
-                {(methods || FALLBACK_METHODS).map((m) => (
-                  <option key={m.key} value={m.key}>{m.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[12px] font-medium text-gray-600">סכום שהתקבל (₪)</span>
-              <input type="number" min="0" step="0.01" dir="ltr" value={amountIls} onChange={(e) => setAmountIls(e.target.value)} className={INPUT + ' w-full'} />
-            </label>
-          </div>
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-gray-600">אסמכתא (אופציונלי)</span>
-            <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="מספר העברה / אישור עסקה" className={INPUT + ' w-full'} />
+            <span className="mb-1 block text-[12px] font-medium text-gray-600">אמצעי תשלום</span>
+            <select value={method} onChange={(e) => setMethod(e.target.value)} className={INPUT + ' w-full bg-white'}>
+              {(methods || FALLBACK_METHODS).map((m) => (
+                <option key={m.key} value={m.key}>{m.label}</option>
+              ))}
+            </select>
           </label>
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            רישום תשלום ידני הוא תהליך אחד: קודם מפיקים את המסמך (ברירת מחדל — חשבונית מס קבלה),
+            ורק לאחר הפקה מוצלחת נרשם התשלום והדיל נסגר. ביטול או סגירה של חלון המסמך לא משנים דבר בדיל.
+          </p>
           <div className="flex justify-end">
             <button
               type="button"
-              disabled={busy || !(Number(amountIls) > 0)}
+              disabled={busy}
               onClick={recordManual}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {busy ? 'רושם…' : 'רשום תשלום והפק מסמך'}
+              הפקת מסמך ורישום התשלום
             </button>
           </div>
           <div className="border-t border-gray-100 pt-3">
