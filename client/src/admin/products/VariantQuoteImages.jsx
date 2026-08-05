@@ -2,19 +2,31 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
+import { useFileDrop } from '../common/useFileDrop.js';
+import { uploadImage } from '../../lib/upload.js';
 
 // Variant editor → "תמונות בהצעה": the variant REFERENCES images from the
-// shared Quote Image Library per quote position — it never uploads/owns media.
+// shared Quote Image Library per quote position — it never owns media.
 // hero = the cover background (one image; a new pick replaces);
 // slot1/slot2 = the two image sections (several images show together, in pick
 // order). Changes save immediately (relation-backed, like Shared Content),
 // not through the page's "שמור שינויים" buffer.
+//
+// Each position is ONE unified field: drag a file onto it, upload from the
+// computer, or pick from the library — a direct upload goes through the
+// canonical media path (uploadImage → MediaFile) and creates a REAL library
+// entity (tagged with the variant's location) before attaching it, so the
+// image stays reusable in מבנה הצעת מחיר → תמונות like any other.
 //
 // The picker opens the library filtered to images applicable to the variant's
 // location (untagged images count as applicable-everywhere) with a toggle to
 // show all; managing the library itself lives in Quote Structure → תמונות.
 
 const POSITION_ORDER = ['hero', 'slot1', 'slot2'];
+
+// Client-side accept mirrors the server allowlist (mediaFiles presign) so a
+// wrong file type is rejected with a clear message before any network call.
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
 
 function currentPositions(links) {
   const out = { hero: [], slot1: [], slot2: [] };
@@ -24,10 +36,17 @@ function currentPositions(links) {
   return out;
 }
 
+function uploadErrText(err) {
+  if (err?.payload?.error === 'r2_not_configured')
+    return 'אחסון התמונות (Cloudflare R2) עדיין לא מוגדר במערכת.';
+  return err?.payload?.error || err?.message || 'שגיאה';
+}
+
 export default function VariantQuoteImages({ variant, slotTitles, onChanged }) {
   const [library, setLibrary] = useState(null);
   const [pickerFor, setPickerFor] = useState(null); // position key | null
   const [saving, setSaving] = useState(false);
+  const [uploadingFor, setUploadingFor] = useState(null); // position key | null
 
   useEffect(() => {
     let alive = true;
@@ -68,57 +87,65 @@ export default function VariantQuoteImages({ variant, slotTitles, onChanged }) {
     write({ ...positions, [position]: positions[position].filter((id) => id !== imageId) });
   }
 
+  // Direct upload into a position: canonical media path → real library entity
+  // (tagged with the variant's location so the default picker filter shows it)
+  // → attach exactly like a library pick. Uploads that succeed before a
+  // failure are still attached — nothing already selected is ever lost.
+  async function uploadTo(position, files, single) {
+    const locationId = variant.location?.id || variant.locationId || null;
+    const list = single ? files.slice(0, 1) : files;
+    if (single && files.length > 1) {
+      alert('למיקום זה אפשר תמונה אחת — הועלתה התמונה הראשונה בלבד.');
+    }
+    setUploadingFor(position);
+    const created = [];
+    let failed = null;
+    try {
+      for (const file of list) {
+        const mf = await uploadImage(file, 'quote/images');
+        const qi = await api.quoteImages.create({
+          mediaFileId: mf.id,
+          locationIds: locationId ? [locationId] : [],
+        });
+        created.push(qi);
+      }
+    } catch (e) {
+      failed = e;
+    }
+    if (created.length) {
+      setLibrary((l) => [...created, ...(l || [])]);
+      const next = { ...positions };
+      next[position] = single
+        ? [created[0].id]
+        : [...next[position], ...created.map((c) => c.id)];
+      await write(next);
+    }
+    setUploadingFor(null);
+    if (failed) alert('שגיאה בהעלאה: ' + uploadErrText(failed));
+  }
+
   if (library === null) return <p className="text-sm text-gray-400">טוען את ספריית התמונות…</p>;
 
   return (
     <div className="space-y-6">
-      {library.length === 0 && (
-        <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-2.5 text-[13px] text-gray-500">
-          ספריית התמונות ריקה. מוסיפים תמונות ב
-          <LibraryLink /> ואז בוחרים אותן כאן.
-        </p>
-      )}
-
       {POSITIONS.map((pos) => (
-        <div key={pos.key}>
-          <div className="mb-1 flex items-baseline gap-2">
-            <span className="text-[13.5px] font-semibold text-gray-800">{pos.label}</span>
-            <span className="text-[11.5px] text-gray-400">{pos.hint}</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {positions[pos.key].map((id) => {
-              const im = byId.get(id);
-              if (!im) return null;
-              return (
-                <div key={id} className="relative">
-                  <img src={im.mediaFile?.url} alt={im.titleHe || ''} title={im.titleHe || im.titleEn || ''}
-                    className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => remove(pos.key, id)}
-                    disabled={saving}
-                    className="absolute -top-2 -left-2 h-6 w-6 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm hover:text-red-600 disabled:opacity-50"
-                    aria-label="הסר מהמיקום"
-                  >
-                    ×
-                  </button>
-                </div>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => setPickerFor(pos.key)}
-              disabled={saving || library.length === 0}
-              className="h-20 w-20 rounded-lg border border-dashed border-gray-300 text-[12px] text-gray-500 transition hover:bg-gray-50 disabled:opacity-50"
-            >
-              {pos.single && positions[pos.key].length ? 'החלף' : '+ מהספרייה'}
-            </button>
-          </div>
-        </div>
+        <PositionRow
+          key={pos.key}
+          pos={pos}
+          imageIds={positions[pos.key]}
+          byId={byId}
+          busy={saving || uploadingFor !== null}
+          uploading={uploadingFor === pos.key}
+          hasLibrary={library.length > 0}
+          onRemove={(id) => remove(pos.key, id)}
+          onOpenPicker={() => setPickerFor(pos.key)}
+          onUpload={(files) => uploadTo(pos.key, files, pos.single)}
+        />
       ))}
 
       <p className="text-[11.5px] text-gray-400">
-        הסרה כאן מסירה את ההפניה מהוריאציה בלבד — התמונה נשארת בספרייה. ניהול הספרייה: <LibraryLink />.
+        העלאה ישירה כאן מוסיפה את התמונה גם לספרייה המשותפת. הסרה כאן מסירה את
+        ההפניה מהוריאציה בלבד — התמונה נשארת בספרייה. ניהול הספרייה: <LibraryLink />.
       </p>
 
       <LibraryPickerDialog
@@ -130,6 +157,92 @@ export default function VariantQuoteImages({ variant, slotTitles, onChanged }) {
         onPick={(id) => pick(pickerFor, id, POSITIONS.find((p) => p.key === pickerFor)?.single)}
         title={POSITIONS.find((p) => p.key === pickerFor)?.label}
       />
+    </div>
+  );
+}
+
+// One quote position = one unified image field: current images, drag-and-drop
+// over the whole row, upload-from-computer, and pick-from-library.
+function PositionRow({ pos, imageIds, byId, busy, uploading, hasLibrary, onRemove, onOpenPicker, onUpload }) {
+  // multiple:true even for a single-image position — the truncation to one
+  // file happens in uploadTo WITH user feedback, instead of a silent drop here.
+  const { dragOver, open, dropProps, inputProps } = useFileDrop({
+    accept: IMAGE_ACCEPT,
+    multiple: true,
+    maxBytes: 25 * 1024 * 1024,
+    onFiles: onUpload,
+    disabled: busy,
+    onReject: (rejected) => {
+      const bySize = rejected.some((r) => r.reason === 'size');
+      alert(bySize
+        ? 'קובץ גדול מדי — עד 25MB לתמונה.'
+        : 'קובץ לא נתמך — יש לבחור קובץ תמונה (JPG / PNG / WEBP / GIF).');
+    },
+  });
+
+  const hasImage = imageIds.length > 0;
+  const tile = 'h-20 w-20 rounded-lg border border-dashed text-[12px] transition disabled:opacity-50';
+
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline gap-2">
+        <span className="text-[13.5px] font-semibold text-gray-800">{pos.label}</span>
+        <span className="text-[11.5px] text-gray-400">{pos.hint}</span>
+      </div>
+      <div
+        {...dropProps}
+        className={`relative rounded-xl border p-2 transition ${
+          dragOver ? 'border-blue-400 bg-blue-50/60 ring-2 ring-blue-200' : 'border-transparent -m-px'
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {imageIds.map((id) => {
+            const im = byId.get(id);
+            if (!im) return null;
+            return (
+              <div key={id} className="relative">
+                <img src={im.mediaFile?.url} alt={im.titleHe || ''} title={im.titleHe || im.titleEn || ''}
+                  className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
+                <button
+                  type="button"
+                  onClick={() => onRemove(id)}
+                  disabled={busy}
+                  className="absolute -top-2 -left-2 h-6 w-6 rounded-full border border-gray-300 bg-white text-gray-600 shadow-sm hover:text-red-600 disabled:opacity-50"
+                  aria-label="הסר מהמיקום"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            onClick={open}
+            disabled={busy}
+            className={`${tile} ${dragOver ? 'border-blue-400 bg-blue-100 text-blue-700' : 'border-gray-300 text-gray-500 hover:bg-gray-50'}`}
+          >
+            {uploading ? 'מעלה…' : dragOver ? 'שחררו כאן' : pos.single && hasImage ? 'החלף מהמחשב' : '+ העלאה מהמחשב'}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenPicker}
+            disabled={busy || !hasLibrary}
+            className={`${tile} border-gray-300 text-gray-500 hover:bg-gray-50`}
+            title={hasLibrary ? undefined : 'ספריית התמונות ריקה — העלו תמונה ישירות'}
+          >
+            {pos.single && hasImage ? 'החלף מהספרייה' : '+ מהספרייה'}
+          </button>
+          {!hasImage && !uploading && (
+            <span className="text-[11px] text-gray-400">גררו תמונה לכאן, העלו מהמחשב או בחרו מהספרייה</span>
+          )}
+        </div>
+        {dragOver && (
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl text-[12px] font-semibold text-blue-700">
+            שחררו כדי להעלות {pos.single ? 'תמונה' : 'תמונות'}
+          </span>
+        )}
+      </div>
+      <input {...inputProps} />
     </div>
   );
 }
