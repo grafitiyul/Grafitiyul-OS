@@ -27,6 +27,26 @@ test('every report renders from its own realistic sample (the preview path)', ()
   }
 });
 
+// ── Manager Report identification ("(#N)" as the final line) ─────────────────
+
+test('every manager report ends with its "(#N)" identifier; guide and customer reports never carry it', () => {
+  for (const r of REPORTS) {
+    const text = renderReportSample(r.number);
+    const internal = r.audience !== 'guides' && r.audience !== 'customer';
+    if (internal) {
+      assert.ok(text.endsWith(`\n\n(#${r.number})`), `#${r.number} identifies itself as its final line`);
+    } else {
+      assert.ok(!text.includes(`(#${r.number})`), `#${r.number} (${r.audience}) must not expose an internal catalog number`);
+    }
+  }
+});
+
+test('the identifier rides the English rendering too, from the same appender', () => {
+  const r = reportByNumber(19); // bilingual office report
+  const en = renderReport(19, r.sample(), 'en');
+  assert.ok(en.endsWith('\n\n(#19)'), 'English body ends with the identifier');
+});
+
 // ── the shared customer line (business vs private) ───────────────────────────
 
 test('customer line: business shows "name - organization", private shows name only', () => {
@@ -202,6 +222,8 @@ test('#7 is the headline plus the list — no preamble, no management link', () 
     '',
     '⛔ יואב - סיור - לקוח א - 10/09/2026 10:00',
     '⛔ מיכל - סדנה - לקוח ב - ארגון - 12/09/2026 17:00',
+    '',
+    '(#7)',
   ]);
   assert.ok(!text.includes('להלן'), 'the introductory sentence is gone');
   assert.ok(!text.includes('לינק לניהול'), 'the management link is gone');
@@ -218,7 +240,7 @@ test('#8 is a single-guide message signed by גרפיבוט', () => {
   assert.match(text, /שם המדריך: יואב כהן/);
   assert.match(text, /שם הלקוח: משפחת רוזנברג/);
   assert.match(text, /שם הסיור: סיור - תל אביב/);
-  assert.ok(text.endsWith('תודה,\nגרפיבוט'));
+  assert.ok(text.endsWith('תודה,\nגרפיבוט\n\n(#8)'));
 });
 
 // ── #9 quote signed ──────────────────────────────────────────────────────────
@@ -239,7 +261,7 @@ test('#9 lists customer and organization separately and ends with the deal link'
   assert.match(text, /מוצר: סיור גרפיטי - חיפה/);
   assert.match(text, /סכום: ₪3,720/);
   assert.ok(!text.includes('9,000'), 'the deal total must not leak into a parallel offer');
-  assert.ok(text.endsWith('לאישור:\nhttps://x/admin/crm/deals/27242'));
+  assert.ok(text.endsWith('לאישור:\nhttps://x/admin/crm/deals/27242\n\n(#9)'));
 });
 
 test('#9 with no organization shows an honest dash, never an empty label', () => {
@@ -281,6 +303,8 @@ test('#10 with one group uses the full house layout', () => {
     '',
     'לאישור:',
     'https://x/admin/crm/deals/27242',
+    '',
+    '(#10)',
   ]);
 });
 
@@ -293,7 +317,7 @@ test('#10 with several groups lists one line each plus the order total', () => {
   assert.match(text, /• כיתה ז2 - 05\/10\/2026 10:00 - סיור גרפיטי - 22 משתתפים - ₪3,410/);
   assert.match(text, /סה"כ: ₪7,130/);
   // Every booked group is reachable — no order is left without its deal link.
-  assert.match(text, /לאישור:\nhttps:\/\/x\/admin\/crm\/deals\/27242\nhttps:\/\/x\/admin\/crm\/deals\/27243$/);
+  assert.match(text, /לאישור:\nhttps:\/\/x\/admin\/crm\/deals\/27242\nhttps:\/\/x\/admin\/crm\/deals\/27243\n\n\(#10\)$/);
 });
 
 test('#10 never invents an agency or a total it does not have', () => {
@@ -304,7 +328,7 @@ test('#10 never invents an agency or a total it does not have', () => {
   });
   assert.match(text, /ארגון: —/);
   assert.match(text, /סכום ההזמנה: —/);
-  assert.ok(text.endsWith('לאישור:\n—'));
+  assert.ok(text.endsWith('לאישור:\n—\n\n(#10)'));
 });
 
 // ── #26 deal became WON ─────────────────────────────────────────────────────

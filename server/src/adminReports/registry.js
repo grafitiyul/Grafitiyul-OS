@@ -548,6 +548,28 @@ export function reportChannel(report) {
   return report?.channel === 'email' ? 'email' : 'whatsapp';
 }
 
+/**
+ * A Manager Report is any report that goes to an internal office/manager
+ * destination — everything except the per-person reports to guides and the
+ * customer-audience messages. Only Manager Reports carry the identifier tag.
+ */
+export function isManagerReport(report) {
+  return !!report && report.audience !== 'guides' && report.audience !== 'customer';
+}
+
+/**
+ * Manager Reports identify themselves for debugging/QA: "(#N)" as the very
+ * last line of the body, after all normal content ("יש טעות בדיווח #15").
+ * Appended HERE by the renderer from the catalog number — never hardcoded in a
+ * report definition — so every future Manager Report gets it automatically.
+ * Bodies only: email subjects never carry the tag. Guide and customer
+ * messages must never show an internal catalog number.
+ */
+function withReportTag(report, text) {
+  if (typeof text !== 'string' || !isManagerReport(report)) return text;
+  return `${text}\n\n(#${report.number})`;
+}
+
 /** Rendered subject for email reports (null for WhatsApp ones). */
 export function renderReportSubject(number, ctx, lang = 'he') {
   const report = reportByNumber(number);
@@ -565,15 +587,17 @@ export function renderReport(number, ctx, lang = 'he') {
   // English is a second render function, not a second definition and not
   // editable database content. A report with no English falls back to Hebrew
   // rather than sending a blank — an untranslated report must still arrive.
-  if (lang === 'en' && typeof report.renderEn === 'function') return report.renderEn(ctx || {});
-  return report.render(ctx || {});
+  const body = lang === 'en' && typeof report.renderEn === 'function'
+    ? report.renderEn(ctx || {})
+    : report.render(ctx || {});
+  return withReportTag(report, body);
 }
 
 /** The preview text for a report, from its realistic synthetic sample. */
 export function renderReportSample(number) {
   const report = reportByNumber(number);
   if (!report) return null;
-  return report.render(report.sample());
+  return withReportTag(report, report.render(report.sample()));
 }
 
 /** Does this report have an English version? (drives the settings screen.) */
@@ -591,8 +615,8 @@ export function renderReportBoth(number) {
   if (!report) return null;
   const ctx = report.sample();
   return {
-    he: report.render(ctx),
-    en: hasEnglish(report) ? report.renderEn(ctx) : null,
+    he: withReportTag(report, report.render(ctx)),
+    en: hasEnglish(report) ? withReportTag(report, report.renderEn(ctx)) : null,
     subjectHe: report.renderSubject ? report.renderSubject(ctx) : null,
     subjectEn: report.renderSubjectEn ? report.renderSubjectEn(ctx) : null,
   };
