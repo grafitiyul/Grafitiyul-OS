@@ -7,6 +7,7 @@ import { hasDirtyForms } from '../../../lib/dirtyForms.js';
 import { useRealtime } from '../../../lib/realtime.js';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
+import { anchorAt, reconcileAnchor, canStep, stepAnchor, drawerPosition } from '../../common/drawerNav.js';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import TaskCards from './TaskCards.jsx';
 // TaskIcon = the ONE task-icon renderer: whatsapp (by key OR channel) → the
@@ -125,15 +126,21 @@ export default function TasksWorkspace() {
   useEffect(() => setTabRowSlot(document.getElementById('crm-tabrow-slot')), []);
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const timeChipRef = useRef(null);
-  // The drawer follows a ROW index, not a deal id: consecutive rows may share a
-  // Deal (two tasks on one deal), and prev/next walks the filtered ROW order —
-  // deduping would make the position indicator lie.
-  const [drawerIdx, setDrawerIdx] = useState(null);
+  // The drawer is PINNED TO A DEAL (common/drawerNav.js). Completing a task
+  // removes its row from the filtered list — that must refresh the list and
+  // leave the open deal exactly where it is. Only opening a row, pressing
+  // Prev/Next or closing changes what the drawer shows.
+  const [drawer, setDrawer] = useState(null);
   const [drawerDealId, setDrawerDealId] = useState(null);
+  const drawerRef = useRef(null);
+  drawerRef.current = drawer;
 
   const cols = useTableColumns(COLUMNS_KEY, TASK_COLUMNS);
   const gridRef = useRef(null);
   const lastClickedRow = useRef(null);
+  // Task ids with a status transition in flight — the synchronous double-click
+  // guard (state cannot be read back fast enough between two clicks).
+  const inFlightRef = useRef(new Set());
 
   // ── bootstrap: who am I, plus the filter vocabularies ──
   useEffect(() => {
@@ -222,7 +229,11 @@ export default function TasksWorkspace() {
       prevQueryRef.current = query;
       setData(list);
       if (cnt) setCounts(cnt);
-      if (cause !== 'realtime') setCursor(0);
+      // Resetting the cursor is "you asked for a new list, start at the top".
+      // With a deal open it would instead yank the highlight off the row being
+      // worked on the moment its task is completed — so the drawer suppresses
+      // it and the reconcile effect below keeps the cursor on the open record.
+      if (cause !== 'realtime' && !drawerRef.current) setCursor(0);
     } catch (e) {
       if (cause !== 'realtime') setError(e.payload?.error || e.message);
     } finally {
@@ -256,16 +267,31 @@ export default function TasksWorkspace() {
   const statusLock = filters ? statusLockedBy(filters) : null;
 
   // ── drawer ──
+  // The anchor survives every refresh: the row it was opened from may have been
+  // completed away, the list may have re-sorted, the filter may have changed —
+  // the pinned deal is untouched by all of it, and Prev/Next keep walking from
+  // the position it held. See common/drawerNav.js for the full rule.
+  useEffect(() => {
+    setDrawer((d) => reconcileAnchor(d, rows));
+  }, [rows]);
+
+  // Keep the table's keyboard cursor on the open record while it is still in
+  // the list, so closing the drawer leaves the operator exactly where they were.
+  useEffect(() => {
+    if (drawer && !drawer.detached) setCursor(drawer.idx);
+  }, [drawer]);
+
   // DealDetail is a ~1000-line workspace and remounts per deal (key={dealId}),
   // so holding an arrow key would fire one full load per keypress. Debounce the
   // target: arrowing THROUGH rows is free, and only where you land loads.
+  // Closing is immediate — an operator action must never feel laggy.
   useEffect(() => {
-    if (drawerIdx == null) { setDrawerDealId(null); return; }
-    const target = rows[drawerIdx]?.deal?.id ?? null;
+    const target = drawer?.recordId ?? null; // the pinned Deal id
     if (target === drawerDealId) return;
+    if (target == null) { setDrawerDealId(null); return; }
     const t = setTimeout(() => setDrawerDealId(target), 150);
     return () => clearTimeout(t);
-  }, [drawerIdx, rows, drawerDealId]);
+  }, [drawer, drawerDealId]);
 
   // ── drawer boundary ──
   // The drawer leaves the LEADING table columns visible (Pipedrive-style record
@@ -279,7 +305,7 @@ export default function TasksWorkspace() {
   // an absolute overlay, so opening/closing never re-lays-out the table.
   const [drawerStartPx, setDrawerStartPx] = useState(0);
   useEffect(() => {
-    if (drawerIdx == null) return undefined;
+    if (!drawer) return undefined;
     const measure = () => {
       const grid = gridRef.current;
       if (!grid || !window.matchMedia('(min-width: 768px)').matches) {
@@ -298,22 +324,21 @@ export default function TasksWorkspace() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [drawerIdx, cols.widths, cols.visibleCols]);
+  }, [drawer, cols.widths, cols.visibleCols]);
 
   const stepDrawer = useCallback((delta) => {
-    setDrawerIdx((i) => {
-      if (i == null) return i;
+    setDrawer((d) => {
+      if (!d) return d;
       // Same guard the inboxes use: never abandon a half-typed form.
-      if (hasDirtyForms()) return i;
-      const next = i + delta;
-      if (next < 0 || next >= rows.length) return i;
-      setCursor(next);
-      return next;
+      if (hasDirtyForms()) return d;
+      return stepAnchor(d, rows, delta);
     });
-  }, [rows.length]);
+  }, [rows]);
 
   function openDrawer(idx) {
-    setDrawerIdx(idx);
+    const next = anchorAt(rows, idx);
+    if (!next) return;
+    setDrawer(next);
     setCursor(idx);
   }
 
@@ -446,6 +471,12 @@ export default function TasksWorkspace() {
   // literally one transition code path however a task gets completed.
   async function completeRow(row) {
     if (row.status !== 'open') return;
+    // A real double-click fires both clicks before the disabled state can
+    // repaint, and the second one would come back task_not_open — a red error
+    // banner for doing nothing wrong. A ref is checked synchronously, so the
+    // second click is dropped, not sent.
+    if (inFlightRef.current.has(row.id)) return;
+    inFlightRef.current.add(row.id);
     setSavingId(row.id);
     try {
       const res = await api.tasks.bulk({ action: 'complete', ids: [row.id] });
@@ -455,6 +486,7 @@ export default function TasksWorkspace() {
     } catch (e) {
       setError(writeError(e.payload?.error) || e.message);
     } finally {
+      inFlightRef.current.delete(row.id);
       setSavingId(null);
     }
   }
@@ -499,7 +531,7 @@ export default function TasksWorkspace() {
       if (editing) return; // the cell editor owns the keyboard while open
       // While the drawer is open it owns the keyboard (ESC + PgUp/PgDn) — the
       // same deferral both inboxes use.
-      if (drawerIdx != null) return;
+      if (drawer) return;
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
       const row = rows[cursor];
@@ -1017,14 +1049,18 @@ export default function TasksWorkspace() {
       {/* ── the Deal drawer ──
           Prev/Next walk the current filtered ROW order. The position counts
           rows, not deals: two tasks can share one deal, and deduping would make
-          the indicator lie about where you are in the queue. */}
-      {drawerIdx != null && drawerDealId && (
+          the indicator lie about where you are in the queue.
+
+          The open deal is `drawer.recordId` — NOT rows[idx]. Completing its
+          task removes the row and the deal simply stays open, with no position
+          number, until the operator moves or closes it themselves. */}
+      {drawer && drawerDealId && (
         <DealDrawer
           dealId={drawerDealId}
-          onClose={() => setDrawerIdx(null)}
-          onPrev={drawerIdx > 0 ? () => stepDrawer(-1) : undefined}
-          onNext={drawerIdx < rows.length - 1 ? () => stepDrawer(1) : undefined}
-          position={`${drawerIdx + 1} / ${rows.length}`}
+          onClose={() => setDrawer(null)}
+          onPrev={canStep(drawer, rows, -1) ? () => stepDrawer(-1) : undefined}
+          onNext={canStep(drawer, rows, 1) ? () => stepDrawer(1) : undefined}
+          position={drawerPosition(drawer, rows)}
           startOffset={drawerStartPx}
         />
       )}

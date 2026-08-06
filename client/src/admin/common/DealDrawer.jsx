@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import DealDetail from '../deals/DealDetail.jsx';
 import { dealPath } from '../deals/config.js';
 import AlertDialog from './AlertDialog.jsx';
+import { formatDrawerPosition, navActionForKey } from './drawerNav.js';
 
 // The FULL deal workspace (same DealDetail component, embedded), opened from a
 // work queue so the operator never loses their place in it.
@@ -21,10 +22,17 @@ import AlertDialog from './AlertDialog.jsx';
 // full page canonicalises the address bar to the מספר הזמנה form on load.
 //
 // PREV/NEXT (optional): pass onPrev/onNext to walk the CALLER's current list
-// order without closing the drawer, plus `position` ("3 / 47") for context.
-// The caller owns the order and the dirty-form guard; this component only
-// renders the controls and binds the keys (PgUp/PgDn and Alt+↑/↓). Callers
+// order without closing the drawer, plus `position` — { index, total }, where a
+// null index means "this record is no longer in the filtered list" (see
+// drawerNav.js). The caller owns the order, the anchor and the dirty-form
+// guard; this component only renders the control and binds the keys. Callers
 // that pass nothing (the two inboxes) behave exactly as before.
+//
+// Direction is an owner decision and must NOT be mirrored by RTL: the LEFT
+// button is הקודם and the RIGHT button is הבא, physically, always. The control
+// is therefore rendered dir="ltr" so DOM order IS the order on screen, and the
+// keys follow the same physical sense (Alt+← previous, Alt+→ next, plus the
+// original PgUp/PgDn and Alt+↑/↓).
 //
 // STARTOFFSET (optional, px): pushes the drawer's inline-START edge (right in
 // RTL) away from the container edge, leaving that strip of the underlying list
@@ -41,21 +49,23 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, 
   // not forced to memoize (same approach as tourEvents' useTourChanged).
   const navRef = useRef(null);
   navRef.current = { onPrev, onNext, onClose };
+  // The control stays visible (with a disabled arrow) at the true beginning and
+  // end of the queue — a control that vanishes at the edges reads as a bug.
+  const showNav = !!position || !!onPrev || !!onNext;
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setEntered(true));
     function onKey(e) {
       const nav = navRef.current;
       if (e.key === 'Escape') { nav.onClose(); return; }
-      // PgUp/PgDn and Alt+↑/↓ walk the queue — but never while a field has
-      // focus: paging inside a long note must still page it, and Alt+↓ opens a
-      // native <select>. Text editing is never interfered with.
+      // The queue keys never fire while a field has focus: paging inside a long
+      // note must still page it, and Alt+↓ opens a native <select>. Text
+      // editing is never interfered with.
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
-      const prevKey = e.key === 'PageUp' || (e.altKey && e.key === 'ArrowUp');
-      const nextKey = e.key === 'PageDown' || (e.altKey && e.key === 'ArrowDown');
-      if (prevKey && nav.onPrev) { e.preventDefault(); nav.onPrev(); }
-      else if (nextKey && nav.onNext) { e.preventDefault(); nav.onNext(); }
+      const action = navActionForKey(e);
+      if (action === 'prev' && nav.onPrev) { e.preventDefault(); nav.onPrev(); }
+      else if (action === 'next' && nav.onNext) { e.preventDefault(); nav.onNext(); }
     }
     window.addEventListener('keydown', onKey);
     return () => {
@@ -94,39 +104,40 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, 
         <button
           type="button"
           onClick={onClose}
-          aria-label="סגירה וחזרה לתיבת השיחות"
+          // Closing is always an explicit operator action, from any of the three
+          // consumers — so the label names the drawer, not one caller's inbox.
+          aria-label="סגירת הדיל"
+          title="סגירה (Esc)"
           className="flex h-8 w-8 items-center justify-center rounded-full text-xl text-gray-400 hover:bg-gray-100 hover:text-gray-700"
         >
           ×
         </button>
         <span className="text-[13px] font-semibold text-gray-700">דיל</span>
-        {/* Queue navigation — only when the caller supplies an order. */}
-        {(onPrev || onNext) && (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={onPrev}
-              disabled={!onPrev}
-              aria-label="הקודם"
-              title="הקודם (PageUp)"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        {/* Queue navigation — only when the caller supplies an order.
+            dir="ltr" pins the physical layout: [‹ הקודם] [counter] [הבא ›].
+            `mx-auto` centres it in the free space, pushing the header actions
+            to the far end. */}
+        {showNav && (
+          <div dir="ltr" className="mx-auto flex items-center gap-0.5 rounded-xl border border-gray-200 bg-gray-50 p-0.5">
+            <NavArrow kind="prev" onClick={onPrev} disabled={!onPrev} />
+            <span
+              dir="rtl"
+              // dir="rtl" on the counter is required, not decorative: inside an
+              // LTR box "102 מתוך 115" would be read by a Hebrew reader as
+              // "115 מתוך 102" — the exact reversal this redesign fixes.
+              title={
+                position?.index == null
+                  ? 'הרשומה כבר לא תואמת את הסינון הנוכחי — הדיל נשאר פתוח עד לסגירה ידנית'
+                  : undefined
+              }
+              className="min-w-[6.5rem] select-none px-1 text-center text-[12px] font-medium tabular-nums text-gray-600"
             >
-              ›
-            </button>
-            <button
-              type="button"
-              onClick={onNext}
-              disabled={!onNext}
-              aria-label="הבא"
-              title="הבא (PageDown)"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              ‹
-            </button>
-            {position && <span className="text-[11px] tabular-nums text-gray-400">{position}</span>}
+              {formatDrawerPosition(position)}
+            </span>
+            <NavArrow kind="next" onClick={onNext} disabled={!onNext} />
           </div>
         )}
-        <div className="mr-auto flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${showNav ? '' : 'mr-auto'}`}>
           <button
             type="button"
             onClick={copyDealUrl}
@@ -176,5 +187,32 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, 
         }
       />
     </div>
+  );
+}
+
+// One arrow of the queue control. `kind` is the LOGICAL action; because the
+// wrapper is dir="ltr", prev always renders on the left and next on the right,
+// each pointing the way it moves — in RTL exactly as in LTR.
+function NavArrow({ kind, onClick, disabled }) {
+  const label = kind === 'prev' ? 'הקודם' : 'הבא';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={`${label} (${kind === 'prev' ? 'Alt+←' : 'Alt+→'})`}
+      className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white hover:text-gray-900 hover:shadow-sm disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300 disabled:hover:shadow-none"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path
+          d={kind === 'prev' ? 'M10 3 L5 8 L10 13' : 'M6 3 L11 8 L6 13'}
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
   );
 }
