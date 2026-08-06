@@ -118,23 +118,41 @@ export function useListScrollRestore(ready) {
   const key = scrollKey(pathname, search);
   const restoredFor = useRef(null);
 
-  // Record scroll continuously: React can unmount the list after the container
-  // is already detached, so "save on unmount" alone loses the position.
+  // Suppresses saving while a restore is mid-flight: setting scrollTop fires
+  // scroll events, and a clamped intermediate value must not overwrite the
+  // target we are still trying to reach.
+  const restoring = useRef(false);
+
+  // Record scroll CONTINUOUSLY, and never re-read the element at teardown.
+  //
+  // Production bug this shape exists to prevent: the first version also saved
+  // `el.scrollTop` in the effect cleanup. By the time React unmounts the list,
+  // its rows are already gone, the container has collapsed, and the browser
+  // has clamped scrollTop to 0 — so the cleanup faithfully saved 0 over the
+  // good value the listener had just written. Verified live: the store held
+  // 600 while scrolling and 0 the moment the deal page opened.
+  //
+  // So the LAST VALUE OBSERVED WHILE ALIVE is what gets written, and teardown
+  // only flushes that remembered number.
   useEffect(() => {
     const el = findScrollParent(anchorRef.current);
     if (!el) return undefined;
     let frame = 0;
+    let lastTop = null;
     const onScroll = () => {
+      if (restoring.current) return;
+      lastTop = el.scrollTop; // captured NOW, while the element is still real
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        saveScrollTop(key, el.scrollTop);
+        saveScrollTop(key, lastTop);
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       if (frame) cancelAnimationFrame(frame);
-      saveScrollTop(key, el.scrollTop);
+      // Flush the remembered value — NOT a fresh read of a dying element.
+      if (lastTop != null) saveScrollTop(key, lastTop);
       el.removeEventListener('scroll', onScroll);
     };
   }, [key]);
@@ -151,15 +169,23 @@ export function useListScrollRestore(ready) {
     }
     // Rows can settle over a few frames (images, measured columns), so retry
     // until the container is tall enough to actually hold the saved offset.
+    restoring.current = true;
     let tries = 0;
     let frame = 0;
     const attempt = () => {
       el.scrollTop = top;
       tries += 1;
-      if (Math.abs(el.scrollTop - top) > 1 && tries < 12) frame = requestAnimationFrame(attempt);
+      if (Math.abs(el.scrollTop - top) > 1 && tries < 12) {
+        frame = requestAnimationFrame(attempt);
+      } else {
+        restoring.current = false;
+      }
     };
     frame = requestAnimationFrame(attempt);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      restoring.current = false;
+    };
   }, [ready, key]);
 
   return anchorRef;

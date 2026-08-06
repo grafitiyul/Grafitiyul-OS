@@ -158,7 +158,33 @@ Rendering (rather than only unit-testing the hook) is deliberate: the original
 regression was an innocent-looking `useEffect(() => setPage(1), [filters])` that
 no pure test could have caught.
 
-## 5. Known behaviour change
+## 5. Production verification (2026-08-06, live, authenticated)
+
+Driven against `app.grafitiyul.co.il` in real Chrome:
+
+| Check | Result |
+|---|---|
+| Deals `?page=4` → open deal → browser Back | `4 / 495` → `4 / 495`, URL `?page=4` ✓ |
+| Deals `?page=3&status=won` → open deal → the page's own חזרה button | `3 / 166` → `3 / 166`, URL `?page=3&status=won` ✓ |
+| עבור לסוף, unfiltered | `1 / 495` → `495 / 495`, button then disabled ✓ |
+| עבור לסוף, filtered + sorted | `1 / 166` → `166 / 166`, URL kept `status=won&sort=amount:asc` ✓ |
+| Contacts `?page=3` → open contact → Back | `3 / 416` → `3 / 416` ✓ |
+| Organizations `?page=2` → open org → Back | `2 / 54` → `2 / 54` ✓ |
+| Pasted deal URL with no origin → חזרה | falls back to the deals list ✓ |
+| Tasks workspace (untouched) | loads clean ✓ |
+| Uncaught page errors | none |
+
+**One real defect was found by this pass and fixed** (commit *scroll restoration
+lost its offset*): scroll saved 600 while scrolling and 0 the instant the deal
+page opened. The effect cleanup re-read `el.scrollTop` at unmount, by which
+point the rows were gone, the container had collapsed and the browser had
+clamped the value to 0 — so teardown overwrote the good value. The listener now
+captures the offset while the element is still real and teardown flushes that
+remembered number; saving is suppressed while a restore is retrying. The
+regression test reproduces the sequence and was confirmed to fail against the
+previous cleanup.
+
+## 6. Known behaviour change
 
 The legacy per-module filter keys (`deals.filters.v1`, `collection.filters.v1`'s
 search/status/queue) are superseded by the namespaced `gos.list.<module>.v2`

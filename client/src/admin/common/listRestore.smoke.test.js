@@ -445,6 +445,57 @@ test('scroll position is recorded and restored on return to the same list URL', 
   host.remove();
 });
 
+test('teardown never overwrites the saved offset with the collapsed 0 (prod regression)', async () => {
+  // THE production bug, reproduced: when React unmounts the list its rows go
+  // first, the container collapses, and the browser clamps scrollTop to 0. An
+  // effect cleanup that re-read scrollTop faithfully saved that 0 over the good
+  // value — verified live, the store held 600 while scrolling and 0 the moment
+  // the deal opened. The hook must flush the last value observed WHILE ALIVE.
+  const { useListScrollRestore } = await import('./useListState.js');
+  const { readScrollTop, scrollKey } = await import('./listNav.js');
+  const { useLocation } = routerModule;
+
+  function Screen() {
+    const anchor = useListScrollRestore(true);
+    useLocation();
+    return React.createElement('div', { ref: anchor }, 'rows');
+  }
+  const host = document.createElement('div');
+  host.setAttribute('style', 'overflow-y: auto');
+  document.body.appendChild(host);
+
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ['/admin/crm/deals?page=4'] },
+        React.createElement(Routes, null, React.createElement(Route, { path: '*', element: React.createElement(Screen) })),
+      ),
+    ),
+  );
+  await act(async () => {});
+
+  // The operator scrolls.
+  host.scrollTop = 600;
+  host.dispatchEvent(new window.Event('scroll'));
+  await new Promise((r) => setTimeout(r, 20));
+  const key = scrollKey('/admin/crm/deals', '?page=4');
+  assert.equal(readScrollTop(key, window.sessionStorage), 600, 'the live value was recorded');
+
+  // Now the container collapses (rows removed) exactly as it does on a real
+  // navigation, and only THEN does React unmount.
+  host.scrollTop = 0;
+  await act(async () => root.unmount());
+
+  assert.equal(
+    readScrollTop(key, window.sessionStorage),
+    600,
+    'the collapsed 0 must NOT have overwritten the saved offset',
+  );
+  host.remove();
+});
+
 // ── 12. record navigation origin ────────────────────────────────────────────
 
 test('opening a deal from the list carries the return location; a pasted URL does not', async () => {
