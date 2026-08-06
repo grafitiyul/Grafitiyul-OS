@@ -80,14 +80,13 @@ function fake({ regStatus = 'confirmed', booking = null } = {}) {
     priceRule: { findMany: async ({ where }) => where.cardGroupId.in.filter((c) => CARD_TITLE[c]).map((c) => ({ cardGroupId: c, product: { nameHe: CARD_TITLE[c] } })) },
     ticketRegistration: {
       findMany: async ({ where }) => {
+        // syncDealRegistration (WON path) reads the BOOKING's own seat lines —
+        // it converges all of them, not just the source='deal' row.
+        if (where.bookingId !== undefined) return state.reg.bookingId === where.bookingId ? [{ ...state.reg }] : [];
         if (where.tourEvent) return [{ tourEventId: state.reg.tourEventId }];
         return [state.reg].filter((r) => CAP.includes(r.status) && r.productVariantId != null).map((r) => ({ productVariantId: r.productVariantId }));
       },
-      // syncDealRegistration (WON path) locates the deal reg by bookingId+source.
-      findFirst: async ({ where }) => {
-        if (where.bookingId !== undefined) return state.reg.bookingId === where.bookingId && state.reg.source === where.source ? { ...state.reg } : null;
-        return null; // no held/expired adoption row in this scenario
-      },
+      findFirst: async () => null, // no held/expired adoption row in this scenario
       update: async ({ where, data }) => { if (where.id === state.reg.id) Object.assign(state.reg, data); return { ...state.reg }; },
       updateMany: async ({ data }) => { Object.assign(state.reg, data); return { count: 1 }; },
     },

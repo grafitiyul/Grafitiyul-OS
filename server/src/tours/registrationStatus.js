@@ -25,6 +25,17 @@ export const CONFIRMED_STATUSES = [REG_ACTIVE, REG_CONFIRMED];
 // Terminal, seat-released states.
 export const RELEASED_STATUSES = [REG_EXPIRED, REG_CANCELLED, REG_REFUNDED];
 
+// ── the BOOKING side of the same vocabulary ──────────────────────────────────
+// Is this booking a LIVE participant on the tour? The ONE predicate every
+// operational roster (guide portal, admin tour page) shares, so no surface has
+// to remember that 'orphaned' (deal left WON, tour kept) is just as dead as
+// 'cancelled' — regStatusFromBooking collapses both to a seatless registration,
+// so neither may ever render as a participant. Lives here, with the rest of the
+// seat vocabulary, because the read surfaces must not import the write path.
+export function isLiveBooking(bookingStatus) {
+  return bookingStatus === 'active';
+}
+
 export function countsForCapacity(status) {
   return CAPACITY_STATUSES.includes(status);
 }

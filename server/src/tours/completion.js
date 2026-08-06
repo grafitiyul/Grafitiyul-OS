@@ -15,6 +15,8 @@ import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { calendarPendingPatch } from './calendar/service.js';
 import { wooPendingPatch } from './woo/service.js';
 import { ensureTourPayroll, cancelTourPayroll } from '../payroll/service.js';
+import { cancelTourAssignments } from './assignmentLifecycle.js';
+import { CAPACITY_STATUSES } from './registrationStatus.js';
 import { ISRAEL_TZ, israelToday, midnightAfterMs as ilMidnightAfterMs } from '../lib/israelDate.js';
 
 export const REQUIRED_SUMMARY_ROLES = ['lead_guide', 'guide'];
@@ -71,13 +73,85 @@ const REASON_BODY = {
   manual: '✅ הסיור סומן כהסתיים ידנית',
 };
 
+// The wording the office reads on an auto-cancelled empty tour.
+export const EMPTY_TOUR_CANCEL_BODY = '🚫 בוטל אוטומטית — לא היו נרשמים';
+
+// ── the empty-tour rule ──────────────────────────────────────────────────────
+//
+// A group/open tour that reaches its scheduled end with NOBODY on it did not
+// happen — calling it "הסתיים" tells the office a tour ran and skews every
+// count that reads completed tours. Its truthful end state is "מבוטל".
+//
+// "Nobody" is measured ONLY against the canonical seat SSOT: capacity-holding
+// TicketRegistrations. That is what makes the count trustworthy — a cancelled
+// registration, a released legacy twin, a cancelled booking and a waiver with
+// no live registration all fail `CAPACITY_STATUSES` by construction, so none of
+// them can keep an empty tour alive.
+export async function liveRegistrationCount(client, tourEventId) {
+  return client.ticketRegistration.count({
+    where: { tourEventId, status: { in: CAPACITY_STATUSES } },
+  });
+}
+
+// Cancel an empty group tour instead of completing it. Deliberately reuses the
+// SAME canonical services the manual cancel route calls — there is no second
+// cancellation implementation:
+//   • payroll parks as 'cancelled' (no-op when none was generated)
+//   • assignments are released, so no guide stays attached to a tour that never
+//     ran and the Guide Portal reflects it immediately
+//   • the calendar + Woo mirrors are marked dirty in the SAME write
+// It deliberately does NOT fire the `tour_cancelled` communication trigger:
+// that message exists to tell CUSTOMERS their tour is off, and this branch is
+// reached precisely because there are none. Nobody is notified of nothing.
+async function cancelEmptyTour(client, tourEventId, { cancelledAt }) {
+  await client.tourEvent.update({
+    where: { id: tourEventId },
+    data: {
+      status: 'cancelled',
+      cancelledAt,
+      ...calendarPendingPatch(),
+      ...wooPendingPatch('empty_tour_cancel'),
+    },
+  });
+  await emitTimelineEvent(client, {
+    subjectType: 'tour_event',
+    subjectId: tourEventId,
+    kind: 'tour',
+    body: EMPTY_TOUR_CANCEL_BODY,
+    data: {
+      event: 'cancelled',
+      reason: 'no_registrations',
+      cancelledAt: cancelledAt.toISOString(),
+    },
+    origin: systemOrigin(),
+  });
+  // Same transaction-safety rule as the payroll hook below: a failed statement
+  // would poison an outer tx, and these are self-healing/idempotent anyway.
+  if (client === prisma) {
+    try {
+      await cancelTourPayroll(client, tourEventId, 'tour_cancelled');
+    } catch (e) {
+      console.warn('[tours] cancelTourPayroll on empty-tour cancel failed:', e.message);
+    }
+    try {
+      await cancelTourAssignments(client, tourEventId, {
+        origin: systemOrigin(),
+        reason: 'tour_cancelled',
+      });
+    } catch (e) {
+      console.warn('[tours] cancelTourAssignments on empty-tour cancel failed:', e.message);
+    }
+  }
+  return { ok: true, already: false, cancelled: true, reason: 'no_registrations' };
+}
+
 // The ONE completion transition. Idempotent on completed tours; refuses
 // cancelled ones. `client` may be a transaction (summary-submit trigger runs
 // inside the submit tx).
 export async function completeTour(client, tourEventId, { reason, actorName = null, completedAt = null, nowMs = Date.now() } = {}) {
   const tour = await client.tourEvent.findUnique({
     where: { id: tourEventId },
-    select: { id: true, status: true, date: true },
+    select: { id: true, status: true, date: true, kind: true },
   });
   if (!tour) return { ok: false, error: 'not_found' };
   if (tour.status === 'completed') return { ok: true, already: true };
@@ -94,6 +168,18 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
   }
 
   const stamp = completedAt || new Date();
+
+  // A group tour reaching its scheduled end with zero live seats is CANCELLED,
+  // not completed (see cancelEmptyTour). Scoped to the automatic end-of-life
+  // sweep on purpose: 'manual' is an operator explicitly saying the tour ran,
+  // and 'summaries' is a guide who was there saying so — neither may be
+  // overruled by a seat count.
+  if (reason === 'midnight' && tour.kind === 'group_slot') {
+    if ((await liveRegistrationCount(client, tourEventId)) === 0) {
+      return cancelEmptyTour(client, tourEventId, { cancelledAt: stamp });
+    }
+  }
+
   await client.tourEvent.update({
     where: { id: tourEventId },
     data: {
@@ -223,13 +309,18 @@ export async function sweepOverdueTours(client = prisma, nowMs = Date.now(), { l
     take: limit,
   });
   let completed = 0;
+  let cancelledEmpty = 0;
   for (const t of overdue) {
     const mid = midnightAfterMs(t.date);
     const res = await completeTour(client, t.id, {
       reason: 'midnight',
       completedAt: Number.isNaN(mid) ? new Date(nowMs) : new Date(mid),
     });
-    if (res.ok && !res.already) completed += 1;
+    if (!res.ok || res.already) continue;
+    // An empty group tour ends CANCELLED, not completed — counted separately so
+    // the worker log never reports a tour as having run when it did not.
+    if (res.cancelled) cancelledEmpty += 1;
+    else completed += 1;
   }
-  return { scanned: overdue.length, completed };
+  return { scanned: overdue.length, completed, cancelledEmpty };
 }

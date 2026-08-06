@@ -313,7 +313,10 @@ export default function TourPage() {
 
   const city = tour?.location?.nameHe || tour?.productVariant?.location?.nameHe;
   const isSlot = tour?.kind === 'group_slot';
-  const relevantBookings = (tour?.bookings || []).filter((b) => b.status !== 'cancelled');
+  // Only LIVE bookings are participants. 'orphaned' (deal left WON, tour kept)
+  // holds no seat and is managed on its own screen — it used to slip past a
+  // bare `!== 'cancelled'` and render here as a real customer.
+  const relevantBookings = (tour?.bookings || []).filter((b) => b.status === 'active');
   // A private/business tour is 1:1 with a deal — its activity classification
   // (org-type + subtype) is read from that deal so the header shows the SAME
   // badge as the Deal header. Group slots have many deals → the broad "קבוצתי".

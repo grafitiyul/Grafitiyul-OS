@@ -73,7 +73,7 @@ test('a tour with NO required guides never auto-completes via summaries', async 
 
 // ── the ONE transition (fake client) ─────────────────────────────────────────
 
-function fakeTourClient(tour, { bookings = [], frozenUpdates = [] } = {}) {
+function fakeTourClient(tour, { bookings = [], frozenUpdates = [], liveSeats = 1 } = {}) {
   const calls = { updates: [], timeline: [], frozenUpdates };
   return {
     calls,
@@ -81,6 +81,7 @@ function fakeTourClient(tour, { bookings = [], frozenUpdates = [] } = {}) {
       findUnique: async () => tour,
       update: async (args) => calls.updates.push(args),
     },
+    ticketRegistration: { count: async () => liveSeats },
     booking: { findMany: async () => bookings },
     questionnaireSubmission: {
       updateMany: async (args) => calls.frozenUpdates.push(args),
@@ -150,6 +151,61 @@ test('completeTour: explicit completedAt (midnight sweep) is stamped as-is', asy
   const mid = new Date(midnightAfterMs('2026-07-10'));
   await completeTour(client, 't1', { reason: 'midnight', completedAt: mid });
   assert.equal(client.calls.updates[0].data.completedAt.getTime(), mid.getTime());
+});
+
+// ── the empty-tour rule: a group tour nobody joined ends מבוטל ───────────────
+
+const emptyGroupTour = { id: 't1', status: 'scheduled', date: '2026-07-10', kind: 'group_slot' };
+
+test('empty group tour at end of life is CANCELLED, not completed', async () => {
+  const client = fakeTourClient(emptyGroupTour, { liveSeats: 0 });
+  const res = await completeTour(client, 't1', { reason: 'midnight' });
+  assert.equal(res.ok, true);
+  assert.equal(res.cancelled, true);
+  assert.equal(res.reason, 'no_registrations');
+
+  const data = client.calls.updates[0].data;
+  assert.equal(data.status, 'cancelled');
+  assert.ok(data.cancelledAt instanceof Date);
+  assert.equal(data.completedAt, undefined, 'an empty tour never gets a completion stamp');
+  // Cancellation changes public sellability AND the calendar — both mirrors are
+  // marked dirty in the SAME write.
+  assert.equal(data.wooSyncStatus, 'pending');
+  assert.equal(data.gcalSyncStatus, 'pending');
+
+  assert.equal(client.calls.timeline.length, 1);
+  assert.match(client.calls.timeline[0].data.body, /בוטל אוטומטית/);
+  assert.match(client.calls.timeline[0].data.body, /לא היו נרשמים/);
+  assert.equal(client.calls.timeline[0].data.data.reason, 'no_registrations');
+});
+
+test('a group tour with even one live seat still COMPLETES', async () => {
+  const client = fakeTourClient(emptyGroupTour, { liveSeats: 1 });
+  const res = await completeTour(client, 't1', { reason: 'midnight' });
+  assert.deepEqual(res, { ok: true, already: false });
+  assert.equal(client.calls.updates[0].data.status, 'completed');
+});
+
+test('the empty-tour rule is scoped to GROUP tours', async () => {
+  // A private/business tour is 1:1 with its deal — seats are not how it ends.
+  for (const kind of ['private', 'business']) {
+    const client = fakeTourClient({ ...emptyGroupTour, kind }, { liveSeats: 0 });
+    const res = await completeTour(client, 't1', { reason: 'midnight' });
+    assert.equal(res.cancelled, undefined, kind);
+    assert.equal(client.calls.updates[0].data.status, 'completed', kind);
+  }
+});
+
+test('an operator or a guide who was there is never overruled by a seat count', async () => {
+  // 'manual' = an operator saying the tour ran; 'summaries' = a guide who was
+  // there saying so. Neither may be flipped to cancelled by an empty roster.
+  const manual = fakeTourClient({ ...emptyGroupTour, date: businessToday() }, { liveSeats: 0 });
+  await completeTour(manual, 't1', { reason: 'manual' });
+  assert.equal(manual.calls.updates[0].data.status, 'completed');
+
+  const summaries = fakeTourClient(emptyGroupTour, { liveSeats: 0 });
+  await completeTour(summaries, 't1', { reason: 'summaries' });
+  assert.equal(summaries.calls.updates[0].data.status, 'completed');
 });
 
 // ── the ONE completion reversal (fake client) ────────────────────────────────

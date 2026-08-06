@@ -10,7 +10,7 @@
 
 import { recomputeTourOperationalProduct } from './operationalProduct.js';
 import { markTourWooPending } from './woo/service.js';
-import { REG_HELD, REG_EXPIRED, REG_CONFIRMED } from './registrationStatus.js';
+import { REG_HELD, REG_EXPIRED, REG_CONFIRMED, CAPACITY_STATUSES } from './registrationStatus.js';
 
 // A booking's allocation state maps onto its registration: only 'active' seats
 // count. 'orphaned' (deal left WON but tour kept) is intentionally NOT counted,
@@ -18,6 +18,7 @@ import { REG_HELD, REG_EXPIRED, REG_CONFIRMED } from './registrationStatus.js';
 export function regStatusFromBooking(bookingStatus) {
   return bookingStatus === 'active' ? 'active' : 'cancelled';
 }
+
 
 // Idempotently converge the single 'deal' registration for a booking onto the
 // booking's current state (seats, status) and its SELLABLE product variant.
@@ -38,9 +39,27 @@ export function regStatusFromBooking(bookingStatus) {
 // rows are matched and never duplicated.
 export async function syncDealRegistration(tx, booking, tour, opts = {}) {
   const quantity = Number(booking.seats) || 0;
-  let existing = await tx.ticketRegistration.findFirst({
-    where: { bookingId: booking.id, source: 'deal' },
+  // The BOOKING is the seat line — every registration hanging off it belongs to
+  // it, whatever created the row. Looking this up with `source: 'deal'` (as it
+  // did) made the legacy-import twins invisible to GOS: a booking that already
+  // carried a `migration` registration got a SECOND live row on first edit
+  // (double seats + the customer twice on every roster), and cancelling the
+  // booking only ever converged the 'deal' row — so the `migration` twin stayed
+  // live forever. That is how a cancelled participant kept its seat and kept
+  // showing up in the Guide Portal. The whole booking converges here now.
+  const siblings = await tx.ticketRegistration.findMany({
+    where: { bookingId: booking.id },
+    orderBy: { createdAt: 'asc' },
   });
+  // The canonical row: the deal-sourced one when it exists, otherwise a LONE
+  // foreign-source row is adopted in place (its `source` is preserved — the
+  // audit trail must stay honest about where the seat came from). A booking
+  // carrying SEVERAL foreign rows and no deal row is the legacy per-participant
+  // shape; it gets a canonical row like any other and its old rows are released
+  // below, so the booking ends with exactly one live seat line either way.
+  let existing =
+    siblings.find((r) => r.source === 'deal') ||
+    (siblings.length === 1 ? siblings[0] : null);
   // ADOPTION (payment→WON): a deal's HELD/EXPIRED reservation (created before
   // WON, so not yet booking-linked) is CONFIRMED in place — the SAME row, never a
   // duplicate. Also covers late payment: an EXPIRED reservation is re-confirmed.
@@ -98,6 +117,18 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
       },
     });
     regId = created.id;
+  }
+  // RELEASE the rest of the booking's seat lines. A booking holds exactly ONE
+  // live registration; anything else on it is a stale twin (a legacy-import row
+  // GOS could not see, an old per-participant row) and must stop consuming
+  // capacity and stop rendering as a participant. Idempotent — a second run
+  // matches nothing. Rows are cancelled, never deleted: the history stays.
+  const stale = siblings.filter((r) => r.id !== regId && CAPACITY_STATUSES.includes(r.status));
+  if (stale.length) {
+    await tx.ticketRegistration.updateMany({
+      where: { id: { in: stale.map((r) => r.id) } },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
   }
   // Only open tours derive their product from registrations; deal tours keep
   // their deal-driven product. Cheap kind gate avoids an extra query otherwise.

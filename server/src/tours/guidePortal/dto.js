@@ -8,6 +8,7 @@
 // unit-testable without a database.
 
 import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
+import { isLiveBooking } from '../registrationStatus.js';
 import { catalogName, contactFullName, pairFrom } from '../../../../shared/bilingualText.mjs';
 import { tourEndMs as canonicalTourEndMs } from '../tourTime.js';
 import { stripTrailingSameDate } from '../calendar/desiredState.js';
@@ -311,8 +312,12 @@ export function guideTourDetailDto({
             pairFrom(row.workshopLocation, 'instructions', 'instructionsEn', lang) || null,
         },
       })),
+    // ONE canonical liveness predicate — an ad-hoc `!== 'cancelled'` here let
+    // ORPHANED bookings (deal left WON, tour kept) render as full participant
+    // cards with phone + email, even though they hold no seat and are counted
+    // nowhere. A guide must only ever see people who are actually coming.
     participants: (tour.bookings || [])
-      .filter((b) => b.status !== 'cancelled')
+      .filter((b) => isLiveBooking(b.status))
       .map((b) =>
         guideParticipantDto(b, permissions, {
           coordinationStatus: coordinationStatusByBooking[b.id] || null,

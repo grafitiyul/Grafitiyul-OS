@@ -17,7 +17,11 @@ function regTx({ existingReg = null } = {}) {
     state,
     ticketRegistration: {
       findFirst: async () => existingReg,
-      findMany: async () => [], // recompute: no active regs → no-op
+      // Keyed by bookingId → the booking's own seat lines (syncDealRegistration
+      // converges the WHOLE booking now). Any other findMany is the recompute
+      // read: no active regs → no-op.
+      findMany: async ({ where } = {}) => (where?.bookingId ? [existingReg].filter(Boolean) : []),
+      updateMany: async () => ({ count: 0 }),
       create: async ({ data }) => {
         const row = { id: 'reg1', ...data };
         state.created.push(row);
