@@ -86,7 +86,16 @@ function desiredVariationSet(tour, card, ctx) {
 // New date/time terms are created WITH a chronological menu_order (yyyymmdd /
 // hhmm) — the storefront orders every attribute by term menu_order, so a fresh
 // occurrence lands in its chronological slot instead of lexicographic name order.
-async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
+//
+// ATTACHING IS GATED ON SELLABILITY. Converging a non-sellable occurrence (the
+// unsellable sweep does exactly that, in bulk) must never advertise its date on
+// the product: attaching first and relying on reconcileProductOptions to prune
+// at the END of the tick left a real window — observed live during the 06.08
+// convergence — in which 16/07/2026 and two cancelled September dates were
+// briefly offered in the public picker. Terms are still CREATED (they are
+// harmless, shared taxonomy, and reopening the occurrence needs them); only the
+// product-level offer is withheld.
+async function ensureOccurrenceTerms(woo, card, tour, durationHours = null, sellable = false) {
   const cfg = card.config;
   if (!cfg || !tour.date || !tour.startTime) return;
   const wants = [];
@@ -96,7 +105,7 @@ async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
       name: dateTermName(tour.date),
       slug: dateTermSlug(tour.date),
       menuOrder: dateMenuOrder(dateTermName(tour.date)),
-      attach: true,
+      attach: sellable,
     });
   }
   if (cfg.time?.attrId != null) {
@@ -112,7 +121,7 @@ async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
   // by that slug so the product-option attach uses the correct NAME.
   if (cfg.duration?.attrId != null && durationHours != null) {
     const option = cfg.duration.map?.[durationKey(durationHours)];
-    if (option) wants.push({ node: cfg.duration, name: option, slug: option, attach: true, byOption: true });
+    if (option) wants.push({ node: cfg.duration, name: option, slug: option, attach: sellable, byOption: true });
   }
   for (const w of wants) {
     const terms = await woo.listAttributeTerms(w.node.attrId);
@@ -277,7 +286,7 @@ async function retireStaleVariants(deps, tour, card, desiredKeys) {
 async function reconcileCard(deps, tour, card, ctx) {
   const { woo } = deps;
   const desired = desiredVariationSet(tour, card, ctx);
-  await ensureOccurrenceTerms(woo, card, tour, ctx.durationHours);
+  await ensureOccurrenceTerms(woo, card, tour, ctx.durationHours, ctx.sellable);
 
   // Lazily fetch the product's variations once for the adoption path.
   let cache = null;

@@ -833,3 +833,44 @@ test('sweepWooRevisionDrift is a no-op when everything is converged', async () =
   };
   assert.equal(await sweepWooRevisionDrift(db), 0);
 });
+
+test('REGRESSION: converging a non-sellable occurrence never ATTACHES its date to the product', async () => {
+  // Observed live during the 06.08.2026 convergence: the unsellable sweep pushed
+  // 37 tours through the worker, each of which attached its date option to the
+  // product BEFORE reconcileProductOptions pruned at the end of the tick — so a
+  // past date (16/07/2026) and two cancelled September dates were briefly
+  // offered in the PUBLIC picker. Attaching is now gated on sellability.
+  const env = makeEnv({
+    ...pastButScheduled(),
+    mappings: [{ cardGroupId: 'cardA', wooProductId: 101, config: GLOBAL_CONFIG, active: true }],
+    ticketsByCard: { cardA: [{ ticketTypeId: TT_ADULT, priceMinor: 9000, nameHe: 'מבוגר', sortOrder: 0 }] },
+    links: {
+      [`slotPast::cardA::${TT_ADULT}`]: {
+        tourEventId: 'slotPast', cardGroupId: 'cardA', variantKey: TT_ADULT,
+        wooVariationId: 2033, wooProductId: 101, status: 'synced',
+      },
+    },
+    products: { 101: { id: 101, attributes: [{ id: 1, name: 'pa_תאריך', options: ['06/08/2026'] }] } },
+  });
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slotPast');
+
+  assert.equal(env.calls.updated[0].data.status, 'draft');
+  const attached = env.calls.productUpdates.flatMap((u) => u.data.attributes || []);
+  for (const a of attached) {
+    assert.ok(!(a.options || []).includes('02/08/2026'), 'a past date must never be offered');
+  }
+});
+
+test('a SELLABLE occurrence still attaches its date to the public picker', async () => {
+  const env = makeEnv({
+    mappings: [{ cardGroupId: 'cardA', wooProductId: 101, config: GLOBAL_CONFIG, active: true }],
+    ticketsByCard: { cardA: [{ ticketTypeId: TT_ADULT, priceMinor: 9000, nameHe: 'מבוגר', sortOrder: 0 }] },
+    products: { 101: { id: 101, attributes: [{ id: 1, name: 'pa_תאריך', options: [] }] } },
+  });
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slot1'); // 08.08, future
+  const attached = env.calls.productUpdates.flatMap((u) => u.data.attributes || []);
+  assert.ok(
+    attached.some((a) => (a.options || []).includes('08/08/2026')),
+    'a sellable date must be offered',
+  );
+});
