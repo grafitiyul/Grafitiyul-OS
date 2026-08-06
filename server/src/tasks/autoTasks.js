@@ -12,6 +12,9 @@
 //     the day that just started. Idempotent per (deal, day): the created task
 //     is itself open, and a same-day follow-up in ANY status blocks a second
 //     one, so reruns and restarts are safe by construction.
+//     `excludeLegacyTasks` narrows what counts as an active task to NATIVE GOS
+//     tasks — see the option's docs on the function. Default OFF: the nightly
+//     worker's behaviour is unchanged.
 //
 // Owner resolution: the deal's owner when set, else the oldest active
 // AdminUser (production currently has a single admin). Fire-and-forget by
@@ -91,6 +94,44 @@ export async function ensureInitialCallTask({ dealId }, { db = prisma, log = con
   }
 }
 
+// Prisma `IN` lists are bounded here rather than trusted to stay small — the
+// legacy lookup below runs over historical volumes, not just today's tasks.
+const IN_CHUNK = 1000;
+function chunk(arr, size = IN_CHUNK) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Tasks that were IMPORTED from Pipedrive rather than created by GOS.
+ *
+ * The authoritative marker is the crosswalk row both import paths write —
+ * the bulk enrichment import (migration/import/enrichmentImport.js) and the
+ * live mirror creator (mirror/creators.js) each record a LegacyRecord with
+ * entityType 'Task'. Task columns are NOT a discriminator: production holds 13
+ * imported tasks that the owner-approved type backfill gave a real GOS
+ * taskTypeId, and zero native tasks with a null type — so classifying by
+ * taskTypeId would get it backwards.
+ *
+ * @returns {Promise<Set<string>>} the subset of `taskIds` that are imported
+ */
+async function legacyTaskIds(db, taskIds) {
+  const ids = new Set();
+  if (!taskIds.length) return ids;
+  // Deliberately NOT defensive: if the crosswalk cannot be read we must fail
+  // loudly. Degrading to "no task is legacy" would silently do nothing while
+  // reporting success — the exact failure this sweep exists to fix.
+  for (const slice of chunk(taskIds)) {
+    const rows = await db.legacyRecord.findMany({
+      where: { entityType: 'Task', entityId: { in: slice } },
+      select: { entityId: true },
+    });
+    for (const r of rows) ids.add(r.entityId);
+  }
+  return ids;
+}
+
 /**
  * The midnight recovery sweep. For every OPEN deal without any OPEN task,
  * create one follow-up task due `dateStr` (default: today in Israel).
@@ -103,8 +144,25 @@ export async function ensureInitialCallTask({ dealId }, { db = prisma, log = con
  *     does not spawn another on a rerun);
  *   • only status='open' deals (WON/LOST never included);
  *   • dryRun reports what WOULD be created, writing nothing.
+ *
+ * `excludeLegacyTasks` (default false) narrows "active task" to a NATIVE GOS
+ * task: an open task that was imported from Pipedrive no longer satisfies the
+ * follow-up requirement. Imported tasks are read-only history here — the sweep
+ * never modifies, converts, closes or deletes them. This is OFF for the
+ * nightly worker (whose contract is "any open task means the deal is being
+ * worked") and ON only for the one-time historical backfill
+ * (scripts/backfill-legacy-followup-tasks.mjs).
+ *
+ * @returns counts: audited, alreadyActive, legacyOnly, noOpenTask,
+ *          needRecovery, sameDayBlocked, candidates, created.
  */
-export async function runMissingTaskSweep({ dateStr = null, dryRun = false, db = prisma, log = console } = {}) {
+export async function runMissingTaskSweep({
+  dateStr = null,
+  dryRun = false,
+  excludeLegacyTasks = false,
+  db = prisma,
+  log = console,
+} = {}) {
   const day = dateStr || israelToday();
   const dueDate = startOfDayUtc(day);
 
@@ -121,22 +179,46 @@ export async function runMissingTaskSweep({ dateStr = null, dryRun = false, db =
     where: { status: 'open' },
     select: { id: true, orderNo: true, ownerUserId: true },
   });
-  if (!openDeals.length) return { day, created: 0, candidates: 0 };
+  const stats = {
+    audited: openDeals.length,
+    alreadyActive: 0,
+    legacyOnly: 0,
+    noOpenTask: 0,
+    needRecovery: 0,
+    sameDayBlocked: 0,
+  };
+  if (!openDeals.length) return { day, created: 0, candidates: 0, ...stats };
   const dealIds = openDeals.map((d) => d.id);
 
   const [openTasks, todaysFollowUps] = await Promise.all([
-    db.task.findMany({ where: { dealId: { in: dealIds }, status: 'open' }, select: { dealId: true } }),
+    db.task.findMany({ where: { dealId: { in: dealIds }, status: 'open' }, select: { id: true, dealId: true } }),
     db.task.findMany({
       where: { dealId: { in: dealIds }, taskTypeId: type.id, dueDate },
       select: { dealId: true },
     }),
   ]);
-  const hasOpen = new Set(openTasks.map((t) => t.dealId));
+  // Deals holding an open task of ANY origin — the wider set, kept so the
+  // report can separate "only legacy tasks" from "no task at all".
+  const hasAnyOpen = new Set(openTasks.map((t) => t.dealId));
+  const legacyIds = excludeLegacyTasks ? await legacyTaskIds(db, openTasks.map((t) => t.id)) : new Set();
+  const hasOpen = excludeLegacyTasks
+    ? new Set(openTasks.filter((t) => !legacyIds.has(t.id)).map((t) => t.dealId))
+    : hasAnyOpen;
   const hasTodayFollowUp = new Set(todaysFollowUps.map((t) => t.dealId));
 
-  const candidates = openDeals.filter((d) => !hasOpen.has(d.id) && !hasTodayFollowUp.has(d.id));
+  const needRecovery = openDeals.filter((d) => !hasOpen.has(d.id));
+  stats.alreadyActive = openDeals.length - needRecovery.length;
+  stats.needRecovery = needRecovery.length;
+  stats.legacyOnly = needRecovery.filter((d) => hasAnyOpen.has(d.id)).length;
+  stats.noOpenTask = needRecovery.length - stats.legacyOnly;
+
+  const candidates = needRecovery.filter((d) => !hasTodayFollowUp.has(d.id));
+  stats.sameDayBlocked = needRecovery.length - candidates.length;
   if (dryRun) {
-    return { day, dryRun: true, created: 0, candidates: candidates.length, orderNos: candidates.map((d) => d.orderNo) };
+    return {
+      day, dryRun: true, created: 0, candidates: candidates.length,
+      orderNos: candidates.map((d) => d.orderNo), ...stats,
+    };
   }
 
   let created = 0;
@@ -165,5 +247,5 @@ export async function runMissingTaskSweep({ dateStr = null, dryRun = false, db =
     }
   }
   if (created) log?.log?.(`[auto-tasks] recovery sweep ${day}: created ${created} follow-up tasks`);
-  return { day, created, candidates: candidates.length };
+  return { day, created, candidates: candidates.length, ...stats };
 }
