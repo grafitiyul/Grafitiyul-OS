@@ -179,10 +179,13 @@ export default function ContactDetail() {
 
       <MembershipsSection contact={contact} onChange={refresh} />
 
-      {/* Remounts when memberships change so eligibility re-evaluates live. */}
+      {/* Remounts when memberships change so eligibility re-evaluates live.
+          contact.id, NOT the route param: `id` is the public contactNo (see the
+          TimelineFeed note below) and this section had been invisible on every
+          numeric Contact URL because of it. */}
       <ReservationLinkSection
         key={(contact.orgLinks || []).map((l) => l.id).join(',')}
-        contactId={id}
+        contactId={contact.id}
       />
 
       {/* קבצים — the contact's view into the ONE unified Files system
@@ -238,9 +241,15 @@ export default function ContactDetail() {
           Renders for nobody but a qualifying agent (canonical capability flag),
           so it costs every other contact nothing. Remounts with the memberships
           so eligibility re-evaluates live. */}
+      {/* contact.id — the cuid — NOT the route param. `id` is the public
+          contactNo (the Contact URL is /contacts/36435), and passing it here is
+          precisely why this card was invisible in production: the request went
+          to /api/contacts/36435/reservation-link, 404'd, and the card's own
+          error handling turned that into "render nothing". Same rule the
+          TimelineFeed below already documents. */}
       <AgentOrderFormCard
         key={(contact.orgLinks || []).map((l) => l.id).join(',')}
-        contactId={id}
+        contactId={contact.id}
       />
 
       {/* Header — the contact identity + the PRIMARY workspace action: opening a

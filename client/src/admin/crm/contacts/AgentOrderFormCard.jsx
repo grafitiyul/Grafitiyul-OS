@@ -24,14 +24,24 @@ import { showToast, showErrorToast } from '../../../lib/toast.js';
 
 export default function AgentOrderFormCard({ contactId }) {
   const [state, setState] = useState(null); // { eligible, agencies, link }
+  const [failed, setFailed] = useState(null); // the request itself did not answer
   const [copying, setCopying] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setState(await api.contacts.reservationLink(contactId));
-    } catch {
-      // Additive card — a load failure must never break the Contact page.
+      setFailed(null);
+    } catch (e) {
+      // NOT silence. Swallowing the failure here is exactly what hid a broken
+      // request for three rounds of "it's deployed" / "I can't see it": the
+      // endpoint 404'd and the card answered by rendering nothing, which is
+      // indistinguishable from "this contact is not an agent".
+      //
+      // "Not eligible" is a 200 with eligible:false — an ANSWER. Anything that
+      // throws means we do not know, and a card that does not know must say so
+      // rather than quietly disappear.
       setState(null);
+      setFailed(e?.payload?.error || e?.message || 'failed');
     }
   }, [contactId]);
 
@@ -39,7 +49,18 @@ export default function AgentOrderFormCard({ contactId }) {
     load();
   }, [load]);
 
-  if (!state) return null;
+  if (failed) {
+    return (
+      <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <h2 className="text-[14px] font-semibold text-amber-900">טופס הזמנה</h2>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-amber-800">
+          לא ניתן לבדוק כרגע אם לאיש הקשר הזה יש טופס הזמנה — הבדיקה נכשלה.
+          {' '}<span dir="ltr" className="font-mono text-[11.5px]">{failed}</span>
+        </p>
+      </section>
+    );
+  }
+  if (!state) return null; // still loading — no flash of empty chrome
   const agencies = state.agencies || (state.organization ? [state.organization] : []);
   // Not an agency contact → the card does not exist. A configuration GAP (an
   // agency contact with no form) is a different thing and is shown loudly below.

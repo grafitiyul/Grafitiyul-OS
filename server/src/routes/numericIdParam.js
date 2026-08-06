@@ -13,14 +13,22 @@
 
 const INT4_MAX = 2147483647;
 
+// Express calls a `router.param` handler with (req, res, next, value, name).
+// The resolved cuid is written back to THE PARAM THAT WAS MATCHED — it used to
+// be hardcoded to `id`, which silently made the helper a no-op on any router
+// naming its param something else. That is not hypothetical: the reservation
+// -link routes use `:contactId`, so registering this resolver on them resolved
+// the number, threw the answer into `params.id`, and left `params.contactId`
+// as the literal "36435" for the handler to 404 on. Defaults to 'id' so every
+// existing caller is byte-identical.
 export function numericIdResolver(findByNumber) {
-  return (req, _res, next, value) => {
+  return (req, _res, next, value, name = 'id') => {
     if (!/^\d+$/.test(value)) return next();
     const num = Number(value);
     if (!Number.isSafeInteger(num) || num > INT4_MAX) return next();
     Promise.resolve(findByNumber(num))
       .then((found) => {
-        if (found) req.params.id = found.id;
+        if (found) req.params[name] = found.id;
         next();
       })
       .catch(next);

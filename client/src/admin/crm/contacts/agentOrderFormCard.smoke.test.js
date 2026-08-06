@@ -43,7 +43,14 @@ const apiStubPlugin = {
       contents: `
         export const api = {
           contacts: {
-            reservationLink: async () => globalThis.__apiState,
+            reservationLink: async () => {
+              if (globalThis.__apiFail) {
+                const e = new Error('request failed');
+                e.payload = { error: globalThis.__apiFail };
+                throw e;
+              }
+              return globalThis.__apiState;
+            },
           },
         };
       `,
@@ -97,9 +104,10 @@ beforeEach(() => {
   toasts.length = 0;
 });
 
-async function render(state) {
+async function render(state, fail = null) {
   apiState = state;
   globalThis.__apiState = state;
+  globalThis.__apiFail = fail;
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -244,4 +252,46 @@ test('the card is mounted exactly ONCE (no duplicate after the move)', async () 
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
   assert.equal(src.split('<AgentOrderFormCard').length - 1, 1);
+});
+
+// ── the failure that hid this card in production for three rounds ───────────
+//
+// The Contact URL carries the public contactNo (/contacts/36435); the endpoint
+// resolved only cuids, so the request 404'd — and the card answered by
+// rendering NOTHING, which looks exactly like "this contact is not an agent".
+// A broken request must never be indistinguishable from a legitimate negative.
+test('a failed eligibility request is REPORTED, never silently rendered as nothing', async () => {
+  const { host, root } = await render(null, 'not_found');
+  assert.notEqual(host.textContent.trim(), '', 'silence is precisely what hid the bug');
+  assert.match(host.textContent, /טופס הזמנה/);
+  assert.match(host.textContent, /נכשלה/, 'it says the CHECK failed…');
+  assert.match(host.textContent, /not_found/, '…and shows the actual error');
+  root.unmount();
+});
+
+test('a legitimate "not an agent" answer still renders nothing', async () => {
+  // The distinction that matters: 200 + eligible:false is an ANSWER, and the
+  // card correctly stays out of the way. Only a throw is a fault.
+  const { host, root } = await render({ eligible: false, agencies: [], link: null }, null);
+  assert.equal(host.textContent.trim(), '');
+  root.unmount();
+});
+
+// The route param IS the public contactNo — handing it to a cuid-only endpoint
+// is the exact production bug. Pin both call sites.
+test('the card is given the contact CUID, never the route param', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
+  const m = src.match(/<AgentOrderFormCard[\s\S]*?\/>/);
+  assert.ok(m, 'the card is mounted');
+  assert.ok(m[0].includes('contactId={contact.id}'), 'contact.id — the cuid');
+  assert.ok(!m[0].includes('contactId={id}'), '`id` is the contactNo and 404s');
+});
+
+test('the link MANAGER section is given the cuid too (same trap, pre-existing)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
+  const m = src.match(/<ReservationLinkSection[\s\S]*?\/>/);
+  assert.ok(m);
+  assert.ok(m[0].includes('contactId={contact.id}'));
 });

@@ -14,6 +14,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { resolvePublicOrigin } from '../dealPayment.js';
+import { numericIdResolver } from './numericIdParam.js';
 import {
   ELIGIBILITY_INCLUDE,
   eligibleAgencyOrg,
@@ -25,6 +26,26 @@ import {
 } from '../reservations/links.js';
 
 const router = Router();
+
+// "מספר איש קשר" URL support — the SAME identity contract every other contact
+// route already honours (contacts.js registers this for its own `:id`).
+//
+// This router mounts on /api/contacts too, but under `:contactId`, so the
+// sibling router's resolver never applied to it: every request built from the
+// canonical Contact URL — /admin/crm/contacts/36435, which carries the public
+// contactNo, not the cuid — arrived here as the literal string "36435", missed
+// `findUnique({ where: { id } })`, and 404'd. The Contact page then had no
+// reservation state at all: the agent's order-form card and the link manager
+// both silently rendered nothing, for every contact reached by number, which is
+// how the UI is actually navigated.
+//
+// One route param can now arrive in either form, exactly like its siblings.
+router.param(
+  'contactId',
+  numericIdResolver((contactNo) =>
+    prisma.contact.findUnique({ where: { contactNo }, select: { id: true } }),
+  ),
+);
 
 function linkDto(req, link) {
   if (!link) return null;

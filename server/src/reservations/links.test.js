@@ -6,6 +6,7 @@ import {
   eligibleAgencyOrgs,
   mintLinkForContact,
 } from './links.js';
+import { numericIdResolver } from '../routes/numericIdParam.js';
 
 // Agent reservation link resolver security suite (portal.resolve.test.js
 // pattern). The resolver must: match the EXACT token only, never reveal the
@@ -212,4 +213,40 @@ test('eligibility is the CAPABILITY FLAG — never the organization name', () =>
 
 test('a missing or untyped organization is never eligible', () => {
   assert.deepEqual(eligibleAgencyOrgs(contactWith([{ organization: null }, { organization: { id: 'o', name: 'x' } }])), []);
+});
+
+// ── the identity contract of the reservation-link routes ────────────────────
+//
+// The Contact URL is /admin/crm/contacts/36435 — the PUBLIC contactNo, not the
+// cuid. contacts.js resolves that for its own `:id`, but the reservation-link
+// router mounts on the same base path under `:contactId`, so the sibling's
+// resolver never applied: every request built from a real Contact URL arrived
+// as the literal "36435", missed the cuid lookup and 404'd. The agent's order
+// form and the link manager both rendered nothing, on every numerically
+// addressed contact — which is how the UI is actually navigated.
+//
+// These pin the resolver's behaviour for that param.
+test('a numeric contactNo is swapped for the cuid before any handler runs', async () => {
+  const req = { params: { contactId: '36435' } };
+  let called = null;
+  const resolver = numericIdResolver(async (n) => { called = n; return { id: 'cuid_abc' }; });
+  await new Promise((done) => resolver(req, null, done, req.params.contactId, 'contactId'));
+  assert.equal(called, 36435, 'looked up by NUMBER, not by string');
+  assert.equal(req.params.contactId, 'cuid_abc', 'the handler sees the cuid');
+});
+
+test('a cuid passes through untouched (no pointless lookup)', async () => {
+  const req = { params: { contactId: 'cmrhnus6v00119lko852zu092' } };
+  let called = false;
+  const resolver = numericIdResolver(async () => { called = true; return null; });
+  await new Promise((done) => resolver(req, null, done, req.params.contactId, 'contactId'));
+  assert.equal(called, false);
+  assert.equal(req.params.contactId, 'cmrhnus6v00119lko852zu092');
+});
+
+test('an unknown number falls through so the handler 404s in its own shape', async () => {
+  const req = { params: { contactId: '99999999' } };
+  const resolver = numericIdResolver(async () => null);
+  await new Promise((done) => resolver(req, null, done, req.params.contactId, 'contactId'));
+  assert.equal(req.params.contactId, '99999999');
 });
