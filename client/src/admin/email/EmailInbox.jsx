@@ -759,6 +759,23 @@ export default function EmailInbox({ accounts = [] }) {
                                 ארכיון
                               </span>
                             )}
+                            {/* The mailbox is Gmail's truth — נשלחו lists what
+                                Gmail actually sent, from GOS or from Gmail
+                                itself. This badge marks the ones GOS sent,
+                                where that provenance is a recorded fact
+                                (EmailMessage.createdByUserId). Its absence
+                                means "not known", never "not from GOS". */}
+                            {t.sentFromGos && (
+                              <span
+                                title="נשלח מתוך GOS"
+                                className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200"
+                              >
+                                GOS
+                              </span>
+                            )}
+                            {t.hasAttachments && (
+                              <span className="shrink-0 text-[11px] text-gray-400" title="יש קבצים מצורפים">📎</span>
+                            )}
                           </p>
                           <p className={`truncate text-[12.5px] ${unread ? 'font-semibold text-gray-700' : 'text-gray-500'}`} dir="auto">
                             {t.subject || '(ללא נושא)'}

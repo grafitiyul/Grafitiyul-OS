@@ -81,6 +81,9 @@ const ACCOUNT_SAFE_SELECT = {
 
 const DEAL_LITE_SELECT = {
   id: true,
+  // The deal's OPERATOR-FACING identity (מספר הזמנה) — what a thread row shows
+  // so "which job is this about" is answerable without opening the deal.
+  orderNo: true,
   title: true,
   status: true,
   tourDate: true,
@@ -89,13 +92,31 @@ const DEAL_LITE_SELECT = {
   organization: { select: { id: true, name: true } },
 };
 
-function toClientThread(t) {
+// The last live message's row-level facts. Absent when the include did not ask
+// for messages (older callers) — every field then reads null/false, so no
+// consumer has to special-case a thread whose messages were not fetched.
+export function lastMessageFacts(t) {
+  const m = Array.isArray(t.messages) ? t.messages[0] : null;
+  if (!m) return { lastDirection: null, lastFrom: null, lastTo: [], sentFromGos: false };
+  return {
+    lastDirection: m.direction || null,
+    lastFrom: m.fromName || m.fromEmail || null,
+    lastTo: (m.toRecipients || []).map((r) => r?.name || r?.email).filter(Boolean),
+    // Only an OUTBOUND message can have come from GOS; the flag says "this
+    // conversation's latest message left through GOS", never "GOS owns it".
+    sentFromGos: m.direction === 'outbound' && !!m.createdByUserId,
+  };
+}
+
+export function toClientThread(t) {
   return {
     id: t.id,
     accountId: t.accountId,
     subject: t.subject,
     snippet: t.snippet,
     participants: t.participants || [],
+    ...lastMessageFacts(t),
+    hasAttachments: (t._count?.messages || 0) > 0,
     lastMessageAt: t.lastMessageAt,
     messageCount: t.messageCount,
     unreadCount: t.unreadCount,
@@ -110,6 +131,7 @@ function toClientThread(t) {
     linkedDeal: t.linkedDeal
       ? {
           id: t.linkedDeal.id,
+          orderNo: t.linkedDeal.orderNo ?? null,
           title: t.linkedDeal.title,
           status: t.linkedDeal.status,
           tourDate: t.linkedDeal.tourDate,
@@ -124,6 +146,27 @@ function toClientThread(t) {
 const THREAD_INCLUDE = {
   contact: { select: CONTACT_LITE_SELECT },
   linkedDeal: { select: DEAL_LITE_SELECT },
+  // The row-level facts a thread LIST needs and a subject/snippet cannot give:
+  // which way the last message went, who wrote it / who it went to, and whether
+  // GOS is the one that sent it. One extra joined row per thread — the list is
+  // already capped, so this stays a bounded read.
+  messages: {
+    where: { providerDeletedAt: null },
+    orderBy: [{ sentAt: 'desc' }, { createdAt: 'desc' }],
+    take: 1,
+    select: {
+      direction: true,
+      fromName: true,
+      fromEmail: true,
+      toRecipients: true,
+      // AdminUser.id when the message left through GOS — the ONE honest
+      // provenance signal (Gmail SENT alone cannot tell GOS from the Gmail UI).
+      createdByUserId: true,
+    },
+  },
+  // "Is anything attached anywhere in this conversation" — a filtered relation
+  // count, so the answer covers the whole thread without loading its messages.
+  _count: { select: { messages: { where: { hasAttachments: true, providerDeletedAt: null } } } },
 };
 
 // ── Canonical unread membership ──────────────────────────────────────────────

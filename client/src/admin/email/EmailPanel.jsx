@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import EmailThreadView from './EmailThreadView.jsx';
 import EmailComposer from './EmailComposer.jsx';
+import EmailThreadRow from './EmailThreadRow.jsx';
+import EmailThreadModal from './EmailThreadModal.jsx';
 import ScheduledEmailsView from './ScheduledEmailsView.jsx';
 
 // The Email surface a CRM page embeds (Deal אימייל tab / Contact page) —
-// mirror of WhatsAppPanel: threads linked to the subject, open one inline,
-// or compose a new email (recipient defaults to the primary contact email).
-
-function fmtTime(iso) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
+// mirror of WhatsAppPanel: the conversations linked to this subject, or a new
+// email (recipient defaults to the primary contact email).
+//
+// The LIST is the shared EmailThreadRow and opening one is the shared
+// EmailThreadModal, so a conversation looks and behaves the same whether it is
+// read from a Deal or from a Contact. Reading used to REPLACE this panel in
+// place, which meant working through a long exchange inside a narrow CRM
+// column and losing the list to get back out of it.
 
 export default function EmailPanel({ subjectType, subjectId }) {
   const [threads, setThreads] = useState(null);
   const [error, setError] = useState(null);
-  const [openThreadId, setOpenThreadId] = useState(null);
+  const [openThread, setOpenThread] = useState(null);
   const [composing, setComposing] = useState(false);
   const [defaultTo, setDefaultTo] = useState('');
 
@@ -89,28 +91,6 @@ export default function EmailPanel({ subjectType, subjectId }) {
     );
   }
 
-  if (openThreadId) {
-    const t = threads.find((x) => x.id === openThreadId);
-    return (
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={() => setOpenThreadId(null)}
-          className="text-[12.5px] font-medium text-blue-700 hover:underline"
-        >
-          ← חזרה לרשימת המיילים
-        </button>
-        {t?.subject && <p className="text-[13.5px] font-semibold text-gray-800" dir="auto">{t.subject}</p>}
-        <EmailThreadView
-          threadId={openThreadId}
-          dealId={isDeal ? subjectId : null}
-          contactId={isDeal ? null : subjectId}
-          onChanged={load}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-2" dir="rtl">
       {/* Pending outgoing mail for THIS customer — the same canonical scheduled
@@ -148,30 +128,25 @@ export default function EmailPanel({ subjectType, subjectId }) {
         <ul className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white">
           {threads.map((t) => (
             <li key={t.id}>
-              <button
-                type="button"
-                onClick={() => setOpenThreadId(t.id)}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-right hover:bg-gray-50"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2">
-                    <span className={`truncate text-[13.5px] ${t.unreadCount ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`} dir="auto">
-                      {t.subject || '(ללא נושא)'}
-                    </span>
-                    {t.unreadCount > 0 && (
-                      <span className="shrink-0 rounded-full bg-blue-600 px-1.5 text-[10.5px] font-bold text-white">
-                        {t.unreadCount}
-                      </span>
-                    )}
-                  </p>
-                  <p className="truncate text-[12px] text-gray-400" dir="auto">{t.snippet || ''}</p>
-                </div>
-                <span className="shrink-0 text-[11px] text-gray-400">{fmtTime(t.lastMessageAt)}</span>
-              </button>
+              {/* On a CONTACT the deal context is real information (which job
+                  is this about); on a Deal it is already the answer. */}
+              <EmailThreadRow thread={t} onOpen={setOpenThread} showDeal={!isDeal} />
             </li>
           ))}
         </ul>
       )}
+
+      <EmailThreadModal
+        open={!!openThread}
+        thread={openThread}
+        dealId={isDeal ? subjectId : null}
+        contactId={isDeal ? null : subjectId}
+        onClose={() => {
+          setOpenThread(null);
+          load(); // read state / a sent reply must show on the list behind it
+        }}
+        onChanged={load}
+      />
     </div>
   );
 }
