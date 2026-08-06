@@ -13,6 +13,13 @@
 //     closed stream (laptop sleep, mobile suspension, auth loss) is reopened
 //     on focus/visibility, which ALSO triggers an immediate catch-up refetch
 //     — events missed while suspended are never lost truth, only a stale view
+//   • the wake catch-up is RECOVERY ONLY: a stream that is still OPEN missed
+//     nothing while the tab sat in the background (the server heartbeats every
+//     25s, so a dead socket surfaces as an error and leaves the OPEN state),
+//     so simply returning to the tab must NOT refetch. That refetch was not
+//     merely wasteful: a refetched entity is a new object, and every surface
+//     that re-derives local state from it (dialogs, forms) was being reset —
+//     switching tabs to copy a phone number wiped a half-typed create form.
 //
 // Core is framework-free and dependency-injected (testable under node:test);
 // the React hook below is a thin lifecycle wrapper.
@@ -89,12 +96,19 @@ export function createRealtimeStream({
     es = null;
   };
 
-  // Focus / visibility = the catch-up moment after sleep or suspension:
-  // refetch immediately (bypasses the debounce — this is recovery, not a
-  // burst) and make sure the stream is alive again.
+  // Focus / visibility = the catch-up moment after sleep or suspension: make
+  // sure the stream is alive again and, ONLY if it was not, refetch immediately
+  // (bypasses the debounce — this is recovery, not a burst).
+  //
+  // "Was not alive" = no EventSource at all (fatally closed) or one that is not
+  // OPEN (readyState CONNECTING = a native retry is in flight, so events during
+  // the gap were missed). A stream that stayed OPEN delivered every event while
+  // the tab was in the background — there is nothing to catch up on, and
+  // refetching would reset surfaces the operator is actively working in.
   const onWake = () => {
     if (stopped) return;
     if (windowRef?.document && windowRef.document.visibilityState === 'hidden') return;
+    const missedEvents = !es || es.readyState !== 1; // 1 = EventSource.OPEN
     if (!es) {
       if (reopenTimer) {
         clearTimeout(reopenTimer);
@@ -102,7 +116,7 @@ export function createRealtimeStream({
       }
       open();
     }
-    invalidate('focus');
+    if (missedEvents) invalidate('focus');
   };
 
   const start = () => {

@@ -92,10 +92,19 @@ export default function OrganizationEditDialog({
     }
   }
 
-  // Initialise from the deal whenever the dialog opens. The OrgPicker is
-  // uncontrolled after mount, so it mounts only once `pickerInit` is resolved
-  // (needs the linked org's name). The baseline is captured together with the
-  // (possibly async) effective type, so dirty tracking is accurate.
+  // Initialise from the deal when the dialog OPENS (or is reused for a
+  // different deal) — deliberately keyed on the deal's IDENTITY, never on the
+  // deal object. The Deal page refetches its deal in the background (realtime
+  // hints), and every refetch hands down a new object: keying on it re-ran this
+  // whole reset while the dialog was open, blanking `orgFull` — which unmounts
+  // the contacts section below and takes any half-typed "איש קשר חדש" form with
+  // it. Nothing the operator is editing may be reset by a background refresh;
+  // only opening the dialog (or pointing it at another deal) re-initialises it.
+  //
+  // The OrgPicker is uncontrolled after mount, so it mounts only once
+  // `pickerInit` is resolved (needs the linked org's name). The baseline is
+  // captured together with the (possibly async) effective type, so dirty
+  // tracking is accurate.
   useEffect(() => {
     if (!open) return;
     const initialOrgId = deal.organizationId || '';
@@ -134,7 +143,8 @@ export default function OrganizationEditDialog({
       setPickerInit(null);
       setOriginal({ orgId: '', unitId: baseUnit, subtypeId: baseSub, typeId: t, name: '' });
     }
-  }, [open, deal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, deal?.id]);
 
   // Applying a suggestion = selecting that existing organization. The picker is
   // uncontrolled after mount, so it is remounted with the new initial selection;

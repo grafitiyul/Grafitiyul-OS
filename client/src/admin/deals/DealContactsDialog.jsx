@@ -27,10 +27,13 @@ export default function DealContactsDialog({ deal, open, onClose, onChanged }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editContactId, setEditContactId] = useState(null);
 
+  // Keyed on the deal's IDENTITY, not the deal object: the page refetches the
+  // deal in the background (realtime), and re-running this on every new object
+  // is pointless churn under an open dialog.
   useEffect(() => {
     if (!open) return;
     api.contacts.list().then(setAllContacts).catch(() => {});
-  }, [open, deal]);
+  }, [open, deal.id]);
 
   const contacts = deal.contacts || [];
   const linkedIds = new Set(contacts.map((dc) => dc.contactId));

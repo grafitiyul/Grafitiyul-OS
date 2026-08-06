@@ -72,7 +72,13 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
       setForm(EMPTY);
       setVariants([]);
     }
-  }, [open, tour]);
+    // Keyed on the tour's IDENTITY, never the tour object: the Tours module
+    // re-fetches its lists in the background (tour-changed / midnight rollover),
+    // and re-initialising from a fresh object would retype the operator's open
+    // form. Only opening the modal — or pointing it at a different tour —
+    // rebuilds the buffer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tour?.id]);
 
   async function chooseProduct(productId) {
     if (!productId) {

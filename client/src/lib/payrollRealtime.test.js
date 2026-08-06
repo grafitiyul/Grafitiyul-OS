@@ -95,15 +95,28 @@ test('stop closes the EventSource and cancels pending refetches (no leak after u
   assert.equal(calls.length, 0);
 });
 
-test('focus triggers an immediate catch-up refetch (bypasses debounce)', () => {
+// The wake catch-up is RECOVERY ONLY. Coming back to the tab while the stream
+// stayed OPEN must not refetch: nothing was missed, and a refetch resets
+// surfaces the operator is working in (the "half-typed create form vanished
+// after copying a phone number from another tab" bug).
+test('focus on a LIVE stream does NOT refetch (no churn, no state reset)', () => {
   const { rt, calls, win } = setup();
   rt.start();
+  win.fire('w:focus');
+  assert.deepEqual(calls, []);
+  rt.stop();
+});
+
+test('focus while the stream is reconnecting DOES catch up (events were missed)', () => {
+  const { rt, calls, win } = setup();
+  rt.start();
+  FakeEventSource.instances[0].transientError(); // readyState CONNECTING
   win.fire('w:focus');
   assert.deepEqual(calls, ['focus']);
   rt.stop();
 });
 
-test('hidden visibilitychange does NOT refetch; visible does', () => {
+test('visibilitychange never refetches while hidden, and only catches up after a drop', () => {
   const { rt, calls, win } = setup();
   rt.start();
   win.document.visibilityState = 'hidden';
@@ -111,7 +124,20 @@ test('hidden visibilitychange does NOT refetch; visible does', () => {
   assert.equal(calls.length, 0);
   win.document.visibilityState = 'visible';
   win.fire('d:visibilitychange');
-  assert.deepEqual(calls, ['focus']);
+  assert.deepEqual(calls, []); // stream stayed OPEN — nothing to catch up on
+  FakeEventSource.instances[0].fatalError();
+  win.fire('d:visibilitychange');
+  assert.deepEqual(calls, ['focus']); // it really did drop → catch up
+  rt.stop();
+});
+
+test('live events still refetch while the tab is in the background', async () => {
+  const { rt, calls, win } = setup({ debounceMs: 10 });
+  rt.start();
+  win.document.visibilityState = 'hidden';
+  FakeEventSource.instances[0].message('{"type":"mirror.changed"}');
+  await sleep(25);
+  assert.deepEqual(calls, ['event']);
   rt.stop();
 });
 

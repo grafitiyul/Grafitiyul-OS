@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { contactNamesFromParts } from '../../../lib/nameSplit.js';
+import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 // Manage an organization's linked contacts (the ContactOrganization membership).
 // ONE source of truth, reused by the full Organization page AND the Deal →
@@ -172,6 +173,10 @@ function CreateAndLink({ org, onCancel, onDone }) {
   const [busy, setBusy] = useState(false);
 
   const ready = first.trim() && phone.trim();
+
+  // Unsaved-work guard (shared registry): while anything is typed here, the
+  // version auto-reload must not swap the build out from under the form.
+  useDirtyWhen({ first, last, phone, email, role }, { first: '', last: '', phone: '', email: '', role: '' });
 
   async function submit(e) {
     e.preventDefault();

@@ -137,6 +137,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [orgType, setOrgType] = useState(null);
   const [form, setForm] = useState(null);
   const [originalForm, setOriginalForm] = useState(null); // baseline for dirty check
+  // Live mirrors of the two, so a background refresh (whose callback is memoised
+  // on `id` alone) can ask "is the operator mid-edit?" without stale closures.
+  const formRef = useRef(form);
+  const originalFormRef = useRef(originalForm);
+  formRef.current = form;
+  originalFormRef.current = originalForm;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [savingSection, setSavingSection] = useState(null);
@@ -272,7 +278,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // loop (the "deal flickering" production bug).
   const refreshEpoch = useRef(0);
 
-  const refresh = useCallback(async () => {
+  // `background: true` = nobody asked for this (a realtime hint / stream
+  // recovery). Server truth still lands on the page, but the properties form
+  // BUFFER is left alone while it holds unsaved edits — a background refetch
+  // must never retype the operator's screen. A user-initiated refresh (load,
+  // navigation, a save's onRefresh) always rebuilds the buffer + baseline,
+  // which is what clears the dirty state after a save.
+  const refresh = useCallback(async (opts) => {
+    // Tolerant of every existing caller: children pass this straight as
+    // onRefresh/onSaved and may hand it an event or a result payload.
+    const background = opts?.background === true;
     const epoch = ++refreshEpoch.current;
     const stale = () => epoch !== refreshEpoch.current;
     setError(null);
@@ -325,8 +340,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         productVariantId: d.productVariantId || '',
         locationId: d.locationId || '',
       };
-      setForm(init);
-      setOriginalForm(init);
+      // Unsaved edits + a refresh nobody asked for → keep the buffer AND its
+      // baseline exactly as they are (replacing only the baseline would falsely
+      // mark the edits as saved).
+      const editingUnsaved =
+        background &&
+        !!formRef.current &&
+        !!originalFormRef.current &&
+        !valuesEqual(formRef.current, originalFormRef.current);
+      if (!editingUnsaved) {
+        setForm(init);
+        setOriginalForm(init);
+      }
       // City options for the already-selected product (no auto-fill on load).
       if (d.productId) {
         try {
@@ -335,7 +360,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           setVariants(p.variants || []);
           // Legacy deals saved before Deal.locationId existed: derive the city from
           // the saved variant so the selector isn't blank (patch baseline too → not dirty).
-          if (!d.locationId && d.productVariantId) {
+          if (!editingUnsaved && !d.locationId && d.productVariantId) {
             const v = (p.variants || []).find((x) => x.id === d.productVariantId);
             const locId = v ? v.location?.id || v.locationId : '';
             if (locId) {
@@ -377,7 +402,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // refetch, which also re-emits the timeline channel so TimelineFeed follows.
   // Mirror traffic is low-frequency, so unscoped refetch is the intended cost.
   useRealtime('/api/mirror-admin/stream', () => {
-    refresh();
+    refresh({ background: true });
   });
 
   // Canonical address bar — once the deal is loaded, an internal-cuid URL is
