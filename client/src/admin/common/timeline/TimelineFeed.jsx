@@ -14,6 +14,7 @@ import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
 import FileEventRow from '../../deals/files/FileEventRow.jsx';
 import ChangeEventRow from './ChangeEventRow.jsx';
 import EmailEventRow from '../../email/EmailEventRow.jsx';
+import EmailThreadModal from '../../email/EmailThreadModal.jsx';
 import TourEventRow from './TourEventRow.jsx';
 import EmailPanel from '../../email/EmailPanel.jsx';
 import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
@@ -137,6 +138,9 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const [waTemplateOpen, setWaTemplateOpen] = useState(false);
+  // The email thread opened FROM the feed. One modal for the whole list, not
+  // one per row, and the same component the אימייל tab mounts.
+  const [openEmailThread, setOpenEmailThread] = useState(null); // { id, subject }
   // Restore any saved draft for THIS subject on mount.
   const [draft, setDraft] = useState(() => readNoteDrafts()[noteDraftKey] || '');
   // True when the composer opened with a previously-saved draft (shows the
@@ -535,6 +539,23 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
         />
       )}
 
+      {/* The canonical Email Thread modal, opened from a timeline row. Exactly
+          the component the אימייל tab and the Contact page use, so all three
+          open the same thread with the same reply / reply-all / forward /
+          attachments / mark-read behaviour. Closing refreshes the feed so a
+          reply sent inside it shows up as a row without a Deal reload. */}
+      <EmailThreadModal
+        open={!!openEmailThread}
+        thread={openEmailThread}
+        dealId={isDeal ? subjectId : null}
+        contactId={subjectType === 'contact' ? subjectId : null}
+        onClose={() => {
+          setOpenEmailThread(null);
+          refresh();
+        }}
+        onChanged={refresh}
+      />
+
       {/* "מה הצעד הבא?" — the last open task on an OPEN deal was just
           completed. Rendered HERE, outside the composer body, exactly like the
           template modal above: the active tab keeps rendering underneath, so
@@ -662,10 +683,13 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     );
                   }
                   // Email events (read-time merged from the email mirror).
+                  // Clicking one opens the SAME canonical thread modal the
+                  // אימייל tab and the Contact page use — the feed is a way IN
+                  // to the conversation, never a second reader.
                   if (entry.kind === 'email') {
                     return (
                       <li key={entry.id}>
-                        <EmailEventRow entry={entry} />
+                        <EmailEventRow entry={entry} onOpenThread={setOpenEmailThread} />
                       </li>
                     );
                   }

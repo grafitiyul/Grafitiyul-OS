@@ -1,7 +1,16 @@
-// Compact history row for an email event (timeline kind='email' — read-time
-// merged pseudo-entries; EmailMessage is the source of truth, nothing is
-// copied into TimelineEntry). Shows direction, subject, snippet and the
-// honest engagement signal for GOS-sent mail.
+// The email row in the Deal/Contact history feed (timeline kind='email' —
+// read-time merged pseudo-entries; EmailMessage is the source of truth, nothing
+// is copied into TimelineEntry).
+//
+// It used to say only direction + subject + snippet, which meant the operator
+// had to leave the feed and go find the אימייל tab to learn anything. Now the
+// collapsed row answers the triage questions on its own — who it was with, when,
+// how big the thread is, whether anything is attached, whether it still needs
+// reading, whether GOS sent it, and whether it actually went out — and clicking
+// it opens the SAME canonical thread modal the Email tab uses.
+//
+// Built on EventRowShell so it keeps the feed's one reading hierarchy
+// (index.css §GOS READING HIERARCHY) instead of becoming a special case.
 
 import EventRowShell from '../common/timeline/EventRowShell.jsx';
 
@@ -17,31 +26,88 @@ function GmailGlyph() {
   );
 }
 
-export default function EmailEventRow({ entry }) {
-  const data = entry.data || {};
-  const outbound = data.direction === 'outbound';
-  const opens = data.engagement?.openCount || 0;
+// The chip states the DELIVERY TRUTH, never a hopeful summary. A mirrored
+// message exists because Gmail has it; anything else is still an intention and
+// says so. "queued" and "failed" must never read as "sent".
+const STATE = {
+  sent: { label: 'נשלח מייל', tone: 'bg-blue-50 text-blue-700 ring-blue-200', rowTone: 'default' },
+  received: { label: 'התקבל מייל', tone: 'bg-gray-100 text-gray-600 ring-gray-200', rowTone: 'default' },
+  queued: { label: 'ממתין לשליחה', tone: 'bg-amber-50 text-amber-800 ring-amber-200', rowTone: 'warning' },
+  failed: { label: 'שליחה נכשלה', tone: 'bg-red-50 text-red-700 ring-red-200', rowTone: 'warning' },
+  cancelled: { label: 'בוטל', tone: 'bg-gray-100 text-gray-500 ring-gray-200', rowTone: 'default' },
+};
 
-  return (
+// Who the exchange is WITH — recipients for outbound, the sender for inbound.
+function counterparty(d) {
+  const names = (list) => (list || []).map((r) => r?.name || r?.email).filter(Boolean);
+  if (d.direction === 'outbound') return names(d.toRecipients).join(', ');
+  return d.fromName || d.fromEmail || '';
+}
+
+export default function EmailEventRow({ entry, onOpenThread = null }) {
+  const data = entry.data || {};
+  const state = STATE[data.deliveryState] || (data.direction === 'outbound' ? STATE.sent : STATE.received);
+  const opens = data.engagement?.openCount || 0;
+  const people = counterparty(data);
+  const cc = (data.ccRecipients || []).length;
+  // A thread we can actually open. An older/queued row without one degrades to
+  // a plain row rather than opening something unrelated.
+  const canOpen = !!(onOpenThread && data.threadId);
+
+  const row = (
     <EventRowShell
       icon={<GmailGlyph />}
-      chip={{
-        label: outbound ? 'נשלח מייל' : 'התקבל מייל',
-        tone: outbound ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-gray-100 text-gray-600 ring-gray-200',
-      }}
+      chip={{ label: state.label, tone: state.tone }}
+      tone={state.rowTone}
       when={entry.createdAt}
-      // Inbound mail's origin is the sender; outbound's is whoever sent it from
-      // GOS. Both are the same metadata slot, so they line up down the feed.
-      actor={outbound ? entry.createdByName || 'המערכת' : data.fromName || null}
+      actor={data.direction === 'outbound' ? entry.createdByName || 'המערכת' : data.fromName || null}
       trailing={
-        outbound && opens > 0 ? (
-          <span
-            className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold leading-none text-emerald-700 ring-1 ring-emerald-200"
-            title="אינדיקציית פתיחה — אינה מדויקת ב-100% (חוסמי תמונות, פרוקסי של Gmail וכד')"
-          >
-            נפתח · {opens}
-          </span>
-        ) : null
+        <span className="flex shrink-0 items-center gap-1.5">
+          {data.threadUnread && (
+            <span className="h-2 w-2 rounded-full bg-blue-600" title="יש הודעות שלא נקראו בשיחה" aria-label="לא נקרא" />
+          )}
+          {data.attachmentCount > 0 && (
+            <span className="gos-meta whitespace-nowrap" title={`${data.attachmentCount} קבצים מצורפים`}>
+              📎 {data.attachmentCount}
+            </span>
+          )}
+          {data.threadMessageCount > 1 && (
+            <span className="gos-meta whitespace-nowrap" title="הודעות בשיחה">✉ {data.threadMessageCount}</span>
+          )}
+          {data.sentFromGos && (
+            <span
+              title="נשלח מתוך GOS"
+              className="rounded-full bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200"
+            >
+              GOS
+            </span>
+          )}
+          {opens > 0 && (
+            <span
+              className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold leading-none text-emerald-700 ring-1 ring-emerald-200"
+              title="אינדיקציית פתיחה — אינה מדויקת ב-100% (חוסמי תמונות, פרוקסי של Gmail וכד')"
+            >
+              נפתח · {opens}
+            </span>
+          )}
+        </span>
+      }
+      below={
+        (people || cc > 0 || data.failureReason) && (
+          <div className="gos-meta-cluster mt-1 ps-[23px]">
+            {people && (
+              <span className="gos-detail truncate" dir="auto">
+                {data.direction === 'outbound' ? 'אל: ' : 'מאת: '}
+                {people}
+              </span>
+            )}
+            {cc > 0 && <span className="gos-meta shrink-0">· עותק ל-{cc}</span>}
+            {/* A failure is stated, with its reason — never a silent amber row. */}
+            {data.failureReason && (
+              <span className="gos-meta shrink-0 text-red-700" dir="auto">· {data.failureReason}</span>
+            )}
+          </div>
+        )
       }
     >
       <span dir="auto">
@@ -49,5 +115,19 @@ export default function EmailEventRow({ entry }) {
         {data.snippet && <span className="gos-detail"> — {data.snippet}</span>}
       </span>
     </EventRowShell>
+  );
+
+  if (!canOpen) return row;
+  return (
+    <button
+      type="button"
+      // The subject rides along so the modal's title is the conversation's own
+      // subject from the first frame, rather than "(ללא נושא)" until it loads.
+      onClick={() => onOpenThread({ id: data.threadId, subject: data.subject })}
+      aria-label={`פתיחת שיחת המייל: ${data.subject || 'ללא נושא'}`}
+      className="block w-full rounded-xl text-right transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+    >
+      {row}
+    </button>
   );
 }
