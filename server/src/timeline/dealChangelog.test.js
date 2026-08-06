@@ -97,7 +97,10 @@ test('status enum displays + null side renders as null display', async () => {
     origin,
   });
   const byKey = Object.fromEntries(client.created[0].data.changes.map((c) => [c.fieldKey, c]));
-  assert.equal(byKey.status.oldDisplay, 'פתוח');
+  // The changelog speaks the CANONICAL lifecycle vocabulary (shared/dealStatus.mjs)
+  // — the same OPEN/WON/LOST the deal badge and pipeline show. Before this was
+  // unified the same status read "פתוח" here and "OPEN" three inches away.
+  assert.equal(byKey.status.oldDisplay, 'OPEN');
   assert.equal(byKey.status.newDisplay, 'WON');
   assert.equal(byKey.discountMinor.oldDisplay, null);
   assert.equal(byKey.discountMinor.newDisplay, '₪50');

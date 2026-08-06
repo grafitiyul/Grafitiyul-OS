@@ -54,7 +54,7 @@ export const TRIGGERS = [
   },
   {
     type: 'deal_lost',
-    labelHe: 'דיל אבוד (LOST)',
+    labelHe: 'דיל LOST',
     category: 'crm',
     kind: 'event',
     hintHe: 'נורה כשדיל מסומן LOST עם סיבת אובדן.',

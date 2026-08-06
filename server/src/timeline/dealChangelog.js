@@ -1,4 +1,5 @@
 import { emitTimelineEvent } from './events.js';
+import { DEAL_STATUS_LABELS, DEAL_STATUS_FIELD_LABELS } from '../../../shared/dealStatus.mjs';
 
 // Structured Deal changelog — one place that knows WHICH Deal fields are
 // meaningful history and HOW each renders in Hebrew. Route handlers snapshot
@@ -14,7 +15,9 @@ import { emitTimelineEvent } from './events.js';
 // (a variant is just product+city — both tracked separately), deprecated
 // legacy columns, and wonAt/lostAt (implied by the status change itself).
 
-const STATUS_LABELS = { open: 'פתוח', won: 'WON', lost: 'LOST' };
+// The canonical lifecycle vocabulary, shared with the client (one word per
+// status across every surface).
+const STATUS_LABELS = DEAL_STATUS_LABELS;
 const ACTIVITY_LABELS = { group: 'קבוצתי', private: 'פרטי', business: 'עסקי' };
 const COMM_LANG_LABELS = { he: 'עברית', en: 'אנגלית' };
 const TOUR_LANG_LABELS = { he: 'עברית', en: 'אנגלית', es: 'ספרדית', fr: 'צרפתית', ru: 'רוסית' };
@@ -69,8 +72,8 @@ const TRACKED_FIELDS = [
   { key: 'expectedCloseDate', labelHe: 'תאריך סגירה צפוי', type: 'date' },
   { key: 'communicationLanguage', labelHe: 'שפת תקשורת', type: 'enum', labels: COMM_LANG_LABELS },
   { key: 'tourLanguage', labelHe: 'שפת הסיור', type: 'enum', labels: TOUR_LANG_LABELS },
-  { key: 'lostReasonId', labelHe: 'סיבת הפסד', type: 'fk', model: 'lostReason', labelField: 'nameHe' },
-  { key: 'lostNotes', labelHe: 'הערות הפסד', type: 'text' },
+  { key: 'lostReasonId', labelHe: DEAL_STATUS_FIELD_LABELS.lostReasonId, type: 'fk', model: 'lostReason', labelField: 'nameHe' },
+  { key: 'lostNotes', labelHe: DEAL_STATUS_FIELD_LABELS.lostNotes, type: 'text' },
 ];
 
 // Snapshot select for the "before" read — every tracked scalar (id/currency are

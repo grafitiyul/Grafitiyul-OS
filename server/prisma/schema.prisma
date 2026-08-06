@@ -1126,6 +1126,24 @@ model Deal {
   // source for "who closed this deal" — never the current assignee. Null on
   // legacy deals whose closer cannot be proven.
   wonActor                     Json?
+  // HISTORICAL WON CORRECTION ("הפוך ל-WON שקט"). A deal that really happened
+  // years ago and was really paid, but was never closed in the CRM, must be
+  // correctable WITHOUT firing today's operational machinery (customer emails,
+  // manager reports, a fabricated tour). These two columns record that the
+  // correction was a DELIBERATE, audited back-office act:
+  //   historicalWonAt   — when an operator performed the silent WON. Its
+  //                       presence is the ONE explicit exemption from the
+  //                       "WON without tour" safety detector: a genuinely
+  //                       broken WON still raises, this one does not.
+  //   historicalWonNote — the audited choices, frozen at the moment of the
+  //                       correction: { by:{userId,displayName,username},
+  //                       previousStatus, previousStageId, wonAt (the chosen
+  //                       business date), emailRequested, tourCreated,
+  //                       tourEventId?, reason:'historical_correction' }.
+  // NOTHING financial is implied: no payment, no accounting document and no
+  // collection state is created or changed by this correction.
+  historicalWonAt              DateTime?
+  historicalWonNote            Json?
   lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free

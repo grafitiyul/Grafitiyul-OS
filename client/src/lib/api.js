@@ -509,6 +509,13 @@ export const api = {
         : p;
     },
     remove: (id) => request(`/api/deals/${id}`, { method: 'DELETE' }),
+    // "הפוך ל-WON שקט" — the historical correction. `plan` is the read-only
+    // preview the dialog shows before committing. The correction MAY create a
+    // tour, so it goes through tourMutation like every other tour-affecting
+    // call; the plan read does not.
+    silentWonPlan: (id) => request(`/api/deals/${id}/silent-won/plan`),
+    silentWon: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/silent-won`, { method: 'POST', body: JSON.stringify(data) })),
     // Pending Tour Update — apply (the ONE tour-update orchestration, which
     // mutates the tour → emits) / discard (restores deal fields to the
     // currently-applied tour values → NOT a tour change, no emit).

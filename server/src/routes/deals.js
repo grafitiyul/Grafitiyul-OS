@@ -47,6 +47,12 @@ import {
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { duplicateDeal } from '../deals/duplicateDeal.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
+import {
+  applySilentWon,
+  emitSilentWonEffects,
+  resolveHistoricalWonAt,
+  silentWonPlan,
+} from '../deals/silentWon.js';
 import { sendConfirmationEmail } from '../confirmation/sendService.js';
 import { hasActiveFillers } from '../confirmation/fillers.js';
 import { retryConfirmationAfterTourSetup } from '../confirmation/recovery.js';
@@ -1317,6 +1323,127 @@ router.post(
       actorUserId: req.adminAuth?.userId || null,
     });
     res.json({ ...withTourUpdatePending(await loadDeal(req.params.id)), confirmationEmail });
+  }),
+);
+
+// ── "הפוך ל-WON שקט" — the historical WON correction ────────────────────────
+//
+// A deal that really happened and was really paid years ago, but was never
+// closed in the CRM. This is NOT the WON button: it changes the lifecycle
+// status (plus an OPTIONAL tour and an OPTIONAL confirmation email) and
+// nothing else. No customer/manager notifications fire, and no payment,
+// accounting document or collection state is created, implied or changed —
+// see deals/silentWon.js for the full contract.
+//
+// GET returns the plan (what would happen) so the dialog can show it before
+// the operator commits; POST performs it.
+router.get(
+  '/:id/silent-won/plan',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const activeBooking = await activeBookingFor(prisma, deal.id);
+    res.json({
+      ...silentWonPlan(deal, { createTour: false, tourEventId: null }),
+      tourDate: deal.tourDate,
+      tourTime: deal.tourTime,
+      activityType: deal.activityType,
+      // "Would creating a tour duplicate reality?" — the honest answer the
+      // dialog needs, computed from live state rather than assumed.
+      hasActiveBooking: !!activeBooking,
+      alreadyHistoricallyCorrected: !!deal.historicalWonAt,
+    });
+  }),
+);
+
+router.post(
+  '/:id/silent-won',
+  handle(async (req, res) => {
+    const before = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true, historicalWonAt: true },
+    });
+    if (!before) return res.status(404).json({ error: 'not_found' });
+    if (before.status === 'won') return res.status(409).json({ error: 'deal_already_won' });
+
+    const resolved = resolveHistoricalWonAt({
+      mode: req.body?.wonDateMode === 'custom' ? 'custom' : 'today',
+      date: req.body?.wonDate ? String(req.body.wonDate) : null,
+    });
+    if (resolved.error) return res.status(422).json({ error: resolved.error });
+
+    const createTour = req.body?.createTour === true;
+    const tourEventId = req.body?.tourEventId ? String(req.body.tourEventId) : null;
+    const emailRequested = req.body?.sendConfirmationEmail === true;
+
+    // A tour is created only through the canonical path, with the canonical
+    // planning requirements. Refusing up front beats a half-applied correction.
+    if (createTour) {
+      const full = await prisma.deal.findUnique({ where: { id: req.params.id } });
+      const gate = wonGate(full, tourEventId);
+      if (gate.missing.length) {
+        return res.status(422).json({ error: 'won_requirements_missing', missing: gate.missing });
+      }
+      if (gate.needsSlot) return res.status(422).json({ error: 'tour_slot_required' });
+    }
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    let outcome;
+    try {
+      outcome = await prisma.$transaction(async (tx) => {
+        const full = await tx.deal.findUnique({ where: { id: req.params.id } });
+        return applySilentWon(tx, {
+          deal: full,
+          wonAt: resolved.at,
+          createTour,
+          tourEventId,
+          emailRequested,
+          actorUserId: req.adminAuth?.userId || null,
+          origin,
+        });
+      });
+    } catch (e) {
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      if (e.code === 'tour_full') return res.status(409).json({ error: 'tour_full', ...e.details });
+      throw e;
+    }
+
+    // A retry that found the deal already WON changes nothing and says so.
+    if (!outcome.wonNow) return res.status(409).json({ error: 'deal_already_won' });
+
+    const after = await loadDeal(req.params.id);
+    await recordDealChanges(prisma, { dealId: req.params.id, before, after, origin });
+    // The human-readable audit line, beside the structured field diff: WHO
+    // performed the correction and exactly WHICH choices they made.
+    await emitTimelineEvent(prisma, {
+      subjectType: 'deal',
+      subjectId: req.params.id,
+      kind: 'change',
+      data: {
+        title: 'תיקון היסטורי — הפיכה ל-WON שקט',
+        changes: [
+          { fieldKey: 'silentWonReason', labelHe: 'סיבה', newDisplay: 'תיקון היסטורי (הדיל כבר התרחש)' },
+          { fieldKey: 'silentWonPrevStatus', labelHe: 'סטטוס קודם', newDisplay: outcome.note.previousStatus },
+          { fieldKey: 'silentWonAt', labelHe: 'תאריך WON שנבחר', newDisplay: outcome.note.wonAt.slice(0, 10) },
+          { fieldKey: 'silentWonEmail', labelHe: 'מייל אישור', newDisplay: emailRequested ? 'נשלח' : 'לא נשלח' },
+          { fieldKey: 'silentWonTour', labelHe: 'סיור', newDisplay: outcome.tour ? 'נוצר סיור' : 'לא נוצר סיור (תיקון היסטורי מכוון)' },
+          { fieldKey: 'silentWonMoney', labelHe: 'תשלומים ומסמכים', newDisplay: 'לא בוצע שינוי' },
+        ],
+      },
+      origin,
+    });
+
+    emitSilentWonEffects({
+      dealId: req.params.id,
+      wonAt: outcome.wonAt,
+      emailRequested,
+      closedByUserId: req.adminAuth?.userId || null,
+    });
+    if (outcome.tour) kickPayrollReconcile('tour', outcome.tour.id);
+
+    res.json(withTourUpdatePending(after));
   }),
 );
 

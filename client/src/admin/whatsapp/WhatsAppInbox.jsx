@@ -12,6 +12,7 @@ import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { useIsMobile } from '../../lib/useIsMobile.js';
 import { chatMatchesAccountFilter, isChatSelected } from './chatSelection.js';
+import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -64,10 +65,12 @@ function isToday(iso) {
   return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
 }
 
+// Labels come from the canonical lifecycle vocabulary (shared/dealStatus.mjs);
+// only the inbox-specific chip colours live here.
 const DEAL_STATUS = {
-  open: { label: 'פתוח', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
-  won: { label: 'נסגר', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  lost: { label: 'אבוד', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
+  open: { label: DEAL_STATUS_LABELS.open, cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  won: { label: DEAL_STATUS_LABELS.won, cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  lost: { label: DEAL_STATUS_LABELS.lost, cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
 
 // Status filters — applied client-side on the loaded list.

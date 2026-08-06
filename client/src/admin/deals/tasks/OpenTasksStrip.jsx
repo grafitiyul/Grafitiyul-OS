@@ -69,15 +69,32 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
             );
           }
           return (
+            // The WHOLE row opens the editor — the 3-dot menu is for SECONDARY
+            // actions, not the primary one. Direct controls inside the row
+            // (the done checkbox, the ⋮ button and its menu) stop the click
+            // themselves, so they keep doing only their own job.
             <li
               key={t.id}
-              className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm"
+              role="button"
+              tabIndex={0}
+              aria-label={`עריכת המשימה ${t.title}`}
+              onClick={() => setEditId(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setEditId(t.id);
+                }
+              }}
+              className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
             >
               <button
                 type="button"
                 title="סמן כבוצע"
                 disabled={busyId === t.id}
-                onClick={() => run(() => api.dealTasks.complete(dealId, t.id), t.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  run(() => api.dealTasks.complete(dealId, t.id), t.id);
+                }}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-300 text-transparent hover:border-green-500 hover:text-green-600 disabled:opacity-50"
               >
                 ✓
@@ -112,6 +129,7 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
               <TaskRowMenu
                 open={menuId === t.id}
                 onToggle={() => setMenuId(menuId === t.id ? null : t.id)}
+                onRowClick={(e) => e.stopPropagation()}
                 onClose={() => setMenuId(null)}
                 isWa={isWa}
                 onSendNow={() => {
@@ -137,10 +155,12 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
 
 // Per-row ⋮ actions — anchored popover (portal): never clipped, closes on
 // outside tap / Esc, works identically with mouse and touch.
-function TaskRowMenu({ open, onToggle, onClose, isWa, onSendNow, onEdit, onCancelTask }) {
+function TaskRowMenu({ open, onToggle, onClose, isWa, onSendNow, onEdit, onCancelTask, onRowClick }) {
   const btnRef = useRef(null);
   return (
-    <>
+    // onRowClick stops the row's own click handler: pressing ⋮ (or anything in
+    // its menu) must open the menu, not the editor behind it.
+    <span onClick={onRowClick} className="contents">
       <button
         ref={btnRef}
         type="button"
@@ -177,7 +197,7 @@ function TaskRowMenu({ open, onToggle, onClose, isWa, onSendNow, onEdit, onCance
           ביטול
         </button>
       </AnchoredMenu>
-    </>
+    </span>
   );
 }
 

@@ -64,6 +64,13 @@ export const wonTransitionKey = (dealId, wonAt) =>
  * status/wonAt — the immutable historical closer, resolved at transition time
  * (never at report time, never from the current assignee).
  *
+ * `wonAt` overrides the business close date. It exists for exactly ONE caller:
+ * the historical correction ("הפוך ל-WON שקט"), where the deal really closed
+ * years ago and stamping today would rewrite history. Every normal path leaves
+ * it null and gets `now`. The value still flows through the same single write,
+ * so wonActor.at, the Report #26 idempotency key and the audit record all stay
+ * derived from the ONE date the transition actually stamped.
+ *
  * Returns { wonNow, alreadyWon, deal, before, finalStage, wonAt } where `deal`
  * is the post-transition scalar row (merged, not re-read) and `before` is the
  * pre-transition row for the caller's changelog. Idempotent: an already-WON
@@ -72,7 +79,7 @@ export const wonTransitionKey = (dealId, wonAt) =>
  */
 export async function transitionDealToWon(
   tx,
-  { dealId, publicOrigin = null, actorUserId = null, cause = null },
+  { dealId, publicOrigin = null, actorUserId = null, cause = null, wonAt: wonAtOverride = null },
 ) {
   const before = await tx.deal.findUnique({ where: { id: dealId } });
   if (!before) {
@@ -101,7 +108,12 @@ export async function transitionDealToWon(
     ? await tx.adminUser.findUnique({ where: { id: actorUserId }, select: ADMIN_NAME_SELECT })
     : null;
 
-  const wonAt = new Date();
+  const wonAt = wonAtOverride ? new Date(wonAtOverride) : new Date();
+  if (Number.isNaN(wonAt.getTime())) {
+    const e = new Error('invalid_won_at');
+    e.code = 'invalid_won_at';
+    throw e;
+  }
   const data = {
     status: 'won',
     dealStageId: finalStage.id,

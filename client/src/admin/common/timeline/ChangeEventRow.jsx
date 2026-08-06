@@ -1,8 +1,15 @@
+import { dealChangeFieldLabel } from '../../../../../shared/dealStatus.mjs';
+
 // Compact history row for a structured Deal change event (TimelineEntry
 // kind='change'). Emitted by the backend Deal update paths — one entry per
 // save, entry.data.changes = [{ fieldKey, labelHe, oldValue, newValue,
 // oldDisplay, newDisplay }]. Lines use the neutral "שדה: ישן ← חדש" format
 // (verb-free — Hebrew gender agreement stays correct for every field name).
+//
+// THE RENDERER OWNS THE LABEL for the lifecycle fields. Entries written before
+// the vocabulary was unified stored "סיבת הפסד"; they now DISPLAY "סיבת LOST"
+// without a single stored audit row being rewritten. Every other field keeps
+// exactly the label it was recorded with.
 
 function PencilIcon() {
   return (
@@ -50,7 +57,8 @@ function ChangeLine({ c }) {
   }
   return (
     <>
-      <span className="text-gray-600">{c.labelHe}:</span> <Val v={c.oldDisplay} />
+      <span className="text-gray-600">{dealChangeFieldLabel(c.fieldKey, c.labelHe)}:</span>{' '}
+      <Val v={c.oldDisplay} />
       <span className="mx-1 text-gray-400" aria-hidden>←</span>
       <Val v={c.newDisplay} strong />
     </>

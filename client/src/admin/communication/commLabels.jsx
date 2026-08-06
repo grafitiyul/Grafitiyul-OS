@@ -1,9 +1,11 @@
 // Shared Hebrew labels + chips for the Communication Center screens.
+import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
 
 export const STATUS_LABELS = {
   draft: 'טיוטה', active: 'פעיל', disabled: 'מושבת', archived: 'בארכיון',
-  // deal statuses (context pickers)
-  open: 'פתוח', won: 'נסגר', lost: 'אבוד',
+  // Deal lifecycle (context pickers) — the CANONICAL vocabulary, never a
+  // second spelling of the same three states.
+  ...DEAL_STATUS_LABELS,
 };
 
 export const STATUS_TONES = {

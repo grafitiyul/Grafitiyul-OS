@@ -5,6 +5,7 @@ import DealDrawer from '../common/DealDrawer.jsx';
 import EmailThreadView from './EmailThreadView.jsx';
 import EmailComposer from './EmailComposer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
+import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
 
 // Email inbox — the working surface for business email, mirroring the
 // WhatsApp inbox workflow:
@@ -37,10 +38,12 @@ const FILTERS = [
   { key: 'archive', label: 'ארכיון' },
 ];
 
+// Labels come from the canonical lifecycle vocabulary (shared/dealStatus.mjs);
+// only the inbox-specific chip colours live here.
 const DEAL_STATUS = {
-  open: { label: 'פתוח', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
-  won: { label: 'נסגר', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  lost: { label: 'אבוד', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
+  open: { label: DEAL_STATUS_LABELS.open, cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
+  won: { label: DEAL_STATUS_LABELS.won, cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  lost: { label: DEAL_STATUS_LABELS.lost, cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
 
 function fmtListTime(iso) {

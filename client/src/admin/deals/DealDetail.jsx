@@ -10,6 +10,7 @@ import CardKebabMenu from '../common/CardKebabMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
+import SilentWonDialog from './SilentWonDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import SameContactNewDealFlow from './SameContactNewDealFlow.jsx';
@@ -157,6 +158,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // "פתח דיל חדש לאותו איש קשר" (kebab) — the flow component owns the chooser
   // + the canonical CreateDealModal; this flag only opens/closes it.
   const [sameContactOpen, setSameContactOpen] = useState(false);
+  const [silentWonOpen, setSilentWonOpen] = useState(false);
   // שכפל דיל re-entry guard (ref, not state — no re-render needed).
   const dupBusyRef = useRef(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
@@ -1405,6 +1407,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               >
                 העתק URL של דיל
               </button>
+              {/* Historical correction — deliberately NOT beside the WON button:
+                  it closes a deal that already happened without firing today's
+                  operational machinery. Hidden once the deal is WON. */}
+              {deal.status !== 'won' && (
+                <button
+                  onClick={() => { setMenuOpen(false); setSilentWonOpen(true); }}
+                  className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+                >
+                  <div>הפוך ל-WON שקט</div>
+                  <div className="text-[11px] text-gray-500">תיקון היסטורי — בלי מיילים והתראות</div>
+                </button>
+              )}
               <button
                 disabled
                 title="בקרוב"
@@ -1469,6 +1483,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         onClose={() => setLostOpen(false)}
         onSubmit={confirmLost}
       />
+
+      {/* Historical WON correction — its own dialog, never the WON button's. */}
+      {silentWonOpen && (
+        <SilentWonDialog
+          open={silentWonOpen}
+          deal={deal}
+          onClose={() => setSilentWonOpen(false)}
+          onDone={() => { setSilentWonOpen(false); refresh(); }}
+        />
+      )}
 
       {/* ── Tours lifecycle dialogs ── */}
       {/* WON refused: the server's declarative checklist of missing fields. */}

@@ -1,7 +1,9 @@
 // Result rows for global search. One component per entity type, one shared
+import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
 // shell so keyboard highlighting and click behaviour are identical everywhere.
 
-const STATUS_LABEL = { open: 'פתוח', won: 'נסגר', lost: 'אבוד' };
+// Canonical Deal lifecycle wording (shared/dealStatus.mjs).
+const STATUS_LABEL = DEAL_STATUS_LABELS;
 
 const STATUS_CLASS = {
   open: 'bg-blue-50 text-blue-700',

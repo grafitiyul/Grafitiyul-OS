@@ -15,6 +15,7 @@
 // display; its whatsapp fallback is a plain green emoji and only exists for
 // text-only contexts (<option> labels).
 import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
+import { DEAL_STATUS_LABELS } from '../../../../../shared/dealStatus.mjs';
 
 export const COLUMNS_KEY = 'crm.tasks.columns.v1';
 
@@ -37,7 +38,8 @@ const HE_STATUS = {
 
 const HE_PRIORITY = { high: 'גבוהה', medium: 'בינונית', low: 'נמוכה' };
 
-const HE_DEAL_STATUS = { open: 'פתוח', won: 'נסגר', lost: 'אבוד' };
+// Deal lifecycle wording is canonical (shared/dealStatus.mjs) — OPEN/WON/LOST.
+const HE_DEAL_STATUS = DEAL_STATUS_LABELS;
 
 const HE_LANG = { he: 'עברית', en: 'אנגלית', es: 'ספרדית', fr: 'צרפתית', ru: 'רוסית' };
 

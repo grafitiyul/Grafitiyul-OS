@@ -1,13 +1,9 @@
 // Stable keys + Hebrew labels for the Deal module. Logic references keys.
 
-export const DEAL_STATUSES = ['open', 'won', 'lost'];
-
-// Business terms — kept in English (these are the labels the team uses).
-export const DEAL_STATUS_LABELS = {
-  open: 'OPEN',
-  won: 'WON',
-  lost: 'LOST',
-};
+// The lifecycle vocabulary is NOT defined here — it is shared with the server
+// (shared/dealStatus.mjs) so one word per status holds across every surface.
+// Re-exported so the many existing importers keep working unchanged.
+export { DEAL_STATUSES, DEAL_STATUS_LABELS, dealStatusLabel } from '../../../../shared/dealStatus.mjs';
 
 export const DEAL_STATUS_STYLES = {
   open: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',

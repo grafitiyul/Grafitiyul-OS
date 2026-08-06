@@ -34,11 +34,20 @@ import { israelToday } from '../lib/israelDate.js';
 // real incidents remain.
 export const RECENT_WON_DAYS = 30;
 
+// The ONE exemption from the rule above, and it is deliberately not a
+// weakening of it: a deal an operator explicitly corrected with "הפוך ל-WON
+// שקט" and explicitly chose NOT to give a tour (deals/silentWon.js stamps
+// Deal.historicalWonAt only in that case). That is a recorded, audited
+// decision about history — not a broken chain. A genuinely broken WON without
+// a tour, including a future one on any other deal, still raises normally.
+const NOT_HISTORICALLY_CORRECTED = { historicalWonAt: null };
+
 /** Prisma where-fragment version (detector sweep). */
 export function liveWonObligationWhere(nowMs = Date.now()) {
   return {
     status: 'won',
     bookings: { none: { status: 'active' } },
+    ...NOT_HISTORICALLY_CORRECTED,
     OR: [
       { tourDate: { gte: israelToday(nowMs) } },
       { tourDate: null, wonAt: { gte: new Date(nowMs - RECENT_WON_DAYS * 24 * 60 * 60 * 1000) } },
@@ -48,6 +57,7 @@ export function liveWonObligationWhere(nowMs = Date.now()) {
 
 /** JS version of the same rule (deal-DTO banner resolver). */
 export function isLiveWonObligation(deal, nowMs = Date.now()) {
+  if (deal.historicalWonAt) return false;
   if (deal.tourDate) return String(deal.tourDate) >= israelToday(nowMs);
   const wonAt = deal.wonAt ? new Date(deal.wonAt).getTime() : null;
   return wonAt != null && wonAt >= nowMs - RECENT_WON_DAYS * 24 * 60 * 60 * 1000;
