@@ -8,6 +8,8 @@ import AlertDialog from '../AlertDialog.jsx';
 import WhatsAppPanel from '../../whatsapp/WhatsAppPanel.jsx';
 import TaskComposer from '../../deals/tasks/TaskComposer.jsx';
 import OpenTasksStrip from '../../deals/tasks/OpenTasksStrip.jsx';
+import NextTaskDialog from '../../deals/tasks/NextTaskDialog.jsx';
+import { shouldPromptNextTask } from '../../deals/tasks/nextTaskPrompt.js';
 import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
 import FileEventRow from '../../deals/files/FileEventRow.jsx';
 import ChangeEventRow from './ChangeEventRow.jsx';
@@ -129,6 +131,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('note');
+  // Latched so the task-completion callback reads the CURRENT tab without
+  // taking it as a dependency (which would re-create the callback on every tab
+  // change and re-arm the prompt).
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const [waTemplateOpen, setWaTemplateOpen] = useState(false);
   // Restore any saved draft for THIS subject on mount.
   const [draft, setDraft] = useState(() => readNoteDrafts()[noteDraftKey] || '');
@@ -250,33 +257,48 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   // ── "what happens next?" ────────────────────────────────────────────────
   //
   // Completing the LAST open task on an OPEN deal leaves it with nothing
-  // scheduled — which is exactly how a live lead goes quiet. So the moment the
-  // canonical task state comes back empty, the composer opens on its EXISTING
-  // משימה tab, prefilled by that tab's own defaults. It is a PROMPT, not a
-  // write: nothing is created unless the operator presses save, and switching
-  // away or closing the deal creates nothing at all.
+  // scheduled — which is exactly how a live lead goes quiet. So GOS offers the
+  // next task. It is a PROMPT, not a write: nothing is created unless the
+  // operator saves, and closing it creates nothing at all.
   //
-  // Deliberately not a dialog and not a second composer — the canonical New
-  // Task flow is already one tab away, and the drawer stays exactly where it
-  // is (no navigation, no remount, no lost place in the queue).
-  const dealIsOpen = dealStatus === 'open';
-  // Fires only on an explicit completion by this operator, and only once per
-  // completion: a realtime refetch, a duplicate click or a poll tick that
-  // observes the same empty state must not re-open the composer underneath
-  // them. Keyed by the completed task so a genuine SECOND completion later
-  // still prompts.
+  // The offer is a DIALOG. It first switched to the משימה tab, which unmounted
+  // whatever the operator had open underneath — a half-written note, an email
+  // draft, the WhatsApp panel — so a prompt meant to help destroyed the work in
+  // progress. The composer already had the right pattern for this (MODAL_TABS /
+  // תבנית ווטסאפ): an action that opens a dialog and leaves the tab alone.
+  //
+  // Every condition for showing it lives in the pure shouldPromptNextTask.
+  // Keyed by the completed task id so one completion prompts at most once
+  // (realtime refetch, double-click, poll tick) while a genuine second
+  // completion later still prompts.
   const promptedForRef = useRef(null);
+  const [nextTaskOpen, setNextTaskOpen] = useState(false);
   const onTaskChanged = useCallback(
     async (cause) => {
+      // The SERVER's current task state decides whether that was really the
+      // last one — never the row the client happened to be looking at. A stale
+      // client that disagrees loses. loadTasks returns null when the read
+      // failed, which the rule treats as "do not guess".
       const next = await loadTasks();
       refresh();
-      if (cause?.reason !== 'completed' || !dealIsOpen) return;
-      if (!next || next.length > 0) return; // another open task already exists
-      if (promptedForRef.current === cause.taskId) return;
+      if (
+        !shouldPromptNextTask({
+          cause,
+          dealStatus,
+          openTasks: next,
+          promptedFor: promptedForRef.current,
+          activeTab: tabRef.current,
+        })
+      ) {
+        return;
+      }
       promptedForRef.current = cause.taskId;
-      setTab('task');
+      // A DIALOG, never a tab switch. Switching tabs unmounted whatever was
+      // open underneath — a half-written note, an email draft, the WhatsApp
+      // panel — so a helpful prompt destroyed the operator's actual work.
+      setNextTaskOpen(true);
     },
-    [loadTasks, refresh, dealIsOpen],
+    [loadTasks, refresh, dealStatus],
   );
 
   // Immediate refresh when a task changes OUTSIDE this component (e.g. a WhatsApp
@@ -510,6 +532,25 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           dealId={subjectId}
           onClose={() => setWaTemplateOpen(false)}
           onSent={() => refresh()}
+        />
+      )}
+
+      {/* "מה הצעד הבא?" — the last open task on an OPEN deal was just
+          completed. Rendered HERE, outside the composer body, exactly like the
+          template modal above: the active tab keeps rendering underneath, so
+          every draft in it survives untouched.
+
+          onCreated runs the SAME refresh path as the tab composer, then closes.
+          Closing without saving creates nothing. */}
+      {!historyOnly && isDeal && (
+        <NextTaskDialog
+          open={nextTaskOpen}
+          dealId={subjectId}
+          onClose={() => setNextTaskOpen(false)}
+          onCreated={() => {
+            setNextTaskOpen(false);
+            onTaskChanged();
+          }}
         />
       )}
 
