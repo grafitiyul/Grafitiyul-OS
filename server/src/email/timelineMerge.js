@@ -122,7 +122,7 @@ export function toScheduledFeedItem(s, { username } = {}) {
       emailMessageId: null,
       direction: 'outbound',
       deliveryState: state,
-      failureReason: state === 'failed' ? s.lastError || null : null,
+      failureReason: state === 'failed' ? s.failureReason || null : null,
       sentFromGos: true, // by definition — GOS composed and queued it
       subject: s.subject,
       snippet: null,
@@ -139,10 +139,10 @@ export function toScheduledFeedItem(s, { username } = {}) {
   };
 }
 
-const SCHEDULED_SELECT = {
+export const SCHEDULED_SELECT = {
   id: true, dealId: true, contactId: true, threadId: true, status: true, subject: true,
   toJson: true, ccJson: true, attachments: true, scheduledAt: true, sentAt: true,
-  lastError: true, createdAt: true, updatedAt: true,
+  failureReason: true, createdAt: true, updatedAt: true,
 };
 
 // Not-yet-accepted scheduled mail for a deal/contact. `gmailMessageId: null` is
@@ -157,7 +157,7 @@ async function scheduledFeedItems(where) {
   return rows.map((s) => toScheduledFeedItem(s));
 }
 
-const MESSAGE_SELECT = {
+export const MESSAGE_SELECT = {
   id: true,
   threadId: true,
   direction: true,

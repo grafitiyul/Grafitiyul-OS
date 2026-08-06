@@ -45,7 +45,9 @@ test('queued, failed and cancelled are NEVER reported as sent', () => {
 });
 
 test('a failed send carries its reason, so the row can say why', () => {
-  const item = toScheduledFeedItem({ id: 's1', status: 'failed', lastError: 'invalid recipient', toJson: [] });
+  // `failureReason` is the real column — see timelineMerge.prismaShape.test.js
+  // for why this name is now pinned against the generated schema.
+  const item = toScheduledFeedItem({ id: 's1', status: 'failed', failureReason: 'invalid recipient', toJson: [] });
   assert.equal(item.data.failureReason, 'invalid recipient');
   // …and a queued one has no failure to report.
   assert.equal(toScheduledFeedItem({ id: 's2', status: 'pending', toJson: [] }).data.failureReason, null);
