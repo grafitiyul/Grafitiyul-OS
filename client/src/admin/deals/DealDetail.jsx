@@ -66,6 +66,7 @@ import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import WonRecoveryBar from './WonRecoveryBar.jsx';
+import PostPaymentCompletionModal from './PostPaymentCompletionModal.jsx';
 import { fmtTourDate } from '../tours/config.js';
 
 const INPUT =
@@ -194,6 +195,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   //   • lostPending: LOST needs explicit tour-cancel confirmation
   const [wonMissing, setWonMissing] = useState(null);
   const [slotPickerFor, setSlotPickerFor] = useState(null);
+  // "אחר כך" on the post-payment completion modal — per deal, per session only.
+  const [ppcDismissed, setPpcDismissed] = useState(null);
   // Group registration progressive modal: null | { section }
   const [regModal, setRegModal] = useState(null);
   const [reopenConfirmTour, setReopenConfirmTour] = useState(null);
@@ -1559,6 +1562,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           ))}
         </ul>
       </Dialog>
+
+      {/* A payment closed this deal over an activity type nobody chose. The
+          system resolved one so the sale and the tour went through; this hands
+          that decision back. Seeded on the deal id (never on the refetched
+          object) and dismissible for the session — a reload brings it back
+          until it is actually answered, because the answer is server state. */}
+      <PostPaymentCompletionModal
+        deal={deal}
+        open={deal.status === 'won' && !!deal.activityTypeAssumedAt && ppcDismissed !== deal.id}
+        onClose={() => setPpcDismissed(deal.id)}
+        onDone={refresh}
+      />
 
       {/* Group slot picker — first WON ('won') or שבץ/החלף ('assign'). */}
       <TourSlotPickerDialog

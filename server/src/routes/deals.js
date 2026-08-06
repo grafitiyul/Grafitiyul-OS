@@ -60,6 +60,7 @@ import { sendConfirmationEmail } from '../confirmation/sendService.js';
 import { hasActiveFillers } from '../confirmation/fillers.js';
 import { retryConfirmationAfterTourSetup } from '../confirmation/recovery.js';
 import { wonRecoveryState } from '../deals/wonRecovery.js';
+import { paymentLinkReadiness } from '../deals/paymentLinkReadiness.js';
 import { resolveIssue } from '../control/issueService.js';
 import { marketingDto } from '../deals/marketing.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
@@ -360,6 +361,9 @@ async function loadDeal(id) {
     // "WON but operationally incomplete" — the canonical recovery banner state
     // (deals/wonRecovery.js). Derived on read, like tourUpdatePending.
     deal.wonRecovery = await wonRecoveryState(prisma, deal);
+    // Whether a customer-facing payment link may leave GOS unattended. Derived
+    // on read like the two above; the "פתח" action ignores it by design.
+    deal.paymentLinkReadiness = paymentLinkReadiness(deal);
   }
   return deal;
 }

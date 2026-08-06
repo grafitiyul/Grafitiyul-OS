@@ -9,7 +9,8 @@ import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import ManualPaymentModal from './collection/ManualPaymentModal.jsx';
 import LinkExistingDocumentModal from './collection/LinkExistingDocumentModal.jsx';
 import { formatMinor } from '../../lib/money.js';
-import { contactNameHe } from './config.js';
+import { contactNameHe, TOUR_LANGS } from './config.js';
+import { DateField, TimeField } from '../common/pickers/DateTimeFields.jsx';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import { DEAL_TASKS_CHANGED_EVENT } from './tasks/taskEvents.js';
 import { ReviewStatusBadge } from '../collection/CollectionPage.jsx';
@@ -294,7 +295,9 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
   // ── Payment actions (entry points only — flows live in their modals) ─────
   const [payBusy, setPayBusy] = useState(false);
   const [payFeedback, setPayFeedback] = useState(null);
-  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
+  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details'|'planning', … }
+  // Planning fields filled inline before a customer-facing link goes out.
+  const [planForm, setPlanForm] = useState({ tourDate: '', tourTime: '', participants: '', tourLanguage: '' });
   const [docModalOpen, setDocModalOpen] = useState(false);
   const [customLinkOpen, setCustomLinkOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -352,6 +355,20 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
     }
   }
 
+  // The three actions do NOT share one rule.
+  //
+  //   'open'  — the operator is here, usually mid-call. Nothing may stand
+  //             between them and taking the money; a deal missing planning
+  //             fields settles anyway and asks for the rest afterwards.
+  //   'copy' / 'wa' — the link is about to reach a customer with nobody
+  //             watching. This is the last cheap moment to complete the deal,
+  //             so incompleteness opens the completion dialog and the original
+  //             action resumes from it.
+  //
+  // Readiness itself is the SERVER's answer (deal.paymentLinkReadiness) — the
+  // required-field list is data, never re-implemented on a screen.
+  const UNATTENDED = new Set(['copy', 'wa']);
+
   function payAction(action) {
     if (totalMinor <= 0) return setMissingDialog({ action, kind: 'amount' });
     const needName = !contactName;
@@ -362,6 +379,46 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
       setDlgEdit({ name: false, phone: false, email: false });
       return setMissingDialog({ action, kind: 'details', needName, needPhone, needEmail });
     }
+    const readiness = deal.paymentLinkReadiness;
+    if (UNATTENDED.has(action) && readiness && !readiness.ready) {
+      setPlanForm({
+        tourDate: deal.tourDate || '',
+        tourTime: deal.tourTime || '',
+        participants: deal.participants ? String(deal.participants) : '',
+        tourLanguage: deal.tourLanguage || '',
+      });
+      return setMissingDialog({
+        action,
+        kind: 'planning',
+        missing: readiness.missing || [],
+        needsSlot: !!readiness.needsSlot,
+      });
+    }
+    runPayAction(action);
+  }
+
+  // Save the planning fields the operator filled here, then CONTINUE the action
+  // in the same user gesture — the clipboard and popup permissions both depend
+  // on that, so a "we'll resume for you later" design would silently fail.
+  async function savePlanningAndContinue() {
+    const { action } = missingDialog;
+    const patch = {};
+    if (planForm.tourDate) patch.tourDate = planForm.tourDate;
+    if (planForm.tourTime) patch.tourTime = planForm.tourTime;
+    if (planForm.participants) patch.participants = Number(planForm.participants);
+    if (planForm.tourLanguage) patch.tourLanguage = planForm.tourLanguage;
+    setPayBusy(true);
+    try {
+      if (Object.keys(patch).length) {
+        await api.deals.update(deal.id, patch);
+        onRefresh?.();
+      }
+    } catch {
+      flash('שמירת פרטי הסיור נכשלה — נסו שוב');
+      setPayBusy(false);
+      return;
+    }
+    setPayBusy(false);
     runPayAction(action);
   }
 
@@ -792,13 +849,28 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
       <Dialog
         open={dlg !== null}
         onClose={() => (payBusy ? null : setMissingDialog(null))}
-        title={dlg?.kind === 'amount' ? 'חסר מחיר לעסקה' : 'השלמת פרטי לקוח'}
+        title={
+          dlg?.kind === 'amount'
+            ? 'חסר מחיר לעסקה'
+            : dlg?.kind === 'planning'
+              ? 'השלמת פרטי הסיור לפני שליחת הקישור'
+              : 'השלמת פרטי לקוח'
+        }
         size={dlg?.kind === 'details' ? 'lg' : 'md'}
         footer={
           dlg?.kind === 'amount' ? (
             <>
               {dlgBtn('ביטול', () => setMissingDialog(null))}
               {dlgBtn('פתח בונה מחיר', () => { setMissingDialog(null); onOpenPriceBuilder(); }, { primary: true })}
+            </>
+          ) : dlg?.kind === 'planning' ? (
+            <>
+              {dlgBtn('ביטול', () => setMissingDialog(null), { disabled: payBusy })}
+              {/* The operator is never hard-blocked — an incomplete deal still
+                  settles, and the office is asked for the rest afterwards. */}
+              {dlgBtn(dlg.action === 'wa' ? 'שלח בכל זאת' : 'העתק בכל זאת',
+                () => runPayAction(dlg.action), { disabled: payBusy })}
+              {dlgBtn(payBusy ? 'שומר…' : 'שמור והמשך', savePlanningAndContinue, { primary: true, disabled: payBusy })}
             </>
           ) : (
             <>
@@ -815,6 +887,67 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
             קבעו מחיר לעסקה בבונה המחיר ונסו שוב.
           </p>
         )}
+        {dlg?.kind === 'planning' && (() => {
+          // Fields the operator can finish HERE (plain scalars). Anything
+          // selector-backed — product, variation, city — belongs to the deal's
+          // own tour card; duplicating those searchable selectors in a dialog
+          // would be a second, weaker copy of an existing premium control.
+          const INLINE = new Set(['tourDate', 'tourTime', 'participants', 'tourLanguage']);
+          const inline = (dlg.missing || []).filter((m) => INLINE.has(m.field));
+          const elsewhere = (dlg.missing || []).filter((m) => !INLINE.has(m.field));
+          return (
+            <div className="space-y-5 py-1">
+              <p className="text-sm text-gray-800">
+                הקישור הזה מגיע ללקוח בלי שאף אחד עוקב אחריו. אלה הפרטים שחסרים כדי
+                שהעסקה תהיה שלמה כשהתשלום ייכנס — זו ההזדמנות הזולה להשלים אותם.
+              </p>
+              {inline.length > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  {inline.some((m) => m.field === 'tourDate') && (
+                    <DateField label="תאריך הסיור" value={planForm.tourDate} clearable={false}
+                      onChange={(v) => setPlanForm((s) => ({ ...s, tourDate: v || '' }))} />
+                  )}
+                  {inline.some((m) => m.field === 'tourTime') && (
+                    <TimeField label="שעת הסיור" value={planForm.tourTime} clearable={false}
+                      onChange={(v) => setPlanForm((s) => ({ ...s, tourTime: v || '' }))} />
+                  )}
+                  {inline.some((m) => m.field === 'participants') && (
+                    <FieldBox label="כמות משתתפים">
+                      <input type="number" min="1" dir="ltr" className={DLG_FIELD}
+                        value={planForm.participants}
+                        onChange={(e) => setPlanForm((s) => ({ ...s, participants: e.target.value }))} />
+                    </FieldBox>
+                  )}
+                  {inline.some((m) => m.field === 'tourLanguage') && (
+                    <FieldBox label="שפת הסיור">
+                      <select className={DLG_FIELD + ' bg-white'} value={planForm.tourLanguage}
+                        onChange={(e) => setPlanForm((s) => ({ ...s, tourLanguage: e.target.value }))}>
+                        <option value="">בחרו שפה…</option>
+                        {TOUR_LANGS.map((l) => <option key={l.key} value={l.key}>{l.label}</option>)}
+                      </select>
+                    </FieldBox>
+                  )}
+                </div>
+              )}
+              {elsewhere.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <p className="text-[13px] text-amber-900">
+                    חסר גם: <span className="font-semibold">{elsewhere.map((m) => m.labelHe).join(', ')}</span> —
+                    את אלה משלימים בכרטיס "פרטי הסיור" בדיל.
+                  </p>
+                </div>
+              )}
+              {dlg.needsSlot && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <p className="text-[13px] text-amber-900">
+                    זהו דיל קבוצתי שעדיין לא שובץ לסיור. תשלום ייסגר כעסקה, אבל שום מקום
+                    לא ישוריין עד שייבחר סיור — המערכת לא תנחש אחד.
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {dlg?.kind === 'details' && (
           <div className="space-y-5 py-1">
             <p className="text-sm text-gray-800">

@@ -531,6 +531,14 @@ export const api = {
     // allowOverbook } for group deals joining a slot.
     completeTourSetup: (id, data = {}) =>
       tourMutation(request(`/api/deals/${id}/complete-tour-setup`, { method: 'POST', body: JSON.stringify(data) })),
+    // Answer the classification the system resolved when a payment closed the
+    // deal before anyone chose one. No body = confirm what was assumed;
+    // { activityType } = correct it. Clears the pending question either way.
+    confirmClassification: (id, data = {}) =>
+      request(`/api/deals/${id}/confirm-classification`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     addContact: (id, data) =>
       request(`/api/deals/${id}/contacts`, {
         method: 'POST',
