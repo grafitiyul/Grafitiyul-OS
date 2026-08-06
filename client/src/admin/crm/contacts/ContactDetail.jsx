@@ -118,6 +118,22 @@ export default function ContactDetail() {
   // RIGHT panel — the contact's static identity & relationships.
   const detailsPanel = (
     <div className="space-y-4">
+      {/* טופס הזמנה — FIRST in the panel, deliberately.
+          It was originally placed immediately above "דילים קודמים", which
+          satisfied the letter of the requirement and failed its point: the
+          identity form, the phones and the emails pushed it to ~900px down a
+          420px-wide scrolling column, so on a normal screen it was below the
+          fold and effectively invisible. Sending an agent their order form is
+          THE daily action on this page — it belongs where the eye lands, and
+          from the top it is still above the deals card by construction.
+          Renders for nobody else (canonical agency capability flag), so it
+          costs a non-agent contact nothing. Remounts with the memberships so
+          eligibility re-evaluates live, like the management section below. */}
+      <AgentOrderFormCard
+        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
+        contactId={id}
+      />
+
       <Section title="פרטי איש קשר">
         <div className="grid grid-cols-2 gap-3">
           <Input label="שם פרטי (עברית)" value={form.firstNameHe} onChange={(v) => set('firstNameHe', v)} />
@@ -170,17 +186,6 @@ export default function ContactDetail() {
         onRemove={(itemId) => api.contacts.removeEmail(itemId)}
         onReorder={(ids) => api.contacts.reorderEmails(id, ids)}
         onChange={refresh}
-      />
-
-      {/* טופס הזמנה — the agent's order form, one click away. Renders ONLY for
-          a contact who qualifies through the canonical agency capability flag,
-          and sits ABOVE the deals card because sending an agent their form is
-          the daily action; last year's deals are reference. Remounts with the
-          memberships so eligibility re-evaluates live, exactly like the
-          management section further down. */}
-      <AgentOrderFormCard
-        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
-        contactId={id}
       />
 
       {/* דילים קודמים — the contact's linked deals (canonical DealContact

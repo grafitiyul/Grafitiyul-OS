@@ -203,16 +203,29 @@ test('viewing the card performs no writes — it only reads', async () => {
 });
 
 // ── placement ───────────────────────────────────────────────────────────────
-// The card is required to sit ABOVE "דילים קודמים": sending an agent their
-// order form is the daily action, last year's deals are reference. Asserted
-// against the real page source so moving it is a failing test, not a silent
-// regression.
-test('the card is mounted above דילים קודמים on the Contact page', async () => {
+//
+// The card must be ABOVE "דילים קודמים" — and, the reason that rule exists,
+// actually VISIBLE. Merely satisfying "above the deals card" once put it at
+// ~900px down the right panel, behind the identity form, the phones and the
+// emails: present in the DOM, below the fold, and reported as shipped while
+// the operator could not see it. So the guard is now positional, not relative:
+// it must be the FIRST thing in the panel.
+test('the card is the FIRST section of the Contact right panel', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
-  const card = src.indexOf('<AgentOrderFormCard');
-  const deals = src.indexOf('<ContactDealsSection');
-  assert.ok(card > 0, 'the card is mounted on the Contact page');
-  assert.ok(deals > 0, 'the deals card is still there');
-  assert.ok(card < deals, 'טופס הזמנה renders before דילים קודמים');
+  const panel = src.indexOf('const detailsPanel');
+  const card = src.indexOf('<AgentOrderFormCard', panel);
+  const deals = src.indexOf('<ContactDealsSection', panel);
+  const identity = src.indexOf('<Section title="פרטי איש קשר"', panel);
+  const phones = src.indexOf('title="טלפונים"', panel);
+  assert.ok(panel > 0 && card > 0 && deals > 0 && identity > 0 && phones > 0);
+  assert.ok(card < identity, 'nothing may push טופס הזמנה below the fold — not even the identity form');
+  assert.ok(card < phones, 'nor the phones list');
+  assert.ok(card < deals, 'and it stays above דילים קודמים by construction');
+});
+
+test('the card is mounted exactly ONCE (no duplicate after the move)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
+  assert.equal(src.split('<AgentOrderFormCard').length - 1, 1);
 });
