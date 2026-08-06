@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import { readTaskDraft, writeTaskDraft, clearTaskDraft } from './taskDraftStore.js';
+import { readTaskDraft, writeTaskDraft, clearTaskDraft, taskDraftIsEmpty } from './taskDraftStore.js';
 import { PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
@@ -24,10 +24,12 @@ export default function TaskComposer({ dealId, onCreated }) {
   const [types, setTypes] = useState([]);
   const [users, setUsers] = useState([]);
   const [meId, setMeId] = useState('');
-  // The draft is the ONE deal-scoped unsaved workspace (taskDraftStore): this
-  // component unmounts on every composer-tab switch, so its state hydrates
-  // from the store and writes back through on every change. Cleared by save
-  // and by DealDetail when the Deal page closes / switches deal.
+  // The draft is the ONE deal-scoped unsaved workspace (taskDraftStore —
+  // localStorage, per deal, same engine as note drafts): this component
+  // unmounts on every composer-tab switch, so its state hydrates from the
+  // store and writes back through on every change. The draft survives deal
+  // switches, refresh and browser restarts; ONLY a successful save or the
+  // explicit "בטל טיוטה" clears it.
   const draftRef = useRef(readTaskDraft(dealId));
   const draft = draftRef.current;
   const [selectedTypeId, setSelectedTypeId] = useState(draft?.selectedTypeId || '');
@@ -43,6 +45,23 @@ export default function TaskComposer({ dealId, onCreated }) {
   useEffect(() => {
     writeTaskDraft(dealId, { selectedTypeId, text, dueDate, dueTime, dueTouched, priority, ownerUserId });
   }, [dealId, selectedTypeId, text, dueDate, dueTime, dueTouched, priority, ownerUserId]);
+
+  // Restored-draft indicator (the note composer's "טיוטה" pattern) + the
+  // explicit discard, which is the ONLY non-save way a draft is cleared.
+  const [restoredFromDraft, setRestoredFromDraft] = useState(() => !taskDraftIsEmpty(draftRef.current));
+  const draftDirty = !taskDraftIsEmpty({ text, dueTouched, priority });
+
+  function discardDraft() {
+    clearTaskDraft(dealId);
+    setRestoredFromDraft(false);
+    setText('');
+    setPriority('none');
+    setDueTouched(false);
+    const type = selectedType;
+    setDueDate(defaultDueDate(type));
+    setDueTime(type?.channel === 'whatsapp' ? type.defaultTime || '10:00' : type?.defaultTime || '');
+    setError(null);
+  }
 
   const selectedType = useMemo(
     () => types.find((t) => t.id === selectedTypeId) || null,
@@ -142,8 +161,10 @@ export default function TaskComposer({ dealId, onCreated }) {
       // Reset text but keep the type/owner for quick successive entry. The
       // saved task consumed the draft — the next one starts untouched again.
       clearTaskDraft(dealId);
+      setRestoredFromDraft(false);
       setText('');
       setDueTouched(false);
+      setPriority('none');
       onCreated?.();
     } catch (e) {
       // A failure to OPEN the conversation is a business problem (the contact
@@ -278,7 +299,29 @@ export default function TaskComposer({ dealId, onCreated }) {
 
       {error && <div className="text-[12.5px] text-red-600">שגיאה: {error}</div>}
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        {draftDirty ? (
+          <span className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium ${
+                restoredFromDraft ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200' : 'text-gray-400'
+              }`}
+              title="הטיוטה נשמרת אוטומטית לדיל הזה — גם אחרי רענון או מעבר לדיל אחר"
+            >
+              ● טיוטה שלא נשמרה
+            </span>
+            <button
+              type="button"
+              onClick={discardDraft}
+              disabled={saving}
+              className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-50"
+            >
+              בטל טיוטה
+            </button>
+          </span>
+        ) : (
+          <span />
+        )}
         <button
           type="button"
           onClick={submit}

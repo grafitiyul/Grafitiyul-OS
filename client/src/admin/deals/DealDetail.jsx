@@ -52,7 +52,6 @@ import DealCollectionCard from './DealCollectionCard.jsx';
 import DealFillersCard from './confirmation/DealFillersCard.jsx';
 import ConfirmationEmailModal from './confirmation/ConfirmationEmailModal.jsx';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
-import { clearTaskDraft } from './tasks/taskDraftStore.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
@@ -256,15 +255,6 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Pending Tour Update actions + the leave-with-pending confirmation target.
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
   const [leaveHref, setLeaveHref] = useState(null);
-
-  // The task-composer draft (taskDraftStore) is the deal's shared unsaved
-  // workspace: it survives every tab switch INSIDE the page, and dies exactly
-  // here — leaving the Deal page or navigating to another deal.
-  useEffect(() => {
-    const id = deal?.id;
-    if (!id) return undefined;
-    return () => clearTaskDraft(id);
-  }, [deal?.id]);
 
   // Monotonic request epoch — the STALE-RESPONSE guard. Every refresh (initial
   // load, deal→deal navigation, child onRefresh, realtime invalidation) claims

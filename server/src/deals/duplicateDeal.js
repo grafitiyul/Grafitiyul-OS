@@ -67,6 +67,8 @@ export const LINE_FIELDS = [
   'addonId',
   'quantity',
   'unitPriceMinor',
+  'discountPercent',
+  'discountFixedMinor',
   'vatMode',
   'vatRate',
   'active',

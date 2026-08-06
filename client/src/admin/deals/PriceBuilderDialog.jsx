@@ -41,6 +41,10 @@ function normalize(l) {
     refId: l.refId || null,
     quantity: l.quantity ?? 1,
     unitPriceMinor: l.unitPriceMinor ?? 0,
+    // Per-line discount INTENT — the line's own price is never modified; the
+    // resolved money is a synthetic line_discount row (server compose).
+    discountPercent: l.discountPercent ?? null,
+    discountFixedMinor: l.discountFixedMinor ?? null,
     // VAT via the ONE resolver's vocabulary: an existing line keeps its exact
     // meaning, a new line is born 'inherit' = follow the order's mode.
     ...duplicateLineVat(l),
@@ -216,16 +220,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               ? { mode: 'fixed', value: minorToInput(r.dealDiscountFixedMinor) }
               : { mode: 'percent', value: '' },
         );
+        // The summary section shows only when the deal actually carries one.
+        setShowDealDiscount(r?.dealDiscountPercent != null || r?.dealDiscountFixedMinor != null);
         // A migrated deal has no working version — the server answers with its
         // FROZEN imported version, read-only. The Builder shows the real
         // historical commercial record instead of a blank sheet, and cannot save
         // over it: the import stays evidence, not a live editable quote.
         setHistoricalMode(r?.readOnly ? { source: r.source, importedAt: r.importedAt, versionId: r.versionId } : null);
-        // The stored deal_discount line is the RESOLVED artifact of the summary
-        // row — it re-enters through the intent fields above (compose
-        // regenerates it), never as an editable list row.
+        // Stored deal_discount / line_discount rows are RESOLVED artifacts of
+        // their intents (the summary row / the target line's fields) — they
+        // re-enter through the intents (compose regenerates them), never as
+        // editable list rows.
         const saved = Array.isArray(r?.lines)
-          ? r.lines.map(normalize).filter((l) => r?.readOnly || l.sourceKind !== 'deal_discount')
+          ? r.lines
+              .map(normalize)
+              .filter((l) => r?.readOnly || (l.sourceKind !== 'deal_discount' && l.sourceKind !== 'line_discount'))
           : [];
         // Seed a default line ONLY for a brand-new working version. An existing
         // deal may legitimately have zero lines.
@@ -447,13 +456,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   }
 
   // ---- Line discounts -----------------------------------------------------
-  // A LINE discount is MATERIALIZED as a kind:'discount' line right under its
-  // target — the one canonical storage: it flows through composeBuilderLines'
-  // sign handling into totals, Deal.valueMinor, quotes, iCount rows and
-  // payments with no parallel math. A percentage is a creation-time calculator
-  // over the target line; the amount is frozen into the row (visible +
-  // editable). The DEAL-level discount is the summary row (dealDiscount state)
-  // — a live Builder property, resolved server-side on every recompute.
+  // A LINE discount is INTENT ON ITS TARGET LINE (discountPercent /
+  // discountFixedMinor — the line's own price is never modified, so removal
+  // restores it exactly). The server compose resolves the intent into a
+  // synthetic line_discount row directly under the target; save stores that
+  // row with the others so documents/iCount inherit it. Same architecture as
+  // the deal-level discount, one level down.
   const [discountFor, setDiscountFor] = useState(null); // <line id> | null
 
   // A line's builder-basis amount exactly as its row displays it: sign × unit
@@ -466,31 +474,59 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     return lineSign(l.kind) * (Number(unit) || 0) * qty;
   }
 
-  function applyDiscount({ amountMinor, label }) {
-    const row = normalize({ kind: 'discount', label, unitPriceMinor: amountMinor, quantity: 1 });
-    setLines((ls) => {
-      const idx = ls.findIndex((l) => l.id === discountFor);
-      return idx === -1
-        ? [...ls, row]
-        : [...ls.slice(0, idx + 1), row, ...ls.slice(idx + 1)];
+  function applyLineDiscount({ pct, fixedMinor }) {
+    updateLine(discountFor, {
+      discountPercent: pct || null,
+      discountFixedMinor: pct ? null : fixedMinor || null,
     });
     setDiscountFor(null);
+  }
+  function removeLineDiscount(id) {
+    updateLine(id, { discountPercent: null, discountFixedMinor: null });
   }
 
   const discountTarget = discountFor ? lines.find((l) => l.id === discountFor) : null;
   const discountBaseMinor = discountTarget ? lineAmountMinor(discountTarget) : 0;
 
-  // ---- Builder-level (⋯) actions ------------------------------------------
-  function focusDealDiscount() {
-    dealDiscountInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    setTimeout(() => dealDiscountInputRef.current?.focus(), 250);
-  }
-  // A blank discount row the operator prices by hand (renders as a free-text
-  // row with an editable label).
-  function addDiscountLine() {
-    const row = normalize({ kind: 'discount', label: 'הנחה', unitPriceMinor: 0 });
+  // ---- Commission (עמלה) --------------------------------------------------
+  // A commission is an ADDED CHARGE to the customer — a positive line (kind
+  // 'manual', sourceKind 'commission') that increases the total and appears on
+  // documents as a normal charge row. It is deliberately NOT discount-signed.
+  const [commissionOpen, setCommissionOpen] = useState(false);
+  // % base: the current signed builder-basis total (discounts included) —
+  // taken from the composed lines so engine-priced products count correctly.
+  const commissionBaseMinor = (computed?.lines || [])
+    .filter((l) => l.active !== false)
+    .reduce((s, l) => s + lineSign(l.kind) * (Number(l.unitPriceMinor) || 0) * (l.quantity || 0), 0);
+  function applyCommission({ pct, amountMinor }) {
+    const row = normalize({
+      kind: 'manual',
+      sourceKind: 'commission',
+      label: pct ? `עמלה ${pct}%` : 'עמלה',
+      unitPriceMinor: amountMinor,
+      quantity: 1,
+    });
     setLines((ls) => [...ls, row]);
-    setFreeRows((s) => new Set([...s, row.id]));
+    setCommissionOpen(false);
+  }
+
+  // ---- Builder-level (⋯) actions ------------------------------------------
+  // The deal-discount summary row is OPT-IN: hidden until the operator asks
+  // for it (or the deal already carries an intent — set on load).
+  const [showDealDiscount, setShowDealDiscount] = useState(false);
+  function openDealDiscount() {
+    setShowDealDiscount(true);
+    setTimeout(() => {
+      dealDiscountInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      dealDiscountInputRef.current?.focus();
+    }, 100);
+  }
+  // ✕ on the summary row: clears the intent (the synthetic row disappears on
+  // the next compose — totals restore) and hides the section. Idempotent with
+  // reopening: the row regenerates only from a non-empty intent.
+  function closeDealDiscount() {
+    setDealDiscount({ mode: 'percent', value: '' });
+    setShowDealDiscount(false);
   }
   // The explicit Builder-level "release the per-line VAT overrides" action —
   // deliberately an action here, never a silent side effect of the VAT switch.
@@ -498,6 +534,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setLines((ls) => ls.map((l) => ({ ...l, vatMode: 'inherit', vatRate: null })));
   }
   const hasLineVatOverrides = lines.some((l) => l.vatMode && l.vatMode !== 'inherit');
+  // "שליטה על כל שורה בנפרד" — pure UI state (never commercial data): shows/
+  // hides the per-row ⋮ menus. Turning it OFF hides controls only; existing
+  // overrides keep their always-visible row chips.
+  const [lineControls, setLineControls] = useState(false);
   function setFree(id, on) {
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   }
@@ -550,8 +590,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       // note/provenance/quantity; server-generated lines (product ensure, extra
       // participants, auto add-ons) enter state; stale ones disappear.
       const stateById = new Map(reqLines.map((l) => [l.id, l]));
-      // The synthetic deal_discount line is summary-row state, never a list row.
-      const next = (r?.lines || []).filter((rl) => rl.sourceKind !== 'deal_discount').map((rl) => {
+      // Synthetic discount rows are intent-derived, never list rows.
+      const next = (r?.lines || []).filter((rl) => rl.sourceKind !== 'deal_discount' && rl.sourceKind !== 'line_discount').map((rl) => {
         const existing = stateById.get(rl.id);
         if (existing) {
           if (!rl.sourceCardGroupId) return existing;
@@ -603,15 +643,18 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setSaving(true);
     setSaveError(null);
     try {
-      const toSave = lines.map((l) => {
+      // Materialize the RESOLVED discounts as stored lines alongside their
+      // intents (the summary row / target-line fields round-trip): each line's
+      // synthetic line_discount row is stored DIRECTLY UNDER it (document row
+      // order), the deal_discount row last. Compose regenerates them all on
+      // load, so stored rows and intents can never drift apart.
+      const toSave = [];
+      for (const l of lines) {
         const c = computedById.get(l.id);
-        if (l.kind === 'product' && !l.overridden && c) return { ...l, unitPriceMinor: c.unitPriceMinor };
-        return l;
-      });
-      // Materialize the RESOLVED deal discount as a stored line (the money
-      // artifact documents/iCount/payments read), alongside the intent fields
-      // below (the summary row's round-trip). Compose regenerates it on load,
-      // so the stored row and the intent can never drift apart.
+        toSave.push(l.kind === 'product' && !l.overridden && c ? { ...l, unitPriceMinor: c.unitPriceMinor } : l);
+        const ld = computedById.get(`${l.id}:discount`);
+        if (ld) toSave.push(normalize(ld));
+      }
       const ddLine = (computed?.lines || []).find((l) => l.sourceKind === 'deal_discount');
       if (ddLine) toSave.push(normalize(ddLine));
 
@@ -738,8 +781,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             <BuilderMenu
               disabled={!!historicalMode}
               hasLineVatOverrides={hasLineVatOverrides}
-              onDealDiscount={focusDealDiscount}
-              onAddDiscountLine={addDiscountLine}
+              lineControls={lineControls}
+              onDealDiscount={openDealDiscount}
+              onCommission={() => setCommissionOpen(true)}
+              onToggleLineControls={() => setLineControls((v) => !v)}
               onResetLineVat={resetLineVat}
             />
           </div>
@@ -769,19 +814,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                 <LineRow
                   line={line}
                   computed={computedById.get(line.id)}
+                  computedDiscount={computedById.get(`${line.id}:discount`)}
                   products={products}
                   addons={addons}
                   defaultProductId={ctx?.productId || null}
                   noteOpen={openNotes.has(line.id)}
                   free={freeRows.has(line.id)}
                   handle={handle}
-                  menuEnabled={!historicalMode}
+                  menuEnabled={lineControls && !historicalMode}
                   onChange={(patch) => updateLine(line.id, patch)}
                   onToggleNote={() => toggleNote(line.id)}
                   onRemove={() => removeLine(line.id)}
                   onSetFree={(on) => setFree(line.id, on)}
                   onPickProduct={(p) => pickProduct(line.id, p)}
                   onDiscount={() => setDiscountFor(line.id)}
+                  onRemoveDiscount={() => removeLineDiscount(line.id)}
                 />
               )}
             />
@@ -831,10 +878,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           </div>
           )}
 
-          {/* Summary. The Deal Discount is a PERMANENT Builder property here —
-              mode (% / ₪) + value, resolved server-side into the totals below
-              it: סכום ביניים shows the pre-discount base, מע״מ and סה"כ derive
-              from the discounted amounts. */}
+          {/* Summary. The Deal Discount section is OPT-IN (⋯ → "הוסף הנחה
+              לעסקה") — a clean Builder shows only סכום ביניים/מע״מ/סה"כ. When
+              present: mode (% / ₪) + value, resolved server-side; ✕ clears the
+              intent, restores the totals and hides the section. */}
           <div className="min-w-[21rem] space-y-2 text-[15px] pt-2">
             {(() => {
               const dd = (computed?.lines || []).find((l) => l.sourceKind === 'deal_discount') || null;
@@ -844,42 +891,53 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                     label="סכום ביניים"
                     minor={totals != null ? totals.netMinor - (dd?.netMinor || 0) : undefined}
                   />
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-2 text-gray-500">
-                      הנחה לעסקה
-                      <span className="flex rounded-md border border-gray-200 p-0.5 text-[11.5px] font-medium">
-                        {[{ k: 'percent', l: '%' }, { k: 'fixed', l: '₪' }].map((o) => (
-                          <button
-                            key={o.k}
-                            type="button"
-                            disabled={!!historicalMode}
-                            onClick={() => setDealDiscount((d) => (d.mode === o.k ? d : { mode: o.k, value: '' }))}
-                            className={`w-7 rounded px-1 py-0.5 ${
-                              dealDiscount.mode === o.k ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'
-                            }`}
-                          >
-                            {o.l}
-                          </button>
-                        ))}
+                  {showDealDiscount && (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 text-gray-500">
+                        <button
+                          type="button"
+                          onClick={closeDealDiscount}
+                          disabled={!!historicalMode}
+                          title="הסרת ההנחה מהעסקה"
+                          className="rounded p-0.5 text-gray-300 hover:bg-gray-100 hover:text-gray-600"
+                        >
+                          ✕
+                        </button>
+                        הנחה לעסקה
+                        <span className="flex rounded-md border border-gray-200 p-0.5 text-[11.5px] font-medium">
+                          {[{ k: 'percent', l: '%' }, { k: 'fixed', l: '₪' }].map((o) => (
+                            <button
+                              key={o.k}
+                              type="button"
+                              disabled={!!historicalMode}
+                              onClick={() => setDealDiscount((d) => (d.mode === o.k ? d : { mode: o.k, value: '' }))}
+                              className={`w-7 rounded px-1 py-0.5 ${
+                                dealDiscount.mode === o.k ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'
+                              }`}
+                            >
+                              {o.l}
+                            </button>
+                          ))}
+                        </span>
+                        <input
+                          ref={dealDiscountInputRef}
+                          value={dealDiscount.value}
+                          disabled={!!historicalMode}
+                          onChange={(e) =>
+                            setDealDiscount((d) => ({ ...d, value: e.target.value.replace(/[^0-9.]/g, '') }))
+                          }
+                          inputMode="decimal"
+                          dir="ltr"
+                          placeholder={dealDiscount.mode === 'percent' ? '0' : '0.00'}
+                          aria-label="הנחה לעסקה"
+                          className="h-8 w-20 rounded-md border border-gray-200 px-2 text-left text-[13.5px] focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50"
+                        />
                       </span>
-                      <input
-                        ref={dealDiscountInputRef}
-                        value={dealDiscount.value}
-                        disabled={!!historicalMode}
-                        onChange={(e) =>
-                          setDealDiscount((d) => ({ ...d, value: e.target.value.replace(/[^0-9.]/g, '') }))
-                        }
-                        inputMode="decimal"
-                        dir="ltr"
-                        placeholder={dealDiscount.mode === 'percent' ? '0' : '0.00'}
-                        aria-label="הנחה לעסקה"
-                        className="h-8 w-20 rounded-md border border-gray-200 px-2 text-left text-[13.5px] focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50"
-                      />
-                    </span>
-                    <span dir="ltr" className={`tabular-nums ${dd ? 'font-medium text-red-600' : 'text-gray-300'}`}>
-                      {dd ? formatMinor(dd.netMinor) : '—'}
-                    </span>
-                  </div>
+                      <span dir="ltr" className={`tabular-nums ${dd ? 'font-medium text-red-600' : 'text-gray-300'}`}>
+                        {dd ? formatMinor(dd.netMinor) : '—'}
+                      </span>
+                    </div>
+                  )}
                   <TotalRow label={`מע״מ${vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={totals?.vatMinor} />
                   <div className="border-t border-gray-100 pt-2">
                     <TotalRow label='סה"כ' minor={totals?.grossMinor} strong />
@@ -895,8 +953,16 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         open={!!discountFor}
         targetLabel={discountTarget?.label || ''}
         baseMinor={discountBaseMinor}
-        onApply={applyDiscount}
+        initialPercent={discountTarget?.discountPercent ?? null}
+        initialFixedMinor={discountTarget?.discountFixedMinor ?? null}
+        onApply={applyLineDiscount}
         onClose={() => setDiscountFor(null)}
+      />
+      <CommissionDialog
+        open={commissionOpen}
+        baseMinor={commissionBaseMinor}
+        onApply={applyCommission}
+        onClose={() => setCommissionOpen(false)}
       />
     </>
   );
@@ -954,7 +1020,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
 const FIELD = 'w-full h-10 rounded-md border border-gray-300 px-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
 
-function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, menuEnabled, onChange, onToggleNote, onRemove, onSetFree, onPickProduct, onDiscount }) {
+function LineRow({ line, computed, computedDiscount, products, addons, defaultProductId, noteOpen, free, handle, menuEnabled, onChange, onToggleNote, onRemove, onSetFree, onPickProduct, onDiscount, onRemoveDiscount }) {
   const isProduct = line.kind === 'product';
   const isAddon = line.kind === 'addon';
   const disabled = !line.active;
@@ -969,6 +1035,14 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
   // Deliberate per-line VAT override (the ⋮ menu) — visibly badged so it can
   // never disagree silently with the order's toolbar mode.
   const vatOverride = line.vatMode && line.vatMode !== 'inherit' ? line.vatMode : null;
+  // Per-line discount intent — ALWAYS badged on the row (even when the ⋮
+  // controls are hidden), so differing pricing is never silently invisible.
+  const hasDiscount = line.discountPercent != null || line.discountFixedMinor != null;
+  const discountChip = hasDiscount
+    ? line.discountPercent != null
+      ? `הנחה ${line.discountPercent}%${computedDiscount ? ` (${formatMinor(computedDiscount.netMinor)})` : ''}`
+      : `הנחה ${formatMinor(-(Number(line.discountFixedMinor) || 0))}`
+    : null;
 
   // Engine-GENERATED computed lines (the "משתתפים נוספים" breakdown line, an
   // auto שבת/חג surcharge) are NOT catalog items and must NEVER become editable
@@ -1119,6 +1193,9 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
           {vatOverride && (
             <div className="text-[10.5px] font-medium text-blue-600">מע״מ: {lineVatLabel(vatOverride)}</div>
           )}
+          {discountChip && (
+            <div dir="rtl" className="text-[10.5px] font-medium text-red-600">{discountChip}</div>
+          )}
         </div>
 
         {/* Left: row menu + note toggle + delete (every row is deletable) */}
@@ -1127,6 +1204,7 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
           generated={generated}
           enabled={menuEnabled}
           onDiscount={onDiscount}
+          onRemoveDiscount={onRemoveDiscount}
           onVat={(mode) => onChange(mode === 'inherit' ? { vatMode: 'inherit', vatRate: null } : { vatMode: mode })}
         />
         <NoteIcon open={noteOpen} onClick={onToggleNote} />
@@ -1193,9 +1271,10 @@ function VatButton({ mode, rate, onPick }) {
 }
 
 // The Builder's "⋯" toolbar menu — the Builder-level actions (portal-anchored,
-// same pattern as the VAT menu beside it): jump to the summary Deal-Discount
-// row, add a manual discount line, release every per-line VAT override.
-function BuilderMenu({ disabled, hasLineVatOverrides, onDealDiscount, onAddDiscountLine, onResetLineVat }) {
+// same pattern as the VAT menu beside it): reveal the opt-in Deal-Discount
+// section, add a commission line, toggle the per-row control menus, release
+// every per-line VAT override.
+function BuilderMenu({ disabled, hasLineVatOverrides, lineControls, onDealDiscount, onCommission, onToggleLineControls, onResetLineVat }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const item = (label, onClick, itemDisabled = false) => (
@@ -1220,24 +1299,37 @@ function BuilderMenu({ disabled, hasLineVatOverrides, onDealDiscount, onAddDisco
       >
         ⋯
       </button>
-      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={248} align="start">
-        {item('הנחה על כל העסקה…', onDealDiscount)}
-        {item('הוסף שורת הנחה', onAddDiscountLine)}
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={256} align="start">
+        {item('הוסף הנחה לעסקה', onDealDiscount)}
+        {item('עמלה…', onCommission)}
         <div className="border-t border-gray-100" />
+        {/* Pure UI toggle — showing/hiding the row ⋮ menus never touches data. */}
+        {item(`${lineControls ? '✓ ' : ''}שליטה על כל שורה בנפרד`, onToggleLineControls)}
         {item('אפס עקיפות מע״מ בשורות', onResetLineVat, !hasLineVatOverrides)}
       </AnchoredMenu>
     </div>
   );
 }
 
-// Per-row "⋮" menu: a line discount + the line's own VAT mode. Generated
-// (engine-rebuilt) rows hide the VAT override — regeneration would silently
-// drop it; their VAT follows the order/card like the calculation that made them.
-function LineKebab({ line, generated, enabled, onDiscount, onVat }) {
+// Per-row "⋮" menu (shown only in "שליטה על כל שורה בנפרד" mode): line
+// discount add/edit/remove + the line's own VAT mode. Generated (engine-
+// rebuilt) rows hide the VAT override — regeneration would silently drop it;
+// their VAT follows the order/card like the calculation that made them.
+function LineKebab({ line, generated, enabled, onDiscount, onRemoveDiscount, onVat }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const current = line.vatMode || 'inherit';
+  const hasDiscount = line.discountPercent != null || line.discountFixedMinor != null;
   if (!enabled) return <span className="w-9 shrink-0" aria-hidden />;
+  const item = (label, onClick, cls = 'text-gray-700') => (
+    <button
+      type="button"
+      onClick={() => { setOpen(false); onClick(); }}
+      className={`w-full text-right px-3 py-2 text-sm hover:bg-gray-50 ${cls}`}
+    >
+      {label}
+    </button>
+  );
   return (
     <div className="w-9 shrink-0 flex justify-center">
       <button
@@ -1245,19 +1337,16 @@ function LineKebab({ line, generated, enabled, onDiscount, onVat }) {
         type="button"
         title="פעולות שורה"
         onClick={() => setOpen((v) => !v)}
-        className={`p-1 rounded text-lg leading-none ${current !== 'inherit' ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
+        className={`p-1 rounded text-lg leading-none ${current !== 'inherit' || hasDiscount ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
       >
         ⋮
       </button>
-      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={224} align="start">
+      <AnchoredMenu anchorRef={ref} open={open} onClose={() => setOpen(false)} width={232} align="start">
         {line.kind !== 'discount' && line.kind !== 'credit' && (
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onDiscount(); }}
-            className="w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-          >
-            הנחה על שורה זו…
-          </button>
+          <>
+            {item(hasDiscount ? 'עריכת ההנחה על השורה…' : 'הנחה על שורה זו…', onDiscount)}
+            {hasDiscount && item('הסר הנחה מהשורה', onRemoveDiscount, 'text-red-600')}
+          </>
         )}
         {!generated && (
           <>
@@ -1281,16 +1370,62 @@ function LineKebab({ line, generated, enabled, onDiscount, onVat }) {
   );
 }
 
-// Percentage / fixed-amount LINE-discount entry (the row ⋮ menu). The amount is
-// computed here once (a creation-time calculator over the target line) and
-// materialized by the caller as a kind:'discount' line — the canonical math
-// never changes. The DEAL-level discount is the live summary row, not this.
-function DiscountDialog({ open, targetLabel, baseMinor, onApply, onClose }) {
+// Shared % / ₪ entry body for the two adjustment dialogs.
+function PercentAmountFields({ mode, setMode, value, setValue, baseMinor, previewLabel, previewMinor, negative }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex rounded-lg border border-gray-200 p-0.5 text-sm">
+        {[{ k: 'percent', l: 'אחוז (%)' }, { k: 'fixed', l: 'סכום (₪)' }].map((o) => (
+          <button
+            key={o.k}
+            type="button"
+            onClick={() => { setMode(o.k); setValue(''); }}
+            className={`flex-1 rounded-md px-3 py-1.5 font-medium ${mode === o.k ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            {o.l}
+          </button>
+        ))}
+      </div>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ''))}
+        autoFocus
+        inputMode="decimal"
+        dir="ltr"
+        placeholder={mode === 'percent' ? 'למשל 10' : 'למשל 500'}
+        className="w-full h-10 rounded-lg border border-gray-300 px-3 text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-200"
+      />
+      <div className="rounded-lg bg-gray-50 px-3 py-2 text-[12.5px] text-gray-600 space-y-0.5">
+        {mode === 'percent' && (
+          <div className="flex justify-between">
+            <span>בסיס החישוב</span>
+            <span dir="ltr" className="tabular-nums">{formatMinor(baseMinor)}</span>
+          </div>
+        )}
+        <div className="flex justify-between font-medium text-gray-800">
+          <span>{previewLabel}</span>
+          <span dir="ltr" className="tabular-nums">
+            {previewMinor > 0 ? `${negative ? '−' : '+'}${formatMinor(previewMinor)}` : '—'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// LINE-discount intent editor (the row ⋮ menu): sets discountPercent /
+// discountFixedMinor ON the target line. The line's own price is untouched —
+// the server compose materializes the resolved discount row under it, and
+// "הסר הנחה מהשורה" clears the intent to restore the original exactly.
+function DiscountDialog({ open, targetLabel, baseMinor, initialPercent, initialFixedMinor, onApply, onClose }) {
   const [mode, setMode] = useState('percent'); // 'percent' | 'fixed'
   const [value, setValue] = useState('');
   useEffect(() => {
-    if (open) { setMode('percent'); setValue(''); }
-  }, [open]);
+    if (!open) return;
+    if (initialPercent != null) { setMode('percent'); setValue(String(initialPercent)); }
+    else if (initialFixedMinor != null) { setMode('fixed'); setValue(minorToInput(initialFixedMinor)); }
+    else { setMode('percent'); setValue(''); }
+  }, [open, initialPercent, initialFixedMinor]);
   const pct = parseFloat(value);
   const amountMinor =
     mode === 'percent'
@@ -1298,12 +1433,7 @@ function DiscountDialog({ open, targetLabel, baseMinor, onApply, onClose }) {
         ? Math.round((baseMinor * pct) / 100)
         : 0
       : toMinor(value) ?? 0;
-  const valid = amountMinor > 0;
-  function apply() {
-    if (!valid) return;
-    const label = `הנחה — ${targetLabel || 'שורה'}${mode === 'percent' ? ` (${value}%)` : ''}`;
-    onApply({ amountMinor, label });
-  }
+  const valid = amountMinor > 0 && (mode !== 'percent' || pct <= 100);
   return (
     <Dialog
       open={open}
@@ -1317,7 +1447,7 @@ function DiscountDialog({ open, targetLabel, baseMinor, onApply, onClose }) {
           </button>
           <button
             type="button"
-            onClick={apply}
+            onClick={() => valid && onApply(mode === 'percent' ? { pct } : { fixedMinor: amountMinor })}
             disabled={!valid}
             className="bg-blue-600 text-white text-sm font-semibold rounded-md px-5 py-1.5 disabled:opacity-50"
           >
@@ -1327,41 +1457,76 @@ function DiscountDialog({ open, targetLabel, baseMinor, onApply, onClose }) {
       }
     >
       <div className="space-y-3">
-        <div className="flex rounded-lg border border-gray-200 p-0.5 text-sm">
-          {[{ k: 'percent', l: 'אחוז (%)' }, { k: 'fixed', l: 'סכום (₪)' }].map((o) => (
-            <button
-              key={o.k}
-              type="button"
-              onClick={() => { setMode(o.k); setValue(''); }}
-              className={`flex-1 rounded-md px-3 py-1.5 font-medium ${mode === o.k ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
-            >
-              {o.l}
-            </button>
-          ))}
-        </div>
-        <input
+        <PercentAmountFields
+          mode={mode}
+          setMode={setMode}
           value={value}
-          onChange={(e) => setValue(e.target.value.replace(/[^0-9.]/g, ''))}
-          autoFocus
-          inputMode="decimal"
-          dir="ltr"
-          placeholder={mode === 'percent' ? 'למשל 10' : 'למשל 500'}
-          className="w-full h-10 rounded-lg border border-gray-300 px-3 text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-200"
+          setValue={setValue}
+          baseMinor={baseMinor}
+          previewLabel="סכום ההנחה"
+          previewMinor={amountMinor}
+          negative
         />
-        <div className="rounded-lg bg-gray-50 px-3 py-2 text-[12.5px] text-gray-600 space-y-0.5">
-          {mode === 'percent' && (
-            <div className="flex justify-between">
-              <span>בסיס החישוב</span>
-              <span dir="ltr" className="tabular-nums">{formatMinor(baseMinor)}</span>
-            </div>
-          )}
-          <div className="flex justify-between font-medium text-gray-800">
-            <span>סכום ההנחה</span>
-            <span dir="ltr" className="tabular-nums">{valid ? `−${formatMinor(amountMinor)}` : '—'}</span>
-          </div>
-        </div>
         <p className="text-[11.5px] leading-relaxed text-gray-400">
-          ההנחה נוספת כשורת הנחה רגילה בבונה — גלויה, ניתנת לעריכה ולמחיקה, ומחושבת בדיוק כמו כל שורה אחרת.
+          מחיר השורה המקורי אינו משתנה — ההנחה מסומנת על השורה וניתן להסירה בכל רגע (⋮ → הסר הנחה מהשורה).
+        </p>
+      </div>
+    </Dialog>
+  );
+}
+
+// Commission (עמלה) — an ADDED CHARGE to the customer: a positive line that
+// INCREASES the total and appears on documents as a normal charge row (the
+// opposite sign of a discount, on purpose). A percentage is computed here once
+// over the current builder total and frozen into the row.
+function CommissionDialog({ open, baseMinor, onApply, onClose }) {
+  const [mode, setMode] = useState('percent');
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    if (open) { setMode('percent'); setValue(''); }
+  }, [open]);
+  const pct = parseFloat(value);
+  const amountMinor =
+    mode === 'percent'
+      ? Number.isFinite(pct) && pct > 0
+        ? Math.round((baseMinor * pct) / 100)
+        : 0
+      : toMinor(value) ?? 0;
+  const valid = amountMinor > 0;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="עמלה"
+      size="sm"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
+            ביטול
+          </button>
+          <button
+            type="button"
+            onClick={() => valid && onApply(mode === 'percent' ? { pct, amountMinor } : { amountMinor })}
+            disabled={!valid}
+            className="bg-blue-600 text-white text-sm font-semibold rounded-md px-5 py-1.5 disabled:opacity-50"
+          >
+            הוסף עמלה
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <PercentAmountFields
+          mode={mode}
+          setMode={setMode}
+          value={value}
+          setValue={setValue}
+          baseMinor={baseMinor}
+          previewLabel="סכום העמלה"
+          previewMinor={amountMinor}
+        />
+        <p className="text-[11.5px] leading-relaxed text-gray-400">
+          העמלה נוספת כשורת חיוב רגילה — היא מגדילה את הסכום לתשלום ומופיעה במסמכים ללקוח.
         </p>
       </div>
     </Dialog>

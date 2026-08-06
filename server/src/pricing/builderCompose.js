@@ -29,11 +29,11 @@ export function composeBuilderLines({
 }) {
   // Compose every line into net/vat/gross. The product line uses the engine's
   // own split when resolved & not overridden; otherwise splitVat the line amount.
-  // Any incoming deal_discount line is dropped first — it is OUTPUT of this
-  // function (regenerated fresh below), never input; keeping it would
-  // double-count the discount when a stored line round-trips.
+  // Incoming deal_discount / line_discount rows are dropped first — they are
+  // OUTPUT of this function (regenerated fresh from their intents below),
+  // never input; keeping them would double-count when a stored row round-trips.
   let lines = (inputLines || [])
-    .filter((ln) => ln.sourceKind !== 'deal_discount')
+    .filter((ln) => ln.sourceKind !== 'deal_discount' && ln.sourceKind !== 'line_discount')
     .map((ln) => {
     const kind = ln.kind || 'manual';
     const isProduct = kind === 'product';
@@ -92,6 +92,10 @@ export function composeBuilderLines({
       overridden: !!ln.overridden,
       quantity,
       unitPriceMinor,
+      // Per-line discount INTENT — echoed for the client round-trip; the
+      // resolved money row is synthesized below, the line itself never changes.
+      discountPercent: ln.discountPercent != null ? Number(ln.discountPercent) : null,
+      discountFixedMinor: ln.discountFixedMinor != null ? Number(ln.discountFixedMinor) : null,
       vatMode: ln.vatMode || 'inherit',
       vatRate: ln.vatRate != null ? ln.vatRate : null,
       effectiveVatMode: effMode,
@@ -121,6 +125,51 @@ export function composeBuilderLines({
   // Canonical note rebuild — ONLY when the caller is (re)generating lines.
   // Plain recomputes (typing in the builder) echo user notes untouched.
   if (applyCardNotes) lines = applyCardFirstLineNotes(lines, noteByCard);
+
+  // Per-LINE discount resolution: a line carrying an intent gets its resolved
+  // kind:'discount' row synthesized DIRECTLY UNDER it (document row order),
+  // split with the line's own effective VAT so proportions always hold. The
+  // target line's price is untouched — clearing the intent restores it exactly.
+  lines = lines.flatMap((l) => {
+    const pct = Number(l.discountPercent);
+    const fixed = Number(l.discountFixedMinor);
+    const usePct = Number.isFinite(pct) && pct > 0;
+    const base = SIGN(l.kind) * l.unitPriceMinor * l.quantity;
+    const amount = usePct
+      ? Math.round((base * pct) / 100)
+      : Number.isFinite(fixed) && fixed > 0
+        ? Math.round(fixed)
+        : 0;
+    if (!l.active || amount <= 0) return [l];
+    const s = splitVat(-amount, l.effectiveVatMode, l.effectiveVatRate);
+    return [
+      l,
+      {
+        id: `${l.id}:discount`,
+        kind: 'discount',
+        label: `הנחה — ${l.label || 'שורה'}${usePct ? ` (${pct}%)` : ''}`,
+        refId: null,
+        note: '',
+        active: true,
+        overridden: false,
+        quantity: 1,
+        unitPriceMinor: amount,
+        discountPercent: null,
+        discountFixedMinor: null,
+        vatMode: l.vatMode || 'inherit',
+        vatRate: l.vatRate != null ? l.vatRate : null,
+        effectiveVatMode: l.effectiveVatMode,
+        effectiveVatRate: l.effectiveVatRate,
+        netMinor: s.netMinor,
+        vatMinor: s.vatMinor,
+        grossMinor: s.grossMinor,
+        sourceKind: 'line_discount',
+        sourceCardGroupId: null,
+        ticketTypeId: null,
+        pinnedCardGroupId: null,
+      },
+    ];
+  });
 
   // Deal-level discount resolution. Percent applies to the SIGNED builder-basis
   // sum of the active lines (engine-resolved unit prices included), so its
@@ -154,6 +203,8 @@ export function composeBuilderLines({
         overridden: false,
         quantity: 1,
         unitPriceMinor: amount,
+        discountPercent: null,
+        discountFixedMinor: null,
         vatMode: 'inherit',
         vatRate: null,
         effectiveVatMode: effMode,

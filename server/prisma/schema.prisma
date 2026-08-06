@@ -2410,6 +2410,15 @@ model QuoteLine {
   addonId           String?
   quantity          Int             @default(1)
   unitPriceMinor    BigInt          @default(0)
+  // Per-LINE discount — the operator's INTENT (percent of the line amount OR a
+  // fixed builder-basis amount; at most one set). The line's own price stays
+  // UNTOUCHED (fully recoverable); the resolved MONEY is a synthetic
+  // kind:'discount' row (sourceKind='line_discount') that
+  // pricing/builderCompose.js regenerates right under this line on every
+  // composition and the save path stores with the others — documents/iCount
+  // read stored rows as ever. Clearing the intent removes the discount.
+  discountPercent    Float?
+  discountFixedMinor BigInt?
   vatMode           String          @default("inherit") // inherit | included | excluded | exempt
   vatRate           Int?
   active            Boolean         @default(true)

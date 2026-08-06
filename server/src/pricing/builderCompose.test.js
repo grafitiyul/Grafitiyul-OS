@@ -380,3 +380,57 @@ test('no intent (or a stored line without intent) → no synthetic line', () => 
   assert.equal(lines.some((l) => l.sourceKind === 'deal_discount'), false);
   assert.equal(totals.grossMinor, 100000);
 });
+
+// ── Per-line discount (intent ON the target line) ───────────────────────────
+
+test('line discount (percent): synthetic row directly under its target, target price untouched', () => {
+  const { lines, totals } = compose(
+    [manual('a', 100000, { discountPercent: 10 }), manual('b', 50000)],
+    { productResolution: { ok: false, error: 'no_product' } },
+  );
+  assert.deepEqual(lines.map((l) => l.id), ['a', 'a:discount', 'b']);
+  const dd = lines[1];
+  assert.equal(dd.kind, 'discount');
+  assert.equal(dd.sourceKind, 'line_discount');
+  assert.equal(dd.unitPriceMinor, 10000);
+  assert.equal(dd.grossMinor, -10000);
+  assert.equal(lines[0].unitPriceMinor, 100000); // original recoverable
+  assert.equal(lines[0].discountPercent, 10); // intent echoed
+  assert.equal(totals.grossMinor, 100000 - 10000 + 50000);
+});
+
+test('line discount (fixed) follows the TARGET line VAT override', () => {
+  const { lines } = compose(
+    [manual('a', 100000, { vatMode: 'exempt', discountFixedMinor: 20000 })],
+    { productResolution: { ok: false, error: 'no_product' }, vatDefault: { mode: 'excluded', rate: 18 } },
+  );
+  const dd = lines.find((l) => l.sourceKind === 'line_discount');
+  assert.equal(dd.effectiveVatMode, 'exempt');
+  assert.equal(dd.vatMinor, 0);
+  assert.equal(dd.netMinor, -20000);
+});
+
+test('clearing the intent removes the row; inactive target produces none; stored rows never double', () => {
+  const stale = manual('a:discount', 9999, { kind: 'discount', sourceKind: 'line_discount' });
+  const { lines: cleared } = compose([manual('a', 100000), stale], {
+    productResolution: { ok: false, error: 'no_product' },
+  });
+  assert.equal(cleared.some((l) => l.sourceKind === 'line_discount'), false);
+
+  const { lines: off, totals } = compose(
+    [manual('a', 100000, { discountPercent: 10, active: false })],
+    { productResolution: { ok: false, error: 'no_product' } },
+  );
+  assert.equal(off.some((l) => l.sourceKind === 'line_discount'), false);
+  assert.equal(totals.grossMinor, 0);
+});
+
+test('line discounts participate in the deal-discount base', () => {
+  const { lines } = compose(
+    [manual('a', 100000, { discountPercent: 10 })],
+    { productResolution: { ok: false, error: 'no_product' }, dealDiscount: { percent: 10 } },
+  );
+  const dd = lines.find((l) => l.sourceKind === 'deal_discount');
+  // base = 100,000 − 10,000 (the line discount) → 10% = 9,000
+  assert.equal(dd.unitPriceMinor, 9000);
+});

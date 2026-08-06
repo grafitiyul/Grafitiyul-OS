@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
+import { readDraftMap, writeDraftEntry } from '../../../lib/localDrafts.js';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
 import NoteCard from './NoteCard.jsx';
@@ -87,15 +88,12 @@ const HISTORY_ONLY_SUBJECTS = new Set(['tour_event']);
 // Local note-draft persistence (Pipedrive-style) — a half-written note must
 // survive closing a drawer, leaving the page, or returning days later. Scoped
 // by subjectType:subjectId so drafts never leak between deals/contacts/orgs.
-// localStorage only (V1); saving or cancelling the note clears it.
+// Storage engine is the shared lib/localDrafts.js (same one the task drafts
+// use); saving or cancelling the note clears it.
 const NOTE_DRAFTS_KEY = 'gos-note-drafts';
 
 function readNoteDrafts() {
-  try {
-    return JSON.parse(localStorage.getItem(NOTE_DRAFTS_KEY) || '{}') || {};
-  } catch {
-    return {};
-  }
+  return readDraftMap(NOTE_DRAFTS_KEY);
 }
 
 // RichEditor "empty" can be '<p></p>' / whitespace-only markup — strip tags to
@@ -105,17 +103,7 @@ function noteIsEmpty(html) {
 }
 
 function writeNoteDraft(key, html) {
-  try {
-    const map = readNoteDrafts();
-    if (noteIsEmpty(html)) delete map[key];
-    else map[key] = html;
-    // Safety valve: never let the map grow unbounded.
-    const keys = Object.keys(map);
-    if (keys.length > 200) for (const k of keys.slice(0, keys.length - 200)) delete map[k];
-    localStorage.setItem(NOTE_DRAFTS_KEY, JSON.stringify(map));
-  } catch {
-    /* storage unavailable — non-fatal */
-  }
+  writeDraftEntry(NOTE_DRAFTS_KEY, key, noteIsEmpty(html) ? null : html);
 }
 
 // `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
@@ -470,7 +458,9 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           ) : tab === 'email' && (isDeal || subjectType === 'contact') ? (
             <EmailPanel subjectType={subjectType} subjectId={subjectId} />
           ) : tab === 'task' && isDeal ? (
-            <TaskComposer dealId={subjectId} onCreated={onTaskChanged} />
+            // Keyed by deal: a deal→deal navigation must remount the composer
+            // so it rehydrates THAT deal's draft (state never leaks across).
+            <TaskComposer key={subjectId} dealId={subjectId} onCreated={onTaskChanged} />
           ) : tab === 'file' && isDeal ? (
             <DealFilesTab dealId={subjectId} onChanged={refresh} />
           ) : (
