@@ -9,8 +9,11 @@ import { produceQuoteDocument } from './produce.js';
 // Contract: V2's snapshot shows the temp text; the DRAFT is never mutated by
 // produce; V3 goes back to the persistent text.
 
+// Every quote is issued TO AN ORGANIZATION (server invariant) — the baseline
+// fixture is a properly linked business deal.
 const DEAL = {
   id: 'deal_1',
+  organizationId: 'org_1',
   currency: 'ILS',
   valueMinor: 540000,
   participants: 25,
@@ -244,6 +247,67 @@ test('produce: product switch under an override — reset reveals the empty new 
   assert.equal(programOf(v3.doc.renderModelSnapshot), null, 'new source is genuinely empty');
   assert.equal(programOf(v1.doc.renderModelSnapshot), '<p>סיור גרפיטי כולל התנסות</p>', 'v1 snapshot immutable');
   assert.equal(programOf(v2.doc.renderModelSnapshot), '<p>נוסח מותאם</p>', 'v2 snapshot immutable');
+});
+
+// ── BUSINESS INVARIANT: no organization → no quote ─────────────────────────
+// The refusal must be total (this is the ONE creation path for every quote:
+// first version, alternate offer, revision, any API caller) and it must be
+// clean — a refused generation writes nothing at all.
+test('produce: a deal with no organization cannot generate a quote', async () => {
+  const draft = {
+    id: 'qd_draft', dealId: 'deal_1', quoteVersionId: 'ver_1', offerId: 'off_1',
+    status: 'draft', language: 'he', displayProductName: null,
+    compositionDraft: null, overrideState: null,
+  };
+  const dealBox = { value: { ...DEAL, organizationId: null } };
+  const client = fakeClient({ draft, dealBox });
+
+  const r = await produceQuoteDocument(client, 'qd_draft');
+  assert.equal(r.error, 'organization_required', 'the coded refusal the client turns into the dialog');
+  assert.equal(r.doc, undefined, 'no document is returned');
+  assert.equal(client.state.docs.length, 1, 'NO quote document was created');
+  assert.deepEqual(client.state.updates, [], 'nothing was written — the draft is untouched');
+
+  // Linking an organization (the completion dialog) resumes the SAME action.
+  dealBox.value = { ...DEAL, organizationId: 'org_9' };
+  const ok = await produceQuoteDocument(client, 'qd_draft');
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.doc.versionNo, 1, 'the first version is produced right after the link');
+  assert.equal(client.state.docs.length, 2, 'exactly ONE quote was created by the resumed action');
+});
+
+test('produce: the invariant runs before the legacy-offer adoption (a refusal writes nothing)', async () => {
+  // A legacy draft with no offerId — the path that WOULD write an adoption
+  // update on the draft. A missing organization must stop it before that.
+  const draft = {
+    id: 'qd_legacy', dealId: 'deal_1', quoteVersionId: 'ver_1', offerId: null,
+    status: 'draft', language: 'he', displayProductName: null,
+    compositionDraft: null, overrideState: null,
+  };
+  const client = fakeClient({ draft, dealBox: { value: { ...DEAL, organizationId: null } } });
+
+  const r = await produceQuoteDocument(client, 'qd_legacy');
+  assert.equal(r.error, 'organization_required');
+  assert.deepEqual(client.state.updates, [], 'the offer adoption never ran');
+  assert.equal(draft.offerId, null, 'the draft is byte-identical to before');
+});
+
+test('produce: ALTERNATE / revised versions obey the same invariant', async () => {
+  const mk = (id, offerId) => ({
+    id, dealId: 'deal_1', quoteVersionId: `ver_${offerId}`, offerId,
+    status: 'draft', language: 'he', displayProductName: null,
+    compositionDraft: null, overrideState: null,
+  });
+  const dealBox = { value: { ...DEAL, organizationId: 'org_1' } };
+  const client = fakeClient({ drafts: [mk('qd_a', 'off_1'), mk('qd_b', 'off_2')], dealBox });
+
+  // v1 on the primary offer succeeds while the org is linked.
+  assert.equal((await produceQuoteDocument(client, 'qd_a')).doc.versionNo, 1);
+
+  // The organization is later unlinked → every further path refuses.
+  dealBox.value = { ...DEAL, organizationId: null };
+  assert.equal((await produceQuoteDocument(client, 'qd_a')).error, 'organization_required', 'revision refused');
+  assert.equal((await produceQuoteDocument(client, 'qd_b')).error, 'organization_required', 'parallel offer refused');
 });
 
 test('produce: temp-only override → reset (layer dropped) → source content generated', async () => {

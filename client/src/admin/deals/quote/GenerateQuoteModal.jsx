@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Dialog from '../../common/Dialog.jsx';
 import { api } from '../../../lib/api.js';
 import { openWhatsappComposer } from '../../whatsapp/composerEvents.js';
@@ -6,8 +6,10 @@ import { QuoteBlock, blockHasContent, TEAL } from '../../../quote/QuoteBlockRend
 import RichEditor from '../../../editor/RichEditor.jsx';
 import OfferContextBar from './OfferContextBar.jsx';
 import PriceBuilderDialog from '../PriceBuilderDialog.jsx';
+import OrganizationEditDialog from '../OrganizationEditDialog.jsx';
 import { priceContextFor } from '../tourContext.js';
 import { effectiveOrgTypeId } from '../config.js';
+import { ORG_REQUIRED_COPY, isOrganizationRequiredError, needsOrganization } from './quoteOrgGate.js';
 
 // "הפק הצעת מחיר" — the quote GENERATION modal (the operator's main flow).
 //
@@ -220,6 +222,19 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
   const [builderOpen, setBuilderOpen] = useState(false);
   const [activityTypes, setActivityTypes] = useState([]);
   const [offerValueMinor, setOfferValueMinor] = useState(null);
+  // ── Organization completion gate ─────────────────────────────────────────
+  // A quote is always issued to an organization (server invariant). When the
+  // deal has none, the generate action does NOT produce: it opens the canonical
+  // organization dialog IN PLACE (this modal stays mounted, so every unsaved
+  // preview edit / temp override / chosen action survives), and the original
+  // action resumes automatically the moment the link is committed.
+  const [orgGateOpen, setOrgGateOpen] = useState(false);
+  const [orgGateBusy, setOrgGateBusy] = useState(false);
+  const [orgCatalog, setOrgCatalog] = useState(null); // { types, subtypes, contacts }
+  const [resumeAfterOrg, setResumeAfterOrg] = useState(false);
+  // One generation at a time — a double-click (or a retry racing the resume)
+  // must never mint two versions.
+  const generatingRef = useRef(false);
 
   // The deal's contacts that actually have an email; quote recipients first.
   const emailRecipients = useMemo(() => {
@@ -349,8 +364,59 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
     }
   }
 
-  async function generate() {
-    if (!doc || busy) return;
+  // Open the organization-completion dialog for THIS deal. The org catalog
+  // (types / subtypes) and the contacts' proven memberships load first so the
+  // dialog opens complete — with the contact's own organizations offered.
+  async function openOrgGate() {
+    if (orgGateBusy) return;
+    setError(null);
+    if (!orgCatalog) {
+      setOrgGateBusy(true);
+      try {
+        const [types, subtypes] = await Promise.all([
+          api.organizationTypes.list().catch(() => []),
+          api.organizationSubtypes.list().catch(() => []),
+        ]);
+        // Full contact payloads carry orgLinks (the Deal's compact contact
+        // shape does not) — the ONLY source of organization suggestions.
+        const ids = (deal?.contacts || []).map((dc) => dc.contact?.id).filter(Boolean);
+        const contacts = (
+          await Promise.all(ids.map((id) => api.contacts.get(id).catch(() => null)))
+        ).filter(Boolean);
+        setOrgCatalog({ types: types || [], subtypes: subtypes || [], contacts });
+      } finally {
+        setOrgGateBusy(false);
+      }
+    }
+    setOrgGateOpen(true);
+  }
+
+  // Resume the original generate action once the organization is linked. Runs
+  // after the dialog closed, so the operator sees the quote flow continue by
+  // itself — there is no second "הפק" click.
+  useEffect(() => {
+    if (!resumeAfterOrg || orgGateOpen) return;
+    setResumeAfterOrg(false);
+    (async () => {
+      try {
+        await generate({ organizationLinked: true });
+      } finally {
+        onDealChanged?.(); // the deal page reflects the new organization
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeAfterOrg, orgGateOpen]);
+
+  async function generate({ organizationLinked = false } = {}) {
+    if (!doc || busy || generatingRef.current) return;
+    // The invariant, client-side: never produce, never lose the operator's work.
+    // (`organizationLinked` = we just committed the link ourselves; the `deal`
+    // prop in this closure is still the pre-link snapshot.)
+    if (!organizationLinked && needsOrganization(deal)) {
+      await openOrgGate();
+      return;
+    }
+    generatingRef.current = true;
     setBusy(true); setError(null);
     try {
       const r = await api.quoteDocuments.produce(
@@ -392,10 +458,18 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
         setPhase('done');
       }
     } catch (e) {
+      // The server owns the invariant: even a deal whose organization was
+      // unlinked in another tab lands in the completion dialog, never in a
+      // raw error. Nothing was produced, so resuming is safe.
+      if (isOrganizationRequiredError(e)) {
+        await openOrgGate();
+        return;
+      }
       const code = e?.payload?.error || e?.message;
       setError(code === 'not_draft' ? 'ההצעה כבר הופקה — רעננו את העמוד.' : code || 'produce_failed');
     } finally {
       setBusy(false);
+      generatingRef.current = false;
     }
   }
 
@@ -556,8 +630,8 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
       <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">ביטול</button>
       <button
         type="button"
-        onClick={generate}
-        disabled={busy || loading || !doc}
+        onClick={() => generate()}
+        disabled={busy || loading || !doc || orgGateBusy}
         className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
       >
         {busy ? 'מפיק…' : action === 'email' ? 'הפק ושלח במייל' : action === 'whatsapp' ? 'הפק ושלח בוואטסאפ' : 'הפק הצעת מחיר'}
@@ -607,7 +681,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
     // on document; the parent's handler runs first, so it must delegate).
     <Dialog
       open={open}
-      onClose={editing ? () => setEditing(null) : builderOpen ? () => setBuilderOpen(false) : onClose}
+      onClose={
+        orgGateOpen
+          ? () => setOrgGateOpen(false)
+          : editing
+          ? () => setEditing(null)
+          : builderOpen
+          ? () => setBuilderOpen(false)
+          : onClose
+      }
       title={activeOffer && !activeOffer.isPrimary ? `הפקת הצעת מחיר — הצעה ${activeOffer.offerNo}` : 'הפקת הצעת מחיר'}
       size="2xl"
       footer={footer}
@@ -837,6 +919,26 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
           onSave={(v) => saveOverride(editing, v)}
           onReset={() => resetOverride(editing)}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* Organization completion — THE canonical Deal organization dialog (one
+          picker, one create path, one unit rule), opened in "required" mode.
+          Cancelling changes nothing: no organization is linked and no quote is
+          produced; the preview below is exactly as it was left. */}
+      {orgGateOpen && orgCatalog && (
+        <OrganizationEditDialog
+          open
+          deal={deal}
+          types={orgCatalog.types}
+          subtypes={orgCatalog.subtypes}
+          requireOrganization
+          title={ORG_REQUIRED_COPY.title}
+          intro={ORG_REQUIRED_COPY.body}
+          confirmLabel={ORG_REQUIRED_COPY.confirmLabel}
+          suggestContacts={orgCatalog.contacts}
+          onSaved={() => setResumeAfterOrg(true)}
+          onClose={() => setOrgGateOpen(false)}
         />
       )}
 

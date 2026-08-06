@@ -4,6 +4,7 @@ import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import { formatPhoneDisplay } from '../../lib/phone.js';
+import { CHAT_ROW_ACCENT, chatRowClass } from './chatSelection.js';
 
 // ONE conversation row — the shared list-row component for every WhatsApp
 // conversation list (the inbox today; any future surface reuses this, so the
@@ -14,7 +15,10 @@ import { formatPhoneDisplay } from '../../lib/phone.js';
 //            (or an EMPTY emerald circle when manually marked unread with no
 //            new messages), emerald bold time.
 //   READ   → clearly lighter: regular gray name, light-gray preview.
-//   SELECTED → 3px emerald accent line on the far right edge + soft tint.
+//   SELECTED → soft semi-transparent BLUE fill + blue inset ring + a 3px blue
+//            accent line on the far right edge (the open conversation must be
+//            recognisable at a glance, and stay so while hovered). The state
+//            itself lives in chatSelection.js — one definition for every list.
 // All identity text is right-aligned (text-right — dir=auto alone fixes bidi
 // ordering, not alignment) so mixed Hebrew/English names share one edge.
 
@@ -186,14 +190,14 @@ export default function ChatListRow({
       role="button"
       tabIndex={0}
       data-chat-row={chat.id}
+      data-selected={active ? 'true' : undefined}
+      aria-current={active ? 'true' : undefined}
       onClick={() => onOpen(chat)}
       onKeyDown={(e) => e.key === 'Enter' && onOpen(chat)}
-      className={`group relative cursor-pointer px-3 py-2.5 transition ${
-        active ? 'bg-emerald-50/70' : cursor ? 'bg-gray-100' : 'hover:bg-gray-50'
-      }`}
+      className={chatRowClass({ active, cursor })}
     >
-      {/* Selected indicator — thin emerald accent on the far right edge. */}
-      {active && <span className="absolute inset-y-0 right-0 w-[3px] bg-emerald-500" />}
+      {/* Selected indicator — solid blue accent on the far right (RTL leading) edge. */}
+      {active && <span className={CHAT_ROW_ACCENT} />}
 
       <div className="flex items-start gap-2.5">
         <Avatar chat={chat} />

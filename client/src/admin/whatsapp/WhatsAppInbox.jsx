@@ -11,6 +11,7 @@ import WhatsAppTemplateModal from '../deals/whatsapp/WhatsAppTemplateModal.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { useIsMobile } from '../../lib/useIsMobile.js';
+import { chatMatchesAccountFilter, isChatSelected } from './chatSelection.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -390,6 +391,19 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     return () => clearInterval(t);
   }, [load, drawerDealId]);
 
+  // Switching the business-number filter must never leave the OTHER account's
+  // conversation open: the list refetch keeps the last snapshot when the chat
+  // is missing from the new payload, which would strand the thread pane on a
+  // conversation that has no row (and no highlight) in the visible list.
+  // A scope/kind filter that merely hides a chat is NOT this case — only the
+  // account filter changes which account we are looking at.
+  // The keyboard cursor is a position INSIDE the visible list, so it resets with
+  // the list; the selection only drops when it provably belongs elsewhere.
+  useEffect(() => {
+    setCursorId(null);
+    setSelected((cur) => (chatMatchesAccountFilter(cur, accountFilter) ? cur : null));
+  }, [accountFilter]);
+
   // Reading the open conversation marks it read — server SSOT + a WhatsApp read
   // receipt (so the phone / other linked devices clear too). Re-runs when a new
   // message arrives while the thread is open. Optimistic local clear first.
@@ -751,7 +765,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                   <li key={chat.id}>
                     <ChatListRow
                       chat={chat}
-                      active={!!selected && chat.id === selected.id}
+                      active={isChatSelected(chat, selected)}
                       cursor={cursorId === chat.id}
                       unreadCount={chat.unreadCount || 0}
                       manualUnread={!!chat.manualUnread}

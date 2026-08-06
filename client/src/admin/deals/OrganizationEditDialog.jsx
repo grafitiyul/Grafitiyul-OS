@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 import OrgContactsSection from '../crm/common/OrgContactsSection.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 import UnitPicker from '../crm/common/UnitPicker.jsx';
+import { contactOrganizationSuggestions } from '../crm/common/contactOrganizations.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Choose / edit the Deal's organization binding from the header — a focused
@@ -30,9 +31,32 @@ import { useDirtyWhen } from '../../lib/dirtyForms.js';
 //                linked org (unit_not_in_organization server-side).
 //
 // Nothing autosaves — there is one explicit "שמור" button.
+//
+// COMPLETION MODE (`requireOrganization`): the SAME dialog, opened by a flow
+// that cannot continue without an organization (today: quote generation). It
+// only changes the chrome — an explanation line, its own title/confirm wording,
+// and a save button that stays disabled until an organization is actually
+// resolved. There is deliberately no second organization-completion dialog in
+// the product: one picker, one create path, one unit rule.
+//
+// `suggestContacts` (full contact payloads with orgLinks) turns on a suggestion
+// strip of organizations the deal's contacts ALREADY belong to — proven links
+// only, primary first. Nothing is ever inferred from names, domains or history.
 const FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-full';
 
-export default function OrganizationEditDialog({ deal, types, subtypes, open, onClose, onSaved }) {
+export default function OrganizationEditDialog({
+  deal,
+  types,
+  subtypes,
+  open,
+  onClose,
+  onSaved,
+  requireOrganization = false,
+  title = 'ארגון בדיל',
+  intro = null,
+  confirmLabel = 'שמור',
+  suggestContacts = null,
+}) {
   const [resolution, setResolution] = useState(null);
   const [orgId, setOrgId] = useState('');
   const [name, setName] = useState(''); // the linked org's own name (editable when linked)
@@ -44,6 +68,18 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
   const [pickerInit, setPickerInit] = useState(undefined); // undefined = not ready yet
   const [busy, setBusy] = useState(false);
   const [showContacts, setShowContacts] = useState(false);
+  // Bumped when a suggestion is applied — OrgPicker is uncontrolled after mount,
+  // so a new initial selection means a fresh instance.
+  const [pickerNonce, setPickerNonce] = useState(0);
+  // A unit carried in from an applied suggestion, consumed by the org-switch
+  // reset (which otherwise clears the unit on every organization change).
+  const pendingUnitRef = useRef('');
+  const savingRef = useRef(false);
+
+  const suggestions = useMemo(
+    () => (suggestContacts ? contactOrganizationSuggestions(suggestContacts) : []),
+    [suggestContacts],
+  );
 
   // Reload the linked org (contacts/units) after the contacts section or the
   // unit picker mutates it.
@@ -73,6 +109,8 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
     setOrgFull(null);
     setOriginal(null);
     setPickerInit(undefined);
+    setPickerNonce(0);
+    pendingUnitRef.current = '';
     if (initialOrgId) {
       api.organizations
         .get(initialOrgId)
@@ -98,6 +136,16 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
     }
   }, [open, deal]);
 
+  // Applying a suggestion = selecting that existing organization. The picker is
+  // uncontrolled after mount, so it is remounted with the new initial selection;
+  // the membership's own unit (which belongs to that organization by
+  // construction) is carried across the org-switch reset below.
+  function applySuggestion(s) {
+    pendingUnitRef.current = s.unitId || '';
+    setPickerInit({ id: s.id, name: s.name });
+    setPickerNonce((n) => n + 1);
+  }
+
   // Follow the picker: selecting a different existing org (or clearing it)
   // swaps the fetched org + resets the unit; a typed-new name simply means
   // "no existing org selected" until save creates it.
@@ -106,7 +154,8 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
     const rid = resolution.existingOrgId || '';
     if (rid === orgId) return;
     setOrgId(rid);
-    setUnitId('');
+    setUnitId(rid ? pendingUnitRef.current || '' : '');
+    pendingUnitRef.current = '';
     setOrgFull(null);
     setName('');
     if (rid) {
@@ -124,6 +173,9 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
   }, [resolution]);
 
   const isNew = !!resolution?.isNew;
+  // Will saving actually leave the deal WITH an organization? (An existing one
+  // picked, or a valid new one about to be created.) Drives completion mode.
+  const hasOrganization = !!resolution?.isExisting || (isNew && !resolution?.invalid) || (!resolution && !!orgId);
   // Effective type: linked org's (editable here) / the new org's (picked inside
   // OrgPicker) / the deal's own when there is no organization.
   const effectiveTypeId = isNew ? resolution?.orgTypeId || '' : typeId;
@@ -142,6 +194,10 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
   );
 
   async function save() {
+    // `busy` is state, so two clicks in the same tick would both get through and
+    // commit the link (and, in completion mode, resume generation) twice.
+    if (savingRef.current) return;
+    savingRef.current = true;
     setBusy(true);
     try {
       let finalOrgId = null;
@@ -154,6 +210,15 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
         }
         // The ONE creation path (resolveOrganization → POST /api/organizations).
         finalOrgId = (await resolveOrganization(resolution)).organizationId;
+      } else if (!resolution && orgId) {
+        // Opened on an already-linked deal and never touched — keep the link.
+        finalOrgId = orgId;
+      }
+      // Completion mode must never write a null link (and never let the caller
+      // resume as if an organization had been chosen).
+      if (requireOrganization && !finalOrgId) {
+        alert('יש לבחור ארגון קיים או ליצור ארגון חדש.');
+        return;
       }
       const dealPayload = {
         organizationId: finalOrgId,
@@ -176,11 +241,14 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
         if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
         if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
       }
-      await onSaved?.();
+      // The linked id is handed back so a waiting flow can resume immediately
+      // (existing callers pass a no-arg refresh and are unaffected).
+      await onSaved?.({ organizationId: finalOrgId });
       onClose?.();
     } catch (e) {
       alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
     } finally {
+      savingRef.current = false;
       setBusy(false);
     }
   }
@@ -191,7 +259,7 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
     <Dialog
       open={open}
       onClose={onClose}
-      title="ארגון בדיל"
+      title={title}
       size="md"
       footer={
         <>
@@ -204,19 +272,55 @@ export default function OrganizationEditDialog({ deal, types, subtypes, open, on
           </button>
           <button
             onClick={save}
-            disabled={busy || !!resolution?.invalid}
+            disabled={busy || !!resolution?.invalid || (requireOrganization && !hasOrganization)}
             className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
           >
-            {busy ? 'שומר…' : 'שמור'}
+            {busy ? 'שומר…' : confirmLabel}
           </button>
         </>
       }
     >
       <div className="space-y-3">
+        {intro && (
+          <p className="rounded-lg bg-blue-50 px-3 py-2 text-[13px] leading-relaxed text-blue-900 ring-1 ring-blue-200">
+            {intro}
+          </p>
+        )}
+
+        {/* Organizations the deal's contacts ALREADY belong to — one click links
+            the right one. Proven memberships only; nothing is inferred. */}
+        {suggestions.length > 0 && !orgId && !isNew && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-2.5">
+            <div className="mb-1.5 text-[11.5px] font-medium text-gray-500">
+              {suggestions.length === 1 ? 'הארגון של איש הקשר' : 'ארגונים של אנשי הקשר בדיל'}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => applySuggestion(s)}
+                  title={s.contactName ? `דרך ${s.contactName}` : undefined}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[12px] text-gray-700 hover:border-blue-400 hover:bg-blue-50"
+                >
+                  <span className="truncate">{s.name}</span>
+                  {s.unitName && <span className="shrink-0 text-[10.5px] text-gray-400">· {s.unitName}</span>}
+                  {s.isPrimary && (
+                    <span className="shrink-0 rounded-full bg-amber-50 px-1 text-[9.5px] font-bold text-amber-700 ring-1 ring-amber-200">
+                      ראשי
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {pickerInit === undefined ? (
           <div className="h-10 rounded-lg bg-gray-100 animate-pulse" />
         ) : (
           <OrgPicker
+            key={pickerNonce}
             serverSearch
             allowCreateDialog
             types={types}

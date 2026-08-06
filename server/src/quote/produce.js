@@ -18,10 +18,26 @@ import { newPublicToken, ensureOffer } from './quoteDocument.js';
 // only — merged into the snapshot (and recorded on the produced document as the
 // effective override state), but NEVER written to the draft. Future versions go
 // back to the Deal's persistent overrides.
+//
+// BUSINESS INVARIANT — a quote is always issued TO AN ORGANIZATION. This is the
+// ONE place a quote is ever created (first version, alternate offer, revision,
+// preview-to-send, any API caller all land here), so the rule is enforced here
+// and not in a modal: a Deal with no organizationId cannot generate a quote and
+// gets `organization_required` back. The client turns that code into the
+// organization-completion dialog and resumes; nothing is written meanwhile —
+// the check runs BEFORE the legacy-offer adoption, so a refused generation
+// leaves the draft, the offers and the deal exactly as they were.
 export async function produceQuoteDocument(client, draftId, opts = {}) {
   const draft = await client.quoteDocument.findUnique({ where: { id: draftId } });
   if (!draft) return { error: 'not_found' };
   if (draft.status !== 'draft') return { error: 'not_draft' };
+
+  const deal = await client.deal.findUnique({
+    where: { id: draft.dealId },
+    select: { id: true, organizationId: true },
+  });
+  if (!deal) return { error: 'deal_not_found' };
+  if (!deal.organizationId) return { error: 'organization_required' };
   const temporary = opts.temporaryOverrideState && typeof opts.temporaryOverrideState === 'object'
     ? opts.temporaryOverrideState
     : null;

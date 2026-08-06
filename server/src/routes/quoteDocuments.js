@@ -66,6 +66,15 @@ router.post(
     });
     if (r.error === 'not_found' || r.error === 'deal_not_found') return res.status(404).json({ error: 'not_found' });
     if (r.error === 'not_draft') return res.status(409).json({ error: 'not_draft' });
+    // Business invariant, not a bad request: the deal has no organization yet.
+    // The client converts this exact code into the organization-completion
+    // dialog and retries the SAME action once the link is committed.
+    if (r.error === 'organization_required') {
+      return res.status(422).json({
+        error: 'organization_required',
+        message: 'כדי להפיק הצעת מחיר יש לשייך את הדיל לארגון.',
+      });
+    }
     if (r.error) return res.status(400).json({ error: r.error });
 
     await emitTimelineEvent(prisma, {
