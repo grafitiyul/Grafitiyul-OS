@@ -4,6 +4,7 @@ import { api } from '../../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../../common/tableColumns.jsx';
 import PageSizeSelector, { usePageSizePref } from '../../common/PageSizeSelector.jsx';
 import Pager from '../../common/Pager.jsx';
+import { useListState, useListScrollRestore, useListOrigin } from '../../common/useListState.js';
 import useDebouncedValue from '../../../shell/search/useDebouncedValue.js';
 
 // Organizations index — reference/management list. Bank Leumi is one
@@ -14,6 +15,13 @@ import useDebouncedValue from '../../../shell/search/useDebouncedValue.js';
 // and the SHARED table infrastructure (column chooser + drag-reorderable,
 // persisted columns). Creation logic is unchanged — the same inline form,
 // restyled to sit inside the filter card row.
+
+// Durable list state — the URL owns page + search (see listState.js), so
+// returning from an organization lands on the page the operator left.
+const LIST_FIELDS = {
+  q: { default: '', sticky: true },
+  page: { type: 'int', default: 1 },
+};
 
 const dash = <span className="text-gray-400">—</span>;
 
@@ -50,12 +58,13 @@ export default function OrganizationsList() {
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [search, setSearch] = useState('');
   const [name, setName] = useState('');
   const [typeId, setTypeId] = useState('');
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [page, setPage] = useState(1);
+  const list = useListState({ key: 'organizations', fields: LIST_FIELDS });
+  const { q: search, page } = list;
+  const origin = useListOrigin();
   const [pageSize, setPageSize] = usePageSizePref('organizations.pageSize.v1');
 
   // Server-driven search: debounce keystrokes so typing doesn't spam the API.
@@ -69,10 +78,8 @@ export default function OrganizationsList() {
     api.organizationTypes.list().then(setTypes).catch(() => {});
   }, []);
 
-  // Reset to page 1 whenever the search term settles or the page size changes.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, pageSize]);
+  // Page 1 resets happen inside list.set() / the page-size handler — never in
+  // an effect, which would fire on mount and wipe a restored page.
 
   // The one paginated fetch — re-runs on search / page / pageSize.
   useEffect(() => {
@@ -130,9 +137,10 @@ export default function OrganizationsList() {
   }
 
   const isEmpty = total === 0 && !debouncedSearch;
+  const scrollAnchor = useListScrollRestore(!loading);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-5 lg:px-8 py-4">
+    <div ref={scrollAnchor} className="mx-auto max-w-[1400px] px-5 lg:px-8 py-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -206,7 +214,7 @@ export default function OrganizationsList() {
             <input
               type="search"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => list.set({ q: e.target.value })}
               placeholder="חיפוש לפי שם ארגון…"
               className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
@@ -257,7 +265,9 @@ export default function OrganizationsList() {
                     <tr
                       key={o.id}
                       className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/admin/crm/organizations/${o.orgNo ?? o.id}`)}
+                      onClick={() =>
+                        navigate(`/admin/crm/organizations/${o.orgNo ?? o.id}`, { state: origin })
+                      }
                     >
                       {visibleCols.map((c) => (
                         <TableCell key={c.key} col={c}>{c.render(o)}</TableCell>
@@ -267,8 +277,11 @@ export default function OrganizationsList() {
                 </tbody>
               </table>
             </div>
-            <Pager page={page} pageSize={pageSize} total={total} onPage={setPage}>
-              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            <Pager page={page} pageSize={pageSize} total={total} onPage={list.setPage}>
+              <PageSizeSelector
+                value={pageSize}
+                onChange={(v) => { setPageSize(v); list.set({ page: 1 }); }}
+              />
             </Pager>
           </>
         )}

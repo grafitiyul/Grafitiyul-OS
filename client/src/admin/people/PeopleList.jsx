@@ -14,8 +14,19 @@ import {
 import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import { useListState, useListScrollRestore, useListOrigin } from '../common/useListState.js';
 import NewStaffDialog from './NewStaffDialog.jsx';
 import StaffWhatsAppModal from './StaffWhatsAppModal.jsx';
+
+// Durable list state (see listState.js). The roster is fetched whole and paged
+// client-side, but "which page / which filters" is still a place the operator
+// returns to — so it lives in the URL exactly like the server-paged lists.
+const LIST_FIELDS = {
+  q: { default: '', sticky: true },
+  lifecycle: { default: 'all', sticky: true },
+  access: { default: 'all', sticky: true },
+  page: { type: 'int', default: 1 },
+};
 
 // Column definitions — the shared tableColumns infra owns visibility, order
 // and persistence (localStorage per table per browser profile — the app's
@@ -75,11 +86,10 @@ export default function PeopleList() {
   const [upstream, setUpstream] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const [lifecycleFilter, setLifecycleFilter] = useState('all');
-  const [accessFilter, setAccessFilter] = useState('all');
+  const list = useListState({ key: 'people', fields: LIST_FIELDS });
+  const { q: search, lifecycle: lifecycleFilter, access: accessFilter } = list;
   const [createOpen, setCreateOpen] = useState(false);
   // WhatsApp send modal — null = closed, [] = open with no preselection,
   // [ids] = open preselected (from the table's selection bar).
@@ -155,8 +165,10 @@ export default function PeopleList() {
     });
   }, [people, search, lifecycleFilter, accessFilter]);
 
+  const scrollAnchor = useListScrollRestore(!loading);
+
   return (
-    <div className="p-4 lg:p-6 max-w-7xl mx-auto">
+    <div ref={scrollAnchor} className="p-4 lg:p-6 max-w-7xl mx-auto">
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-gray-900">צוות</h1>
@@ -184,7 +196,7 @@ export default function PeopleList() {
           <input
             type="search"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => list.set({ q: e.target.value })}
             placeholder="חיפוש לפי שם, טלפון או אימייל…"
             className="w-64 rounded-xl border border-gray-300 py-2 pe-9 ps-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
@@ -223,13 +235,13 @@ export default function PeopleList() {
           label="סוג"
           options={LIFECYCLE_FILTERS}
           value={lifecycleFilter}
-          onChange={setLifecycleFilter}
+          onChange={(v) => list.set({ lifecycle: v })}
         />
         <FilterRow
           label="גישה"
           options={ACCESS_FILTERS}
           value={accessFilter}
-          onChange={setAccessFilter}
+          onChange={(v) => list.set({ access: v })}
         />
       </div>
 
@@ -266,6 +278,8 @@ export default function PeopleList() {
           people={filtered}
           cols={cols}
           teams={teams}
+          page={list.page}
+          onPage={list.setPage}
           onChanged={refresh}
           onSendWhatsApp={(ids) => setWhatsappIds(ids)}
         />
@@ -458,17 +472,19 @@ function BulkEditDialog({ people, teams, onClose, onDone }) {
 
 const PAGE_SIZES = [10, 25, 50];
 
-function PeopleTable({ people, cols, teams, onChanged, onSendWhatsApp }) {
+function PeopleTable({ people, cols, teams, page, onPage, onChanged, onSendWhatsApp }) {
   const [pageSize, setPageSize] = useState(25);
-  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(() => new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const pages = Math.max(1, Math.ceil(people.length / pageSize));
   const safePage = Math.min(page, pages);
   const rows = people.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const setPage = onPage;
 
+  // Only the SELECTION is reset when the underlying list changes — the page is
+  // owned by the URL (a filter change resets it there). Resetting it here would
+  // also fire on every background refresh and on the mount that restores it.
   useEffect(() => {
-    setPage(1); // filters/search changed the underlying list
     setSelected(new Set()); // stale selection must not survive a re-filter
   }, [people]);
 
@@ -918,6 +934,21 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
 // One cell per column key — the render side of STAFF_COLUMNS. Adding a
 // column = one entry here + one definition above; the picker, ordering and
 // persistence come from the shared infra automatically.
+// Avatar + name — the row's identity leads. A component (not inline JSX) so it
+// can read the list's return location itself: the profile's "חזרה לרשימה" then
+// lands back on this page/filter instead of the top of the roster.
+function PersonNameLink({ person }) {
+  const origin = useListOrigin();
+  return (
+    <Link to={`/admin/people/${person.id}`} state={origin} className="group flex items-center gap-2.5">
+      <StaffAvatar src={person.profile?.imageUrl} name={person.displayName} className="h-9 w-9" />
+      <span className="font-semibold text-gray-900 group-hover:text-blue-700">
+        {person.displayName}
+      </span>
+    </Link>
+  );
+}
+
 function renderCell(key, person) {
   switch (key) {
     case 'color':
@@ -930,18 +961,7 @@ function renderCell(key, person) {
     case 'name':
       // Avatar + name — the row's identity leads (photo, initials fallback:
       // same StaffAvatar the tour surfaces use).
-      return (
-        <Link to={`/admin/people/${person.id}`} className="group flex items-center gap-2.5">
-          <StaffAvatar
-            src={person.profile?.imageUrl}
-            name={person.displayName}
-            className="h-9 w-9"
-          />
-          <span className="font-semibold text-gray-900 group-hover:text-blue-700">
-            {person.displayName}
-          </span>
-        </Link>
-      );
+      return <PersonNameLink person={person} />;
     case 'phone':
       return person.phone ? (
         <span dir="ltr" className="tabular-nums text-gray-600">{person.phone}</span>
@@ -1049,6 +1069,7 @@ const LIFECYCLE_MENU = [
 
 function ActionsMenu({ person, onChanged }) {
   const navigate = useNavigate();
+  const origin = useListOrigin();
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -1204,7 +1225,7 @@ function ActionsMenu({ person, onChanged }) {
           </MenuSection>
 
           <MenuSection title="ניהול">
-            <ActionRow icon={<IconCard />} variant="link" onClick={() => { setOpen(false); navigate(`/admin/people/${person.id}`); }}>
+            <ActionRow icon={<IconCard />} variant="link" onClick={() => { setOpen(false); navigate(`/admin/people/${person.id}`, { state: origin }); }}>
               פתיחת כרטיס ניהול
             </ActionRow>
           </MenuSection>

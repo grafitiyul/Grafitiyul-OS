@@ -4,6 +4,7 @@ import { api } from '../../../lib/api.js';
 import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
 import UnitPicker from '../common/UnitPicker.jsx';
 import BackButton from '../../common/BackButton.jsx';
+import { useListReturn } from '../../common/useListState.js';
 import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
@@ -30,6 +31,9 @@ function fmtDate(iso) {
 export default function ContactDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // "חזרה" returns to the exact list the operator came from (page, search,
+  // scroll); only a direct/pasted URL falls back to the contacts root.
+  const listReturn = useListReturn('/admin/crm/contacts', 'חזרה לאנשי קשר');
   const [contact, setContact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -206,7 +210,7 @@ export default function ContactDetail() {
       right={{ title: 'פרטי איש קשר', content: detailsPanel, defaultWidth: 420, minWidth: 320, maxWidth: 640 }}
     >
       <div className="flex items-center gap-2 text-[13px]">
-        <BackButton to="/admin/crm/contacts" label="חזרה לאנשי קשר" />
+        <BackButton {...listReturn} />
       </div>
       {/* Header — the contact identity + the PRIMARY workspace action: opening a
           new deal for this contact (RTL: the action sits on the LEFT edge). */}

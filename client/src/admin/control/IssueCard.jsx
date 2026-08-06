@@ -7,6 +7,7 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import PromptDialog from '../common/PromptDialog.jsx';
 import AccountBubbles from '../whatsapp/AccountBubbles.jsx';
 import { useConnectedAccounts, resolveAccountId } from '../whatsapp/senderAccount.js';
+import { useListOrigin } from '../common/useListState.js';
 
 const BTN_STYLES = {
   primary: 'bg-blue-600 text-white hover:bg-blue-700 border-transparent',
@@ -18,6 +19,9 @@ const BTN_STYLES = {
 // time, explanation, optional diff table, and the server-declared actions.
 export default function IssueCard({ issue, onChanged, onNeedsInput }) {
   const navigate = useNavigate();
+  // Carries the control view (tab + scroll) so the opened record can send the
+  // operator back to the issue they were working on.
+  const origin = useListOrigin();
   const sev = SEVERITY_BY_KEY[issue.severity] || SEVERITY_BY_KEY.info;
   const [busyKey, setBusyKey] = useState(null);
   const [showNotify, setShowNotify] = useState(false);
@@ -39,7 +43,7 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
     setNotice(null);
     if (action.kind === 'link') {
       const href = entityHref(action.target);
-      if (href) navigate(href);
+      if (href) navigate(href, { state: origin });
       return;
     }
     if (action.confirm) {

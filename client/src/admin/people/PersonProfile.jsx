@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import BackButton from '../common/BackButton.jsx';
+import { useListReturn } from '../common/useListState.js';
 import { useFileDrop } from '../common/useFileDrop.js';
 import { api } from '../../lib/api.js';
 import { useDirtyForm } from '../../lib/dirtyForms.js';
@@ -155,8 +156,12 @@ function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
   );
 }
 
+// Was a blind `window.history.back()` — which walks OUT of the app when the
+// profile was opened from a pasted link or a fresh tab. Now: back to the exact
+// originating list when there is one, the staff list root otherwise.
 function BackLink() {
-  return <BackButton onClick={() => window.history.back()} label="חזרה לרשימה" />;
+  const listReturn = useListReturn('/admin/people', 'חזרה לרשימה');
+  return <BackButton {...listReturn} />;
 }
 
 // ── Hero — display-first header ("This is Avi", not "this is a form") ──────

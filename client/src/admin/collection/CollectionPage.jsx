@@ -16,6 +16,7 @@ import { evaluateTree, normalizeTree, emptyGroup } from '../common/filters/advan
 import { COLLECTION_FILTER_FIELDS, COLLECTION_FILTER_FIELDS_BY_KEY } from './collectionFilterFields.js';
 import { summarizeCollectionRows } from './collectionSummary.js';
 import { dealPath } from '../deals/config.js';
+import { useListState, useListScrollRestore, useListOrigin } from '../common/useListState.js';
 
 // גבייה — the main Collection screen: every WON deal whose money has not fully
 // arrived. Rows and all financial numbers come from the server Collection
@@ -25,6 +26,17 @@ import { dealPath } from '../deals/config.js';
 
 const COLUMNS_KEY = 'collection.columns.v1';
 const FILTERS_KEY = 'collection.filters.v1';
+
+// Durable list state (listState.js). The advanced filter TREE is deliberately
+// `url: false` — serialising a whole boolean tree into the query string would
+// produce unreadable, unshareable links; it keeps its existing per-browser
+// persistence below while queue/status/search/sort become URL-owned.
+const LIST_FIELDS = {
+  q: { default: '', sticky: true },
+  status: { default: 'all', sticky: true },
+  queue: { default: 'active_collection', sticky: true },
+  sort: { type: 'sort', default: { key: 'balance', dir: 'desc' }, sticky: true },
+};
 
 const dash = <span className="text-gray-400">—</span>;
 
@@ -178,21 +190,22 @@ export default function CollectionPage() {
   const [error, setError] = useState(null);
 
   const [saved] = useState(loadFilters);
-  const [search, setSearch] = useState(saved.search ?? '');
-  const [status, setStatus] = useState(saved.status ?? 'all');
+  // Search / status / queue / sort live in the URL (see LIST_FIELDS): opening a
+  // deal from here and coming back restores the exact working view.
   // Default sort: the biggest outstanding balance first — that's the work.
-  const [sort, setSort] = useState({ key: 'balance', dir: 'desc' });
-  // THE work-queue tab. Default = only deals someone should be chasing; the
-  // historical population stays one click away, never silently gone.
-  const [queue, setQueue] = useState(saved.queue ?? 'active_collection');
+  // Default queue: only deals someone should be chasing; the historical
+  // population stays one click away, never silently gone.
+  const list = useListState({ key: 'collection', fields: LIST_FIELDS });
+  const { q: search, status, queue, sort } = list;
+  const origin = useListOrigin();
   const [counts, setCounts] = useState({});
   // Deals in this queue that are already fully collected, and so are not work.
   const [settledHidden, setSettledHidden] = useState(0);
   const [advanced, setAdvanced] = useState(() => normalizeTree(saved.advanced) || emptyGroup());
 
   useEffect(() => {
-    saveFilters({ search, status, queue, advanced });
-  }, [search, status, queue, advanced]);
+    saveFilters({ advanced });
+  }, [advanced]);
 
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
@@ -254,11 +267,15 @@ export default function CollectionPage() {
   const summary = useMemo(() => summarizeCollectionRows(filtered), [filtered]);
 
   function onSort(key) {
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
+    list.set({
+      sort: sort.key === key ? { key, dir: sort.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' },
+    });
   }
 
+  const scrollAnchor = useListScrollRestore(!loading);
+
   return (
-    <div className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
+    <div ref={scrollAnchor} className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -303,7 +320,7 @@ export default function CollectionPage() {
           <button
             key={k}
             type="button"
-            onClick={() => setQueue(k)}
+            onClick={() => list.set({ queue: k })}
             className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
               queue === k ? 'bg-gray-900 text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
             }`}
@@ -334,14 +351,14 @@ export default function CollectionPage() {
             <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => list.set({ q: e.target.value })}
               placeholder="חיפוש לפי שם דיל, ארגון או איש קשר…"
               className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </div>
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => list.set({ status: e.target.value })}
             className="h-10 min-w-[9rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           >
             {STATUS_FILTERS.map(([val, lbl]) => (
@@ -398,7 +415,7 @@ export default function CollectionPage() {
                   <tr
                     key={d.id}
                     className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
-                    onClick={() => navigate(dealPath(d))}
+                    onClick={() => navigate(dealPath(d), { state: origin })}
                   >
                     {visibleCols.map((c) => (
                       <TableCell key={c.key} col={c}>{c.render(d)}</TableCell>
@@ -406,7 +423,7 @@ export default function CollectionPage() {
                     <td className="px-4 py-3 align-middle border-s border-gray-100/70" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
-                        onClick={() => navigate(dealPath(d))}
+                        onClick={() => navigate(dealPath(d), { state: origin })}
                         title="פתח דיל"
                         className="h-8 w-8 rounded-md text-gray-400 hover:text-blue-700 hover:bg-blue-50"
                       >

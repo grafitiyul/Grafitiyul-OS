@@ -1,12 +1,26 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../../common/tableColumns.jsx';
 import PageSizeSelector, { usePageSizePref } from '../../common/PageSizeSelector.jsx';
 import Pager from '../../common/Pager.jsx';
+import { useListState, useListScrollRestore, useListOrigin } from '../../common/useListState.js';
 import useDebouncedValue from '../../../shell/search/useDebouncedValue.js';
 import ContactCreateDialog from './ContactCreateDialog.jsx';
+
+// Same durable-list contract as Deals: the URL owns page + search, so opening
+// a contact and coming back lands on the exact page the operator left.
+const LIST_FIELDS = {
+  q: { default: '', sticky: true },
+  page: { type: 'int', default: 1 },
+};
+
+// The name cell renders a <Link>; it needs the list's return location so the
+// contact page can send the operator back here rather than to page 1. Column
+// definitions are module-level (shared with the column picker), hence context
+// rather than a prop drilled through the table.
+const OriginContext = createContext(undefined);
 
 // Contacts — a real CRM list (like Deals): dominant search + a configurable
 // table, with creation via the "+ איש קשר חדש" dialog. All columns are backed by
@@ -44,11 +58,7 @@ function OrgCell({ contact }) {
 // list API returns.
 const COLUMNS = [
   { key: 'name', label: 'שם', def: true,
-    render: (c) => (
-      <Link to={`/admin/crm/contacts/${c.contactNo ?? c.id}`} className="font-medium text-blue-700 hover:underline">
-        {fullName(c) || '—'}
-      </Link>
-    ) },
+    render: (c) => <ContactNameLink contact={c} /> },
   { key: 'nameEn', label: 'שם (אנגלית)', def: false,
     render: (c) => (c.fullNameEn ? <span dir="ltr">{c.fullNameEn}</span> : dash), cls: 'text-gray-600' },
   { key: 'phone', label: 'טלפון', def: true,
@@ -66,6 +76,19 @@ const COLUMNS = [
     cls: 'text-gray-500 tabular-nums', render: (c) => fmtDate(c.createdAt) },
 ];
 
+function ContactNameLink({ contact }) {
+  const origin = useContext(OriginContext);
+  return (
+    <Link
+      to={`/admin/crm/contacts/${contact.contactNo ?? contact.id}`}
+      state={origin}
+      className="font-medium text-blue-700 hover:underline"
+    >
+      {fullName(contact) || '—'}
+    </Link>
+  );
+}
+
 export default function ContactsList() {
   const [contacts, setContacts] = useState([]);
   const [total, setTotal] = useState(0);
@@ -74,9 +97,10 @@ export default function ContactsList() {
   const [subtypes, setSubtypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [page, setPage] = useState(1);
+  const list = useListState({ key: 'contacts', fields: LIST_FIELDS });
+  const { q: search, page } = list;
+  const origin = useListOrigin();
   const [pageSize, setPageSize] = usePageSizePref('contacts.pageSize.v1');
 
   // Server-driven search: debounce keystrokes so typing doesn't spam the API.
@@ -101,10 +125,8 @@ export default function ContactsList() {
       .catch(() => {});
   }, []);
 
-  // Reset to page 1 whenever the search term settles or the page size changes.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, pageSize]);
+  // Page 1 resets happen inside list.set() / the page-size handler — never in an
+  // effect, which would fire on mount and wipe a restored page.
 
   // The one paginated fetch — re-runs on search / page / pageSize.
   useEffect(() => {
@@ -141,9 +163,11 @@ export default function ContactsList() {
   }
 
   const isEmpty = total === 0 && !debouncedSearch;
+  const scrollAnchor = useListScrollRestore(!loading);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-5 lg:px-8 py-4">
+    <OriginContext.Provider value={origin}>
+    <div ref={scrollAnchor} className="mx-auto max-w-[1400px] px-5 lg:px-8 py-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -170,7 +194,7 @@ export default function ContactsList() {
             <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => list.set({ q: e.target.value })}
               placeholder="חיפוש לפי שם, טלפון, אימייל או ארגון…"
               className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
@@ -227,8 +251,11 @@ export default function ContactsList() {
                 </tbody>
               </table>
             </div>
-            <Pager page={page} pageSize={pageSize} total={total} onPage={setPage}>
-              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            <Pager page={page} pageSize={pageSize} total={total} onPage={list.setPage}>
+              <PageSizeSelector
+                value={pageSize}
+                onChange={(v) => { setPageSize(v); list.set({ page: 1 }); }}
+              />
             </Pager>
           </>
         )}
@@ -245,6 +272,7 @@ export default function ContactsList() {
         />
       )}
     </div>
+    </OriginContext.Provider>
   );
 }
 

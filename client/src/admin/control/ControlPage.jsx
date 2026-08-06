@@ -5,8 +5,13 @@ import IssueCard from './IssueCard.jsx';
 import RescheduleDialog from './RescheduleDialog.jsx';
 import DetectorCatalogue from './DetectorCatalogue.jsx';
 import { apiActionHandler } from './issueActions.js';
+import { useListState, useListScrollRestore } from '../common/useListState.js';
 
 const POLL_MS = 60_000;
+
+// The active category tab is durable list state: opening a deal/tour from an
+// issue card and coming back must land on the same tab and scroll offset.
+const LIST_FIELDS = { tab: { default: 'all', sticky: true } };
 
 // Operational filters. Each matches an issue by type + its requirement state, so
 // the tabs reflect what actually needs office follow-up.
@@ -30,7 +35,8 @@ export default function ControlPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [needsInput, setNeedsInput] = useState(null); // { issue, action, input }
-  const [filter, setFilter] = useState('all');
+  const list = useListState({ key: 'control', fields: LIST_FIELDS });
+  const filter = list.tab;
   const timerRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -69,8 +75,10 @@ export default function ControlPage() {
     await load();
   }
 
+  const scrollAnchor = useListScrollRestore(Boolean(data));
+
   return (
-    <div className="px-5 py-6 lg:px-10 lg:py-8 w-full">
+    <div ref={scrollAnchor} className="px-5 py-6 lg:px-10 lg:py-8 w-full">
       <header className="mb-6 flex items-end gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">בקרה</h1>
@@ -115,7 +123,7 @@ export default function ControlPage() {
             <button
               key={f.key}
               type="button"
-              onClick={() => setFilter(f.key)}
+              onClick={() => list.set({ tab: f.key })}
               className={
                 'rounded-full px-3 py-1 text-[12.5px] font-medium border ' +
                 (on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50')

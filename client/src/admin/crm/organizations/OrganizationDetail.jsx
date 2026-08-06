@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import BackButton from '../../common/BackButton.jsx';
+import { useListReturn } from '../../common/useListState.js';
 import { api } from '../../../lib/api.js';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
@@ -38,6 +39,8 @@ const FINANCE_FIELDS = [
 export default function OrganizationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Returns to the originating list state; a pasted URL falls back to the root.
+  const listReturn = useListReturn('/admin/crm/organizations', 'חזרה לארגונים');
   const [org, setOrg] = useState(null);
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -191,7 +194,7 @@ export default function OrganizationDetail() {
       right={{ title: 'פרטי ארגון', content: detailsPanel, defaultWidth: 440, minWidth: 320, maxWidth: 680 }}
     >
       <div className="flex items-center gap-2 text-[13px]">
-        <BackButton to="/admin/crm/organizations" label="חזרה לארגונים" />
+        <BackButton {...listReturn} />
       </div>
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
         <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900">{org.name}</h1>

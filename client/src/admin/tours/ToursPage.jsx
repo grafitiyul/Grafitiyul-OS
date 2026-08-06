@@ -17,6 +17,7 @@ import HoverCard from '../common/HoverCard.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import MultiSelectFilter from '../common/filters/MultiSelectFilter.jsx';
+import { useListState, useListScrollRestore } from '../common/useListState.js';
 import AdvancedFilterButton from '../common/filters/AdvancedFilterButton.jsx';
 import { normalizeTree, evaluateTree } from '../common/filters/advancedFilterCore.js';
 import { TOUR_FILTER_FIELDS, TOUR_FILTER_FIELDS_BY_KEY } from './tourFilterFields.js';
@@ -39,6 +40,14 @@ import {
 // private/business tours arrive automatically from WON deals and their
 // planning fields are edited on the DEAL (this screen only operates them).
 // The calendar tab is an approved placeholder — views come later.
+
+// Sort is URL-owned durable list state (listState.js) so it survives leaving
+// and re-entering the module; the remaining filters keep the existing
+// per-browser persistence below, and the tour page opens as a nested route ON
+// TOP of this list, so the list itself never unmounts.
+const TOURS_LIST_FIELDS = {
+  sort: { type: 'sort', default: { key: 'date', dir: 'asc' }, sticky: true },
+};
 
 const COLUMNS_KEY = 'tours.columns.v1';
 const FILTERS_KEY = 'tours.filters.v1';
@@ -444,7 +453,8 @@ export default function ToursPage() {
   // gracefully through normalizeTree + the engine's unknown-field rule.
   const [advanced, setAdvanced] = useState(() => normalizeTree(saved.advanced));
   // Upcoming first — the operational default.
-  const [sort, setSort] = useState({ key: 'date', dir: 'asc' });
+  const list = useListState({ key: 'tours', fields: TOURS_LIST_FIELDS });
+  const sort = list.sort;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editTour, setEditTour] = useState(null);
@@ -558,7 +568,7 @@ export default function ToursPage() {
   }, [rows, search, kind, statuses, advanced, sort]);
 
   function onSort(key) {
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'asc' }));
+    list.set({ sort: sort.key === key ? { key, dir: sort.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'asc' } });
   }
 
   function openCreate() {
@@ -605,11 +615,13 @@ export default function ToursPage() {
     };
   }, [rows]);
 
+  const scrollAnchor = useListScrollRestore(!loading);
+
   return (
     // BOTH views are operational workspaces — they take the FULL available
     // content width (only page padding remains); wide column selections
     // scroll inside the table's own overflow-x container.
-    <div className="mx-auto max-w-none px-5 lg:px-8 py-4">
+    <div ref={scrollAnchor} className="mx-auto max-w-none px-5 lg:px-8 py-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">

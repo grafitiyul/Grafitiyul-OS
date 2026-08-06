@@ -8,6 +8,7 @@ import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import PageSizeSelector, { usePageSizePref } from '../common/PageSizeSelector.jsx';
 import Pager from '../common/Pager.jsx';
+import { useListState, useListScrollRestore, useListOrigin } from '../common/useListState.js';
 import useDebouncedValue from '../../shell/search/useDebouncedValue.js';
 import CreateDealModal from './CreateDealModal.jsx';
 
@@ -15,9 +16,21 @@ import CreateDealModal from './CreateDealModal.jsx';
 // dominant search + a roomy, user-configurable table. OPEN deals come first
 // because they need action; ALL is last. דילים / OPEN·WON·LOST.
 
-const FILTERS_KEY = 'deals.filters.v1';
 const COLUMNS_KEY = 'deals.columns.v1';
 const PAGESIZE_KEY = 'deals.pageSize.v1';
+
+// Durable list state — the URL owns it (see listState.js). Page 4 of a filtered,
+// sorted list is a real place the operator can return to, link to and refresh.
+const LIST_FIELDS = {
+  q: { default: '', sticky: true },
+  status: { default: 'all', sticky: true },
+  stage: { default: 'all', sticky: true },
+  org: { default: 'all', sticky: true },
+  min: { default: '', sticky: true },
+  max: { default: '', sticky: true },
+  sort: { type: 'sort', default: { key: 'updatedAt', dir: 'desc' }, sticky: true },
+  page: { type: 'int', default: 1 },
+};
 
 // Column key → server sort key. Only these columns are click-to-sort; the rest
 // have no server-side sort and stay reorder-only (sortable:false). The server
@@ -30,21 +43,6 @@ const SORT_KEY = {
   createdAt: 'createdAt',
   updatedAt: 'activity',
 };
-
-function loadFilters() {
-  try {
-    return JSON.parse(localStorage.getItem(FILTERS_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-function saveFilters(f) {
-  try {
-    localStorage.setItem(FILTERS_KEY, JSON.stringify(f));
-  } catch {
-    /* storage unavailable — non-fatal, filters just won't persist */
-  }
-}
 
 function fullName(c) {
   if (!c) return '';
@@ -180,29 +178,21 @@ export default function DealsList() {
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  // Filters persist across refresh / navigation / logout via localStorage, so
-  // the user always returns to the exact same filtered workspace.
-  const [saved] = useState(loadFilters);
-  const [search, setSearch] = useState(saved.search ?? '');
-  const [status, setStatus] = useState(saved.status ?? 'all');
-  const [stageId, setStageId] = useState(saved.stageId ?? 'all');
-  const [orgId, setOrgId] = useState(saved.orgId ?? 'all');
-  const [minVal, setMinVal] = useState(saved.minVal ?? '');
-  const [maxVal, setMaxVal] = useState(saved.maxVal ?? '');
-  const [page, setPage] = useState(1);
+  // Page / search / filters / sort live in the URL and are mirrored to this
+  // browser's remembered workspace — so Back from a deal returns to the exact
+  // page, and tomorrow's first visit lands on the same filters.
+  const list = useListState({ key: 'deals', fields: LIST_FIELDS });
+  const { q: search, status, stage: stageId, org: orgId, min: minVal, max: maxVal, page, sort } = list;
   const [pageSize, setPageSize] = usePageSizePref(PAGESIZE_KEY);
-  const [sort, setSort] = useState({ key: 'updatedAt', dir: 'desc' });
   const [refreshKey, setRefreshKey] = useState(0);
+  // Location this list hands to a deal it opens, so the deal's "חזרה" knows
+  // where the operator actually came from.
+  const origin = useListOrigin();
 
   // Debounce free-typed inputs so a burst of keystrokes costs one request.
   const debouncedSearch = useDebouncedValue(search, 300);
   const debouncedMin = useDebouncedValue(minVal, 300);
   const debouncedMax = useDebouncedValue(maxVal, 300);
-
-  // Persist whenever any filter changes.
-  useEffect(() => {
-    saveFilters({ search, status, stageId, orgId, minVal, maxVal });
-  }, [search, status, stageId, orgId, minVal, maxVal]);
 
   // Visible table columns + user order — persisted via the shared hook
   // (column chooser + drag-reorderable headers).
@@ -242,10 +232,9 @@ export default function DealsList() {
     [debouncedSearch, stageId, orgId, debouncedMin, debouncedMax],
   );
 
-  // Reset to the first page whenever a filter / search / sort / page size changes.
-  useEffect(() => {
-    setPage(1);
-  }, [baseParams, status, sort, pageSize]);
+  // NOTE: page 1 is NOT reset from an effect. A filter change resets it inside
+  // list.set(); an effect would also fire on mount and destroy the page the
+  // operator is returning to.
 
   // The paginated deals fetch — one page of rows + the matching total.
   useEffect(() => {
@@ -302,20 +291,24 @@ export default function DealsList() {
 
   function handleSort(colKey) {
     if (!SORT_KEY[colKey]) return;
-    setSort((s) =>
-      s.key === colKey
-        ? { key: colKey, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-        : { key: colKey, dir: 'desc' },
-    );
+    list.set({
+      sort:
+        sort.key === colKey
+          ? { key: colKey, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+          : { key: colKey, dir: 'desc' },
+    });
   }
 
   const hasFilters = search || stageId !== 'all' || orgId !== 'all' || minVal || maxVal;
   function clearFilters() {
-    setSearch(''); setStageId('all'); setOrgId('all'); setMinVal(''); setMaxVal('');
+    list.set({ q: '', stage: 'all', org: 'all', min: '', max: '' });
   }
 
+  // Restores the operator's scroll offset once the rows are on screen.
+  const scrollAnchor = useListScrollRestore(!loading);
+
   return (
-    <div className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
+    <div ref={scrollAnchor} className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
       {/* Header — compact */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -339,13 +332,13 @@ export default function DealsList() {
           Order OPEN · WON · LOST · ALL. Compact "dashboard widgets". */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         <MetricCard label="OPEN" n={summary.open.count} v={summary.open.sumMinor} tone="blue" icon="🕓"
-          active={status === 'open'} onClick={() => setStatus('open')} />
+          active={status === 'open'} onClick={() => list.set({ status: 'open' })} />
         <MetricCard label="WON" n={summary.won.count} v={summary.won.sumMinor} tone="emerald" icon="🏆"
-          active={status === 'won'} onClick={() => setStatus('won')} />
+          active={status === 'won'} onClick={() => list.set({ status: 'won' })} />
         <MetricCard label="LOST" n={summary.lost.count} v={summary.lost.sumMinor} tone="red" icon="✕"
-          active={status === 'lost'} onClick={() => setStatus('lost')} />
+          active={status === 'lost'} onClick={() => list.set({ status: 'lost' })} />
         <MetricCard label="ALL" n={summary.all.count} v={summary.all.sumMinor} tone="indigo" icon="🤝"
-          active={status === 'all'} onClick={() => setStatus('all')} />
+          active={status === 'all'} onClick={() => list.set({ status: 'all' })} />
       </div>
 
       {/* Filter bar — search dominant; status is driven by the cards above */}
@@ -355,20 +348,20 @@ export default function DealsList() {
             <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => list.set({ q: e.target.value })}
               placeholder="חיפוש לפי שם דיל, ארגון, איש קשר..."
               className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </div>
-          <CompactSelect value={stageId} onChange={setStageId}
+          <CompactSelect value={stageId} onChange={(v) => list.set({ stage: v })}
             options={[['all', 'כל השלבים'], ...stages.map((s) => [s.id, s.label])]} />
-          <CompactSelect value={orgId} onChange={setOrgId}
+          <CompactSelect value={orgId} onChange={(v) => list.set({ org: v })}
             options={[['all', 'כל הארגונים'], ...orgs.map((o) => [o.id, o.name])]} />
           <div className="flex items-center gap-1.5">
-            <input value={minVal} onChange={(e) => setMinVal(e.target.value)} inputMode="decimal" placeholder="מ-₪" dir="ltr"
+            <input value={minVal} onChange={(e) => list.set({ min: e.target.value })} inputMode="decimal" placeholder="מ-₪" dir="ltr"
               className="h-10 w-20 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
             <span className="text-gray-300">–</span>
-            <input value={maxVal} onChange={(e) => setMaxVal(e.target.value)} inputMode="decimal" placeholder="עד ₪" dir="ltr"
+            <input value={maxVal} onChange={(e) => list.set({ max: e.target.value })} inputMode="decimal" placeholder="עד ₪" dir="ltr"
               className="h-10 w-20 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
           </div>
           {hasFilters && (
@@ -419,7 +412,7 @@ export default function DealsList() {
                       deal={d}
                       cols={visibleCols}
                       stageCls={stageColor.get(d.dealStage?.id)}
-                      onOpen={() => navigate(dealPath(d))}
+                      onOpen={() => navigate(dealPath(d), { state: origin })}
                       onDelete={async () => {
                         if (!confirm(`למחוק את הדיל "${d.title}"?`)) return;
                         try { await api.deals.remove(d.id); setRefreshKey((k) => k + 1); }
@@ -430,8 +423,11 @@ export default function DealsList() {
                 </tbody>
               </table>
             </div>
-            <Pager page={page} pageSize={pageSize} total={total} onPage={setPage}>
-              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            <Pager page={page} pageSize={pageSize} total={total} onPage={list.setPage}>
+              <PageSizeSelector
+                value={pageSize}
+                onChange={(v) => { setPageSize(v); list.set({ page: 1 }); }}
+              />
             </Pager>
           </>
         )}
@@ -444,7 +440,7 @@ export default function DealsList() {
           subtypes={subtypes}
           sources={sources}
           onClose={() => setShowCreate(false)}
-          onCreated={(deal) => navigate(dealPath(deal))}
+          onCreated={(deal) => navigate(dealPath(deal), { state: origin })}
         />
       )}
     </div>

@@ -4,6 +4,8 @@ import { api } from '../../lib/api.js';
 import { useRealtime } from '../../lib/realtime.js';
 import { showToast } from '../../lib/toast.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import BackButton from '../common/BackButton.jsx';
+import { useListReturn } from '../common/useListState.js';
 import CardKebabMenu from '../common/CardKebabMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
@@ -124,6 +126,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const { id: routeId } = useParams();
   const id = dealIdProp || routeId;
   const navigate = useNavigate();
+  // Where "חזרה" goes: the originating list state when there is one, the deals
+  // root otherwise (pasted link / new tab / arrival from global search).
+  const listReturn = useListReturn('/admin/crm/deals', 'חזרה לדילים');
   const [deal, setDeal] = useState(null);
   const [stages, setStages] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
@@ -1251,6 +1256,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         { key: 'script', label: 'תסריט', icon: '📖', content: <DealSalesScript /> },
       ]}
     >
+      {/* Back to the list the operator came from — same page, filters, sort and
+          scroll. Hidden in the embedded/drawer rendering, which has no list
+          behind it. */}
+      {!dealIdProp && (
+        <div className="flex items-center gap-2 text-[13px]">
+          <BackButton {...listReturn} />
+        </div>
+      )}
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">

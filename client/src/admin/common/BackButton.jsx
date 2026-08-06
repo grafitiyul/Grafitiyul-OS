@@ -53,9 +53,13 @@ export default function BackButton({ to, onClick, label = 'חזרה', className 
     </>
   );
 
+  // `to` + `onClick` together is the useListReturn shape: the href keeps
+  // ctrl/⌘/middle-click working (opens the list in a new tab) while a plain
+  // click is intercepted to step history BACK — the only way the list returns
+  // with its scroll position, not just its URL.
   if (to) {
     return (
-      <Link to={to} className={cls}>
+      <Link to={to} onClick={onClick} className={cls}>
         {content}
       </Link>
     );
