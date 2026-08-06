@@ -15,14 +15,19 @@
 //   • reservationGroup — provenance; the copy did not come from that reservation.
 //   • Tasks — the copy gets its own auto "שיחה ראשונית" like any new deal
 //     (the caller fires ensureInitialCallTask post-commit).
-//   • Non-primary/archived offers + produced QuoteDocuments — immutable
-//     customer-facing audit of the original.
+//   • Non-primary/archived offers + PRODUCED QuoteDocuments — immutable
+//     customer-facing audit of the original. The primary offer's DRAFT is a
+//     different thing: it is the working quote, and its persistent presentation
+//     overrides ARE commercial preparation, so they travel (see sourceDraft).
 //   • noPaymentWaiver — a WON/payment decision about the ORIGINAL's money,
 //     never commercial preparation. The copy's valueMinor is corrected back to
 //     the full Builder gross (waived value added back) so its total matches
 //     its own waiver-free Builder.
 import { prisma } from '../db.js';
 import { computeWaivedMinor } from './waiver.js';
+// The ONE token minter — a copied draft gets its OWN public URL, never the
+// original's.
+import { newPublicToken } from '../quote/quoteDocument.js';
 
 // Editable commercial scalars — the template. Lifecycle fields (status, stage,
 // won*/lost*, review/collection state, viewed/activity stamps) are explicitly
@@ -137,6 +142,27 @@ export async function duplicateDeal(sourceDealId, client = prisma) {
       include: { lines: { orderBy: { sortOrder: 'asc' } } },
     }));
 
+  // The source's WORKING quote draft, for its persistent presentation overrides.
+  //
+  // What makes this safe is that the persistence decision is STRUCTURAL, not a
+  // guess about the text. A section edit saved with "החל שינוי זה גם על גרסאות
+  // עתידיות" is written to the draft's `overrideState`; an edit saved without it
+  // never reaches the database at all (it rides one produce call as
+  // `temporaryOverrideState` and is gone). So copying this row copies exactly
+  // the overrides the operator marked as lasting, and cannot copy a one-version
+  // edit even in principle — no text comparison is involved anywhere.
+  //
+  // Only the DRAFT is read. Produced versions are immutable customer documents
+  // belonging to the original deal; none of their numbers, tokens or frozen
+  // snapshots may follow a copy.
+  const sourceDraft = sourceVersion
+    ? await client.quoteDocument.findFirst({
+        where: { dealId: sourceDealId, status: 'draft' },
+        orderBy: { createdAt: 'desc' },
+        select: { language: true, overrideState: true, displayProductName: true },
+      })
+    : null;
+
   // Reusable operator-authored notes (see REUSABLE_NOTE_WHERE). Read before
   // the write transaction — pure reads of the source deal.
   const reusableNotes = await client.timelineEntry.findMany({
@@ -218,6 +244,33 @@ export async function duplicateDeal(sourceDealId, client = prisma) {
             for (const f of LINE_FIELDS) row[f] = l[f];
             return row;
           }),
+        });
+      }
+
+      // The copy's own working quote draft, seeded with the source's PERSISTENT
+      // presentation overrides. Without this a duplicate silently lost every
+      // "keep for the next version" edit and re-rendered the template defaults —
+      // the whole point of duplicating a deal is that its commercial shape comes
+      // with it.
+      //
+      // Independent row, independent id, its OWN fresh publicToken: editing the
+      // copy can never reach back into the source, and the copy's URL is not the
+      // original's. No versionNo, no producedAt, no renderModelSnapshot — the
+      // copy starts at "never issued", which is the truth about it.
+      if (sourceDraft && (sourceDraft.overrideState || sourceDraft.displayProductName)) {
+        await tx.quoteDocument.create({
+          data: {
+            dealId: deal.id,
+            quoteVersionId: version.id,
+            offerId: offer.id,
+            status: 'draft',
+            language: sourceDraft.language || 'he',
+            publicToken: newPublicToken(),
+            ...(sourceDraft.overrideState ? { overrideState: sourceDraft.overrideState } : {}),
+            ...(sourceDraft.displayProductName
+              ? { displayProductName: sourceDraft.displayProductName }
+              : {}),
+          },
         });
       }
     }

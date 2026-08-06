@@ -12,7 +12,7 @@ import { duplicateDeal, COPY_SCALARS, LINE_FIELDS, REUSABLE_NOTE_WHERE } from '.
 
 const STAGE_FIRST = { id: 'stage_first' };
 
-function makeStore({ deal, workingVersion = null, importVersion = null, timeline = [] }) {
+function makeStore({ deal, workingVersion = null, importVersion = null, timeline = [], quoteDrafts = [] }) {
   const s = { creates: {}, seq: 0 };
   const record = (model, row) => {
     (s.creates[model] ||= []).push(row);
@@ -52,6 +52,15 @@ function makeStore({ deal, workingVersion = null, importVersion = null, timeline
     dealStage: { findFirst: async () => STAGE_FIRST },
     dealContact: { createMany: async ({ data }) => data.forEach((r) => record('dealContact', r)) },
     quoteOffer: { create: async ({ data }) => record('quoteOffer', { id: id('qo'), ...data }) },
+    quoteDocument: {
+      // Real WHERE filtering — the service must read the source's DRAFT only.
+      // A produced document is an immutable customer record of the original and
+      // may never follow a copy, so a seeded produced row that leaked into this
+      // result would show up as a failing assertion below.
+      findFirst: async ({ where }) =>
+        quoteDrafts.find((d) => d.dealId === where.dealId && d.status === where.status) || null,
+      create: async ({ data }) => record('quoteDocument', { id: id('qd'), ...data }),
+    },
     quoteLine: { createMany: async ({ data }) => data.forEach((r) => record('quoteLine', r)) },
     dealTourPlan: { create: async ({ data }) => record('dealTourPlan', { id: id('plan'), ...data }) },
     dealTourPlanAssignment: { createMany: async ({ data }) => data.forEach((r) => record('planAssignment', r)) },
@@ -281,4 +290,79 @@ test('scalar copy list stays in sync with the fixture (COPY_SCALARS all land)', 
     if (src[f] === null || src[f] === undefined) continue;
     assert.deepEqual(copy[f], src[f], `COPY_SCALARS field ${f} lands on the copy`);
   }
+});
+
+// ── persistent quote overrides travel; one-version edits cannot ─────────────
+//
+// The persistence decision is STRUCTURAL. An override saved with "החל שינוי זה
+// גם על גרסאות עתידיות" is written to the draft's overrideState; one saved
+// without it never reaches the database at all (it rides a single produce call
+// as temporaryOverrideState). So these tests are about copying the right ROW,
+// never about comparing text.
+
+const PERSISTENT_DRAFT = {
+  dealId: 'src1',
+  status: 'draft',
+  language: 'en',
+  displayProductName: 'Graffiti Tour & Workshop',
+  overrideState: {
+    blocks: {
+      program: { html: '<p>תוכנית מותאמת</p>' },
+      tour_details: { fields: { he: { duration: '~4 שעות' }, en: { duration: '~4 hours' } } },
+    },
+  },
+};
+
+test('the copy gets its own working draft carrying the PERSISTENT overrides', async () => {
+  const c = makeStore({ deal: fullSource(), workingVersion: WORKING_VERSION, quoteDrafts: [PERSISTENT_DRAFT] });
+  await duplicateDeal('src1', c);
+  const drafts = c._s.creates.quoteDocument || [];
+  assert.equal(drafts.length, 1);
+  const d = drafts[0];
+  assert.deepEqual(d.overrideState, PERSISTENT_DRAFT.overrideState, 'section AND technical-field overrides both land');
+  assert.equal(d.displayProductName, 'Graffiti Tour & Workshop');
+  assert.equal(d.language, 'en', 'the quote language travels with the template');
+});
+
+test('the copied draft is an INDEPENDENT, never-issued document', async () => {
+  const c = makeStore({ deal: fullSource(), workingVersion: WORKING_VERSION, quoteDrafts: [PERSISTENT_DRAFT] });
+  await duplicateDeal('src1', c);
+  const d = c._s.creates.quoteDocument[0];
+  assert.equal(d.status, 'draft');
+  assert.equal(d.versionNo, undefined, 'the copy has issued nothing');
+  assert.equal(d.producedAt, undefined);
+  assert.equal(d.renderModelSnapshot, undefined, 'no frozen customer content follows a copy');
+  assert.ok(d.publicToken, 'its own capability token…');
+  assert.notEqual(d.publicToken, PERSISTENT_DRAFT.publicToken, '…never the original’s URL');
+  // Bound to the COPY's own deal/offer/version, so editing it cannot reach back.
+  assert.equal(d.dealId, 'copy1');
+  assert.equal(d.quoteVersionId, c._s.creates.quoteVersion[0].id);
+  assert.equal(d.offerId, c._s.creates.quoteOffer[0].id);
+});
+
+test('a source with no persistent overrides creates no draft at all', async () => {
+  // Nothing was marked as lasting, so there is nothing to carry — and an empty
+  // draft row would be a lie about the copy having been prepared.
+  const c = makeStore({
+    deal: fullSource(), workingVersion: WORKING_VERSION,
+    quoteDrafts: [{ dealId: 'src1', status: 'draft', language: 'he', overrideState: null, displayProductName: null }],
+  });
+  await duplicateDeal('src1', c);
+  assert.equal((c._s.creates.quoteDocument || []).length, 0);
+});
+
+test('a source that never opened the quote module copies cleanly', async () => {
+  const c = makeStore({ deal: fullSource(), workingVersion: WORKING_VERSION, quoteDrafts: [] });
+  const r = await duplicateDeal('src1', c);
+  assert.equal(r.dealId, 'copy1', 'the copy is still created');
+  assert.equal((c._s.creates.quoteDocument || []).length, 0);
+});
+
+test('only the DRAFT is read — a produced version is never a source', async () => {
+  let sentWhere = null;
+  const c = makeStore({ deal: fullSource(), workingVersion: WORKING_VERSION, quoteDrafts: [PERSISTENT_DRAFT] });
+  const orig = c.quoteDocument.findFirst;
+  c.quoteDocument.findFirst = async (args) => { sentWhere = args.where; return orig(args); };
+  await duplicateDeal('src1', c);
+  assert.deepEqual(sentWhere, { dealId: 'src1', status: 'draft' });
 });

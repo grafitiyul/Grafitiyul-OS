@@ -173,6 +173,151 @@ function OverrideEditor({ block, hasTemp, hasPersistent, previousHtml, busy, onS
   );
 }
 
+// ── Technical Details, edited for THIS quote ────────────────────────────────
+//
+// The section is structured facts, not prose, so it gets fields rather than a
+// rich-text box: an operator who needs this quote to read "~4 שעות" is changing
+// one value, not rewriting a paragraph.
+//
+// It is a QUOTE PRESENTATION override and nothing else. The Deal, the TourEvent,
+// the product catalog, the operational plan and the confirmation email keep
+// answering with the real values — only this quote reads differently. The panel
+// says so out loud, because a field that looks like the Deal's field but is not
+// would be the most dangerous thing on this screen.
+//
+// Empty = no override. That is also how "reset" clears a single field, while
+// the footer's reset clears the whole section in both languages at once.
+const TECH_FIELDS = [
+  { key: 'city', label: 'עיר' },
+  { key: 'date', label: 'תאריך' },
+  { key: 'time', label: 'שעה' },
+  { key: 'participants', label: 'מספר משתתפים' },
+  { key: 'duration', label: 'משך הפעילות' },
+  { key: 'language', label: 'שפת הפעילות' },
+];
+
+// What the customer currently sees for each field, to show as the placeholder —
+// so an empty box visibly means "leave it as it is", never "make it blank".
+function techCanonical(block, lang) {
+  const d = block?.data || {};
+  const dateStr = d.tourDate
+    ? new Date(d.tourDate).toLocaleDateString(lang === 'en' ? 'en-GB' : 'he-IL')
+    : '';
+  return {
+    city: d.city || '',
+    date: dateStr,
+    time: d.tourTime || '',
+    participants: d.participants != null ? String(d.participants) : '',
+    duration: d.durationHours != null ? `~${d.durationHours} ${lang === 'en' ? 'hours' : 'שעות'}` : '',
+    language: d.tourLanguage || '',
+  };
+}
+
+function TechnicalDetailsEditor({ block, lang, storedFields, hasTemp, hasPersistent, busy, onSave, onReset, onClose }) {
+  const canonical = techCanonical(block, lang);
+  const [values, setValues] = useState(() => ({ ...(storedFields?.[lang] || {}) }));
+  const [applyFuture, setApplyFuture] = useState(!hasTemp);
+  const set = (k, v) => setValues((cur) => ({ ...cur, [k]: v }));
+
+  function save() {
+    // Only non-empty values survive — clearing a box removes that override.
+    const forLang = {};
+    for (const f of TECH_FIELDS) {
+      const v = String(values[f.key] ?? '').trim();
+      if (v) forLang[f.key] = v;
+    }
+    // The OTHER language's overrides are carried through untouched: a bilingual
+    // quote must not lose its English wording because Hebrew was just edited.
+    const next = { ...(storedFields || {}) };
+    if (Object.keys(forLang).length) next[lang] = forLang;
+    else delete next[lang];
+    onSave({ fields: Object.keys(next).length ? next : null, applyFuture });
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`פרטים טכניים — עריכה להצעה של עסקה זו (${lang === 'en' ? 'English' : 'עברית'})`}
+      size="lg"
+      footer={(
+        <>
+          {(hasTemp || hasPersistent) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onReset}
+              title="מסיר את כל ההתאמות של המקטע ומחזיר את הערכים המקוריים — בשתי השפות"
+              className="me-auto rounded-lg px-3 py-2 text-[12.5px] text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-50"
+            >
+              ↺ שחזר ערכים מקוריים
+            </button>
+          )}
+          <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">ביטול</button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={save}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? 'שומר…' : 'שמור'}
+          </button>
+        </>
+      )}
+    >
+      <div dir="rtl" className="space-y-3">
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800 ring-1 ring-amber-200">
+          העריכה כאן משנה רק את מה שכתוב בהצעה. היא לא משנה את פרטי העסקה, את הסיור,
+          את המוצר, את התכנון התפעולי או את מייל האישור — הם ממשיכים להראות את הערכים האמיתיים.
+        </p>
+        {hasTemp && (
+          <p className="rounded-lg bg-purple-50 px-3 py-2 text-[12px] leading-relaxed text-purple-700 ring-1 ring-purple-200">
+            למקטע זה יש כרגע שינוי זמני — הוא יחול רק על הגרסה שתופק עכשיו. סמנו את התיבה למטה כדי להפוך אותו לקבוע.
+          </p>
+        )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {TECH_FIELDS.map((f) => (
+            <div key={f.key}>
+              <label className="mb-1 flex items-center gap-1.5 text-[12px] text-gray-500">
+                {f.label}
+                {String(values[f.key] ?? '').trim() && (
+                  <span className="rounded-full bg-teal-50 px-1.5 py-px text-[10px] font-semibold text-teal-700 ring-1 ring-teal-200">
+                    מותאם
+                  </span>
+                )}
+              </label>
+              <input
+                className={FIELD}
+                dir="auto"
+                value={values[f.key] ?? ''}
+                placeholder={canonical[f.key] || '—'}
+                onChange={(e) => set(f.key, e.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-gray-400">
+          שדה ריק = הערך המקורי (מוצג באפור). השדות נערכים לשפת ההצעה הנוכחית; מעבר לשפה השנייה מאפשר לערוך אותה בנפרד.
+        </p>
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-gray-200 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={applyFuture}
+            onChange={(e) => setApplyFuture(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span className="text-[13px] text-gray-700">
+            החל שינוי זה גם על גרסאות עתידיות של עסקה זו
+            <span className="block text-[11.5px] leading-relaxed text-gray-400">
+              ללא סימון — השינוי חל רק על הגרסה שתופק עכשיו; גרסאות עתידיות יחזרו לערכים המקוריים.
+            </span>
+          </span>
+        </label>
+      </div>
+    </Dialog>
+  );
+}
+
 function publicQuoteUrl(token) {
   return `${window.location.origin}/quote/${token}`;
 }
@@ -317,9 +462,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
   // working draft (all future versions inherit) AND drop the section's temp
   // entry — the temp layer must never keep shadowing (or later get mistaken
   // for) the persistent text. Temporary → local one-shot layer only.
-  async function saveOverride(block, { title, html, applyFuture }) {
-    const patch = { html };
+  async function saveOverride(block, { title, html, fields, applyFuture }) {
+    const patch = {};
+    if (html !== undefined) patch.html = html;
     if (title && title !== (block.data?.title || '')) patch.title = title;
+    // Technical Details overrides VALUES, not prose. The editor hands over the
+    // complete per-language map (both languages), because the block-level merge
+    // below replaces `fields` wholesale — a partial map would silently drop the
+    // other language's overrides.
+    if (fields !== undefined) patch.fields = fields;
     setBusy(true); setError(null);
     try {
       if (applyFuture) {
@@ -785,7 +936,11 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
                       <div className="space-y-16 px-6 py-12 lg:px-16 lg:py-14">
                         {bodyBlocks.map((b) => (
                           <section key={b.key} className="group relative">
-                            {EDITABLE_TYPES.has(b.type) && blockHasContent(b) && (
+                            {/* Technical Details gets the SAME affordance in the
+                                same place — it just opens a field editor
+                                instead of a rich-text one, because its content
+                                is facts. */}
+                            {(EDITABLE_TYPES.has(b.type) || b.type === 'tour_details') && blockHasContent(b) && (
                               <div className="absolute -top-3 start-0 z-10 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
                                 <button
                                   type="button"
@@ -909,7 +1064,30 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
         </div>
       )}
 
-      {editing && (
+      {/* One `editing` slot, two editors — chosen by what the section IS.
+          Prose sections get the rich-text popup; Technical Details gets fields.
+          Both write through the SAME saveOverride/resetOverride plumbing, so
+          the persistence checkbox and the reset behave identically. */}
+      {editing && editing.type === 'tour_details' && (
+        <TechnicalDetailsEditor
+          block={editing}
+          lang={lang}
+          // The effective stored map: a temporary edit shadows the persistent
+          // one, exactly as the preview shows it.
+          storedFields={
+            tempOverrides?.blocks?.[editing.key]?.fields ??
+            doc?.overrideState?.blocks?.[editing.key]?.fields ??
+            null
+          }
+          hasTemp={!!tempOverrides?.blocks?.[editing.key]}
+          hasPersistent={!!doc?.overrideState?.blocks?.[editing.key]}
+          busy={busy}
+          onSave={(v) => saveOverride(editing, v)}
+          onReset={() => resetOverride(editing)}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {editing && editing.type !== 'tour_details' && (
         <OverrideEditor
           block={editing}
           hasTemp={!!tempOverrides?.blocks?.[editing.key]}

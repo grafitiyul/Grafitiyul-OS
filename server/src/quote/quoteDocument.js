@@ -239,7 +239,14 @@ export async function updateQuoteDocumentMeta(client, id, body = {}) {
   }
   // Draft structure + presentation overrides (Slice 3). Plain JSON objects or
   // null. compositionDraft = { blocks:[{key,hidden}] } (order + hidden);
-  // overrideState = { blocks:{ [key]:{ html?, title? } } } (content overrides).
+  // overrideState = { blocks:{ [key]:{ html?, title?, fields? } } }. `fields` is
+  // the Technical Details case — structured facts rather than prose, keyed by
+  // language ({ he:{…}, en:{…} }) because a fact reads differently in each.
+  //
+  // The draft-only guard above is what keeps ISSUED versions frozen: a produced
+  // document renders from its own renderModelSnapshot and cannot be edited here
+  // at all, so no override — prose or field — can ever reach a quote a customer
+  // already received.
   if (body.compositionDraft !== undefined) {
     if (body.compositionDraft !== null && typeof body.compositionDraft !== 'object') return { error: 'invalid_composition_draft' };
     data.compositionDraft = body.compositionDraft ?? null;

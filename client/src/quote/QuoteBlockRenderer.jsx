@@ -378,10 +378,18 @@ const TECH_DEFAULT_ORDER = ['city', 'date', 'time', 'participants', 'duration', 
 function FactCard({ d, lang }) {
   const t = tt(lang);
   const order = Array.isArray(d.fieldOrder) ? d.fieldOrder : TECH_DEFAULT_ORDER;
+  // A per-quote override replaces the VALUE only — the icon, the label, the
+  // order and which fields show at all still come from the composed model and
+  // the global template. So an override can change what this quote says, never
+  // what the section IS. A field with no override renders exactly as before.
+  const ov = d.fieldOverrides || null;
   const facts = order
-    .map((key) => TECH_FIELD_DEFS[key])
-    .filter(Boolean)
-    .map((def) => def(t, d, lang))
+    .map((key) => [key, TECH_FIELD_DEFS[key]])
+    .filter(([, def]) => def)
+    .map(([key, def]) => {
+      const [icon, label, value] = def(t, d, lang);
+      return [icon, label, ov && ov[key] ? ov[key] : value];
+    })
     .filter(([, , v]) => v !== null && v !== undefined && v !== '');
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">

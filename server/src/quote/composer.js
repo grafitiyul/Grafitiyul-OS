@@ -19,7 +19,7 @@
 // quote-template service can share it without a circular import. Re-exported here
 // so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
 import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
-import { getQuoteTemplate, SECTION_TITLE_DEFAULTS } from './quoteTemplate.js';
+import { getQuoteTemplate, SECTION_TITLE_DEFAULTS, TECH_FIELD_KEYS } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 import { effectiveOrgType, effectiveOrgTypeId } from '../deals/classification.js';
 import { signedLineAmountMinor } from '../../../shared/lineMath.mjs';
@@ -324,6 +324,31 @@ function buildTourDetails({ deal, displayName, lang, template, sharedContent }) 
   };
 }
 
+// The technical-detail fields this quote overrides, in the quote's LANGUAGE.
+//
+// Language-keyed, unlike the prose overrides beside it, and deliberately so: a
+// prose override is one piece of wording the operator wrote for the letter they
+// are sending, while a technical fact genuinely reads differently in each
+// language ("3 שעות" / "3 hours", "עברית" / "Hebrew"). Storing one string for
+// both would force a bilingual quote to be wrong in one of them.
+//
+// Shape: overrideState.blocks.tour_details.fields = { he: { duration: '…' }, en: {…} }
+// Only non-empty strings count; an empty value means "no override on this
+// field", which is exactly how reset-to-default clears one.
+// → { [fieldKey]: string } or null when this language overrides nothing.
+export function techFieldOverrides(blockOverride, lang) {
+  const byLang = blockOverride?.fields;
+  if (!byLang || typeof byLang !== 'object') return null;
+  const src = byLang[lang];
+  if (!src || typeof src !== 'object') return null;
+  const out = {};
+  for (const key of TECH_FIELD_KEYS) {
+    const v = src[key];
+    if (typeof v === 'string' && v.trim()) out[key] = v.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // Visible technical-detail field keys in configured order, or null when there is
 // no template (renderer then falls back to its built-in default set = today).
 function techFieldOrder(template) {
@@ -532,6 +557,20 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
       if (isFilled(ov?.html)) {
         data = data.items !== undefined ? { ...data, customHtml: ov.html } : { ...data, html: ov.html };
         overridden = true;
+      }
+      // Technical Details is STRUCTURED (city / date / time / participants /
+      // duration / language), not prose, so an HTML override cannot express
+      // "this one quote says 3 hours". Its override is therefore per FIELD, on
+      // the same overrideState.blocks entry as the title/html ones — one
+      // override mechanism, not a second.
+      //
+      // This is PRESENTATION ONLY. It never writes back to the Deal, the
+      // TourEvent, the catalog, the operational plan or the confirmation email:
+      // those keep answering with the real operational values, and only this
+      // quote reads differently.
+      if (b.type === 'tour_details') {
+        const fields = techFieldOverrides(ov, language);
+        if (fields) { data = { ...data, fieldOverrides: fields }; overridden = true; }
       }
     }
     // Column-backed overrides count as "edited" for their blocks.
