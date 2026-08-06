@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   resolveReservationLink,
   eligibleAgencyOrg,
+  eligibleAgencyOrgs,
   mintLinkForContact,
 } from './links.js';
 
@@ -161,4 +162,54 @@ test('mint creates a token for a contact with no active link', async () => {
   assert.equal(r.created, true);
   assert.ok(r.link.token.length >= 32);
   assert.equal(r.link.defaultLanguage, 'he');
+});
+
+// ── every qualifying agency, for anything that DISPLAYS eligibility ─────────
+//
+// eligibleAgencyOrg answers "which organization does a reservation attach to"
+// and must pick one. A SCREEN must not: showing one agency while the contact
+// belongs to three hides the other two. The "טופס הזמנה" card reads this list.
+
+test('eligibleAgencyOrgs: every qualifying agency, primary first', () => {
+  const secondAgency = { id: 'org3', name: 'סוכנות ב', organizationType: AGENCY_TYPE };
+  const orgs = eligibleAgencyOrgs(
+    contactWith([
+      { isPrimary: false, organization: secondAgency },
+      { isPrimary: true, organization: AGENCY_ORG },
+    ]),
+  );
+  assert.deepEqual(orgs.map((o) => o.id), ['org1', 'org3'], 'none is silently dropped');
+});
+
+test('eligibleAgencyOrgs: non-agency memberships never appear', () => {
+  const orgs = eligibleAgencyOrgs(
+    contactWith([
+      { isPrimary: true, organization: SCHOOL_ORG },
+      { isPrimary: false, organization: AGENCY_ORG },
+    ]),
+  );
+  assert.deepEqual(orgs.map((o) => o.id), ['org1']);
+});
+
+test('eligibleAgencyOrgs: a contact with no agency qualifies through nothing', () => {
+  assert.deepEqual(eligibleAgencyOrgs(contactWith([{ isPrimary: true, organization: SCHOOL_ORG }])), []);
+  assert.deepEqual(eligibleAgencyOrgs(contactWith([])), []);
+  assert.deepEqual(eligibleAgencyOrgs(null), []);
+});
+
+test('eligibility is the CAPABILITY FLAG — never the organization name', () => {
+  // An organization named exactly like a travel agency, typed as a school:
+  // not eligible. And an agency-typed organization named nothing like one:
+  // eligible. Renaming an organization can never grant or remove a form.
+  const namedLikeAgency = { id: 'orgX', name: 'סוכנות נסיעות ותיירות בע"מ', organizationType: SCHOOL_TYPE };
+  const namedLikeAnything = { id: 'orgY', name: 'עמותת שכונה', organizationType: AGENCY_TYPE };
+  assert.deepEqual(eligibleAgencyOrgs(contactWith([{ organization: namedLikeAgency }])), []);
+  assert.deepEqual(
+    eligibleAgencyOrgs(contactWith([{ organization: namedLikeAnything }])).map((o) => o.id),
+    ['orgY'],
+  );
+});
+
+test('a missing or untyped organization is never eligible', () => {
+  assert.deepEqual(eligibleAgencyOrgs(contactWith([{ organization: null }, { organization: { id: 'o', name: 'x' } }])), []);
 });

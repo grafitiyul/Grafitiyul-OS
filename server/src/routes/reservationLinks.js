@@ -17,6 +17,7 @@ import { resolvePublicOrigin } from '../dealPayment.js';
 import {
   ELIGIBILITY_INCLUDE,
   eligibleAgencyOrg,
+  eligibleAgencyOrgs,
   activeLinkForContact,
   mintLinkForContact,
   rotateLinkForContact,
@@ -50,15 +51,20 @@ async function contactState(req, contactId) {
   if (!contact) return null;
   const organization = eligibleAgencyOrg(contact);
   const link = await activeLinkForContact(contactId);
+  const orgDto = (o) => ({
+    id: o.id,
+    name: o.name,
+    typeLabel: o.organizationType?.label || null,
+  });
   return {
     eligible: !!organization,
-    organization: organization
-      ? {
-          id: organization.id,
-          name: organization.name,
-          typeLabel: organization.organizationType?.label || null,
-        }
-      : null,
+    // The organization a NEW reservation attaches to (one deal, one owner).
+    organization: organization ? orgDto(organization) : null,
+    // EVERY qualifying agency, so a display surface can name all of them
+    // instead of silently showing the first. The order form itself is the
+    // CONTACT's (one AgentReservationLink per person, not per agency), so this
+    // is the list the one link applies to — never a per-agency link set.
+    agencies: eligibleAgencyOrgs(contact).map(orgDto),
     link: linkDto(req, link),
   };
 }

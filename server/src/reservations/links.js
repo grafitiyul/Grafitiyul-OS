@@ -35,12 +35,31 @@ export const ELIGIBILITY_INCLUDE = {
 // organization a future Deal will be attached to (BINDING #2: the contact's
 // CURRENT organization — derived live, never pinned on the link).
 export function eligibleAgencyOrg(contact) {
-  const qualifying = (contact?.orgLinks || []).filter(
-    (l) => l.organization?.organizationType?.agentReservations,
-  );
+  const qualifying = eligibleAgencyOrgs(contact);
   if (!qualifying.length) return null;
-  const primary = qualifying.find((l) => l.isPrimary);
-  return (primary || qualifying[0]).organization;
+  const primary = (contact?.orgLinks || []).find(
+    (l) => l.isPrimary && l.organization?.organizationType?.agentReservations,
+  );
+  return primary ? primary.organization : qualifying[0];
+}
+
+// ALL the contact's qualifying agencies, in membership order (primary first).
+//
+// eligibleAgencyOrg above answers "which organization does a reservation
+// ATTACH to" — a single deal needs a single owner, so it picks one. That is the
+// wrong answer for a screen: showing one agency while the contact belongs to
+// three would quietly hide the other two. Anything that DISPLAYS eligibility
+// reads this list and shows what is actually there.
+//
+// Capability-flag driven throughout (OrganizationType.agentReservations) —
+// never the organization's name, never free text.
+export function eligibleAgencyOrgs(contact) {
+  const links = [...(contact?.orgLinks || [])].sort(
+    (a, b) => (b.isPrimary ? 1 : 0) - (a.isPrimary ? 1 : 0),
+  );
+  return links
+    .filter((l) => l.organization?.organizationType?.agentReservations)
+    .map((l) => l.organization);
 }
 
 // Resolve a public reservation token. Security contract (portal.js pattern):

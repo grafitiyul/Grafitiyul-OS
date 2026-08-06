@@ -10,6 +10,7 @@ import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import ReservationLinkSection from './ReservationLinkSection.jsx';
+import AgentOrderFormCard from './AgentOrderFormCard.jsx';
 import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
 import FileEntryList from '../../common/files/FileEntryList.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
@@ -169,6 +170,17 @@ export default function ContactDetail() {
         onRemove={(itemId) => api.contacts.removeEmail(itemId)}
         onReorder={(ids) => api.contacts.reorderEmails(id, ids)}
         onChange={refresh}
+      />
+
+      {/* טופס הזמנה — the agent's order form, one click away. Renders ONLY for
+          a contact who qualifies through the canonical agency capability flag,
+          and sits ABOVE the deals card because sending an agent their form is
+          the daily action; last year's deals are reference. Remounts with the
+          memberships so eligibility re-evaluates live, exactly like the
+          management section further down. */}
+      <AgentOrderFormCard
+        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
+        contactId={id}
       />
 
       {/* דילים קודמים — the contact's linked deals (canonical DealContact
