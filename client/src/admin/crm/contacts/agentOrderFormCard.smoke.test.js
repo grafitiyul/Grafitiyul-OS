@@ -204,24 +204,40 @@ test('viewing the card performs no writes — it only reads', async () => {
 
 // ── placement ───────────────────────────────────────────────────────────────
 //
-// The card must be ABOVE "דילים קודמים" — and, the reason that rule exists,
-// actually VISIBLE. Merely satisfying "above the deals card" once put it at
-// ~900px down the right panel, behind the identity form, the phones and the
-// emails: present in the DOM, below the fold, and reported as shipped while
-// the operator could not see it. So the guard is now positional, not relative:
-// it must be the FIRST thing in the panel.
-test('the card is the FIRST section of the Contact right panel', async () => {
+// Two production failures taught this guard, and neither was about the DOM
+// being wrong — the card rendered correctly every time:
+//   1. placed above "דילים קודמים" as specified, it sat ~900px down a 420px
+//      scrolling column, below the fold;
+//   2. moved to the top of that column, it was still inside the COLLAPSIBLE
+//      right panel — whose collapsed state persists per browser forever — and
+//      below the lg breakpoint that panel stacks ~4000px beneath the timeline.
+//
+// So the rule is not "high in the panel", it is "NOT IN THE PANEL". The card
+// belongs to the center column, which is never collapsible and renders first
+// when the layout stacks.
+test('the card is in the CENTER column, never inside the collapsible right panel', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
-  const panel = src.indexOf('const detailsPanel');
-  const card = src.indexOf('<AgentOrderFormCard', panel);
-  const deals = src.indexOf('<ContactDealsSection', panel);
-  const identity = src.indexOf('<Section title="פרטי איש קשר"', panel);
-  const phones = src.indexOf('title="טלפונים"', panel);
-  assert.ok(panel > 0 && card > 0 && deals > 0 && identity > 0 && phones > 0);
-  assert.ok(card < identity, 'nothing may push טופס הזמנה below the fold — not even the identity form');
-  assert.ok(card < phones, 'nor the phones list');
-  assert.ok(card < deals, 'and it stays above דילים קודמים by construction');
+  const panelStart = src.indexOf('const detailsPanel');
+  const panelEnd = src.indexOf('<WorkspaceLayout');
+  const card = src.indexOf('<AgentOrderFormCard');
+  assert.ok(panelStart > 0 && panelEnd > panelStart && card > 0);
+  assert.ok(
+    card < panelStart || card > panelEnd,
+    'טופס הזמנה must not live in detailsPanel — a collapsed panel hides it permanently',
+  );
+  assert.ok(card > panelEnd, 'it belongs to the WorkspaceLayout children (the center column)');
+});
+
+test('the card is the first thing in the center column, above the contact header', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(path.join(here, 'ContactDetail.jsx'), 'utf8');
+  const card = src.indexOf('<AgentOrderFormCard');
+  const header = src.indexOf('{fullName}');
+  const timeline = src.indexOf('<TimelineFeed');
+  assert.ok(card > 0 && header > 0 && timeline > 0);
+  assert.ok(card < header, 'nothing may push it down — not the identity header');
+  assert.ok(card < timeline, 'and certainly not the timeline');
 });
 
 test('the card is mounted exactly ONCE (no duplicate after the move)', async () => {

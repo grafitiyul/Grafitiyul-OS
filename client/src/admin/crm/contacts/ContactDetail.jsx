@@ -118,22 +118,6 @@ export default function ContactDetail() {
   // RIGHT panel — the contact's static identity & relationships.
   const detailsPanel = (
     <div className="space-y-4">
-      {/* טופס הזמנה — FIRST in the panel, deliberately.
-          It was originally placed immediately above "דילים קודמים", which
-          satisfied the letter of the requirement and failed its point: the
-          identity form, the phones and the emails pushed it to ~900px down a
-          420px-wide scrolling column, so on a normal screen it was below the
-          fold and effectively invisible. Sending an agent their order form is
-          THE daily action on this page — it belongs where the eye lands, and
-          from the top it is still above the deals card by construction.
-          Renders for nobody else (canonical agency capability flag), so it
-          costs a non-agent contact nothing. Remounts with the memberships so
-          eligibility re-evaluates live, like the management section below. */}
-      <AgentOrderFormCard
-        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
-        contactId={id}
-      />
-
       <Section title="פרטי איש קשר">
         <div className="grid grid-cols-2 gap-3">
           <Input label="שם פרטי (עברית)" value={form.firstNameHe} onChange={(v) => set('firstNameHe', v)} />
@@ -229,6 +213,36 @@ export default function ContactDetail() {
       <div className="flex items-center gap-2 text-[13px]">
         <BackButton {...listReturn} />
       </div>
+
+      {/* טופס הזמנה — in the CENTER column, deliberately, and this is the third
+          placement because the first two were wrong in ways only the real screen
+          could show.
+
+          It started immediately above "דילים קודמים" (as specified) and landed
+          ~900px down a 420px scrolling column — below the fold. Moving it to the
+          top of that column fixed the fold but not the real problem: the right
+          panel is COLLAPSIBLE, and its collapsed state persists per browser
+          (localStorage 'gos.workspace.contact') — so an operator who once
+          collapsed it never sees the card again, on any contact, forever. Below
+          the lg breakpoint the same panel stacks BELOW the whole timeline
+          (measured at ~4000px down), which a 125% browser zoom is enough to
+          trigger.
+
+          The center column has neither failure mode: it is never collapsible
+          and it renders FIRST when the layout stacks. So the card goes where it
+          cannot be hidden by a UI preference or a window size — which is what
+          "must not be hidden or require opening another section" actually asks
+          for. It remains above "דילים קודמים" (that card lives further down the
+          right panel) and it is still mounted exactly ONCE.
+
+          Renders for nobody but a qualifying agent (canonical capability flag),
+          so it costs every other contact nothing. Remounts with the memberships
+          so eligibility re-evaluates live. */}
+      <AgentOrderFormCard
+        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
+        contactId={id}
+      />
+
       {/* Header — the contact identity + the PRIMARY workspace action: opening a
           new deal for this contact (RTL: the action sits on the LEFT edge). */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5 flex flex-wrap items-start justify-between gap-3">
