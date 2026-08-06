@@ -6,6 +6,9 @@ import { recordDealChanges } from '../timeline/dealChangelog.js';
 import { publicOrigin } from '../communication/context.js';
 import { reportOpenTourParticipant } from '../adminReports/openTourParticipantEvent.js';
 import { transitionDealToWon, emitWonTransitionEffects } from './wonTransition.js';
+import { resolveActivityType, ASSUMPTION_REASON_HE } from './resolveActivityType.js';
+import { stampSettledRegistration } from '../tours/registrations.js';
+import { raisePostPaymentCompletion } from './postPaymentReview.js';
 
 /** Resolve the deal's registration on this tour and report the join (#13). */
 async function notifyOpenTourJoin(client, dealId, tourEventId) {
@@ -66,6 +69,7 @@ export async function settleDealWon(
     paymentAmountMinor = null,
     recordChangelog = true,
     cause = null,
+    postPaymentReview = true,
   } = {},
 ) {
   const runOrigin = origin || systemOrigin();
@@ -96,30 +100,73 @@ export async function settleDealWon(
     const lateExpired = !targetTourEventId && held?.status === REG_EXPIRED;
     const effectiveOverbook = allowOverbook || lateExpired;
 
-    const gate = wonGate(deal, tourEventId);
+    // ── The sale is never blocked by an unchosen activity type ───────────────
+    // A missing activityType used to fail the gate and leave a PAYING customer
+    // with no tour (production #27105). It is now RESOLVED — group only from a
+    // real slot, business only from the canonical org rule, private otherwise —
+    // and persisted so there is one truth for pricing, reports and conditions.
+    // The assumption is stamped alongside it (activityTypeAssumedAt), which is
+    // what makes the operator's confirmation a follow-up instead of a blocker.
+    const targetTour = tourEventId
+      ? await tx.tourEvent.findUnique({ where: { id: tourEventId }, select: { kind: true } })
+      : null;
+    const resolvedType = resolveActivityType(deal, {
+      groupSlotSelected: targetTour?.kind === 'group_slot',
+    });
+    let effective = deal;
+    if (resolvedType.assumed) {
+      const assumedAt = new Date();
+      await tx.deal.update({
+        where: { id: dealId },
+        data: { activityType: resolvedType.activityType, activityTypeAssumedAt: assumedAt },
+      });
+      effective = { ...deal, activityType: resolvedType.activityType, activityTypeAssumedAt: assumedAt };
+      await emitTimelineEvent(tx, {
+        subjectType: 'deal',
+        subjectId: dealId,
+        kind: 'tour',
+        body: `🏷️ סוג הפעילות הושלם אוטומטית כדי לא לעכב את הסגירה — ${ASSUMPTION_REASON_HE[resolvedType.reason]}. נדרש אישור.`,
+        data: {
+          event: 'activity_type_assumed',
+          activityType: resolvedType.activityType,
+          reason: resolvedType.reason,
+        },
+        origin: runOrigin,
+      });
+    }
+
+    const gate = wonGate(effective, tourEventId);
     const tourReady = gate.missing.length === 0 && !gate.needsSlot;
 
-    let after = deal;
+    let after = effective;
+    // The tour this settlement actually landed on — the joined slot when there
+    // was one, otherwise the private/business tour created right here. Capturing
+    // the CREATED id matters: the money stamp below used to run only when a slot
+    // id already existed, so every private deal that paid without a prior
+    // reservation was left unstamped (#27060).
+    let settledTourId = tourEventId;
     if (tourReady) {
-      const { dealSync } = await createTourForWonDeal(
+      const { tourEvent, dealSync } = await createTourForWonDeal(
         tx,
-        deal,
+        effective,
         { targetTourEventId: tourEventId, origin: runOrigin, allowOverbook: effectiveOverbook },
       );
+      settledTourId = tourEvent?.id || tourEventId;
       if (dealSync) {
         await tx.deal.update({ where: { id: dealId }, data: dealSync });
-        after = { ...deal, ...dealSync };
+        after = { ...effective, ...dealSync };
       }
 
       // Normalize the deal's now-counting registration to CONFIRMED and stamp the
       // money state (a fresh WON booking writes legacy 'active'; an adopted hold is
-      // already 'confirmed' — both converge here).
-      if (tourEventId) {
-        await tx.ticketRegistration.updateMany({
-          where: { dealId, tourEventId, status: { in: ['active', 'confirmed'] } },
-          data: { status: 'confirmed', confirmedAt: new Date(), paymentStatus, ...(noPaymentReason ? { noPaymentReason } : {}) },
-        });
-      }
+      // already 'confirmed' — both converge here). Shared with the recovery path so
+      // a delayed tour produces the identical settlement record.
+      await stampSettledRegistration(tx, {
+        dealId,
+        tourEventId: settledTourId,
+        paymentStatus,
+        noPaymentReason,
+      });
 
       if (lateExpired) {
         await emitTimelineEvent(tx, {
@@ -160,13 +207,21 @@ export async function settleDealWon(
     return {
       dealId,
       wonNow: true,
-      tourEventId: tourReady ? tourEventId : null,
+      tourEventId: tourReady ? settledTourId : null,
       tourCreated: tourReady,
       lateExpired,
       overbook: effectiveOverbook,
       wonAt: t.wonAt,
       before: t.before,
       after,
+      // What the operator still has to look at, if anything: a value the system
+      // resolved on their behalf, or planning that is genuinely still missing.
+      assumed: resolvedType.assumed
+        ? [{ field: 'activityType', value: resolvedType.activityType, reason: resolvedType.reason }]
+        : [],
+      missing: tourReady ? [] : gate.missing,
+      needsSlot: tourReady ? false : gate.needsSlot,
+      orderNo: deal.orderNo ?? null,
     };
   });
   if (result?.wonNow) {
@@ -195,6 +250,17 @@ export async function settleDealWon(
     // checks that the tour really is an open tour, so every WON path can call
     // it unconditionally.
     if (result.tourEventId) notifyOpenTourJoin(client, dealId, result.tourEventId).catch(() => {});
+    // Anything the payment closed OVER — a resolved activity type, planning
+    // still missing — becomes one review card the office can answer later. The
+    // sale already went through; this is the follow-up, never a gate.
+    //
+    // `postPaymentReview: false` is for callers that already raise a MORE
+    // SPECIFIC card for the same gap (the Woo pipeline's woo_order_attention,
+    // which names the unmapped line or the ambiguous date). Two cards for one
+    // problem is how a review inbox becomes noise nobody reads — one real
+    // problem, one card. The in-transaction record (the persisted assumption +
+    // its timeline entry) is written either way, so opting out costs no truth.
+    if (postPaymentReview) raisePostPaymentCompletion(client, result).catch(() => {});
   }
   return result;
 }

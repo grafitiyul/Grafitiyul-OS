@@ -45,6 +45,9 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { settledPaymentStateFor } from '../deals/resolveActivityType.js';
+import { stampSettledRegistration } from '../tours/registrations.js';
+import { clearPostPaymentCompletion } from '../deals/postPaymentReview.js';
 import { duplicateDeal } from '../deals/duplicateDeal.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import {
@@ -707,7 +710,11 @@ router.put(
     // (untracked by the changelog, harmless in the snapshot).
     const existing = await prisma.deal.findUnique({
       where: { id: req.params.id },
-      select: { ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true },
+      // activityTypeAssumedAt rides along so a hand-set activity type can retire
+      // the pending post-payment question in the same save.
+      select: {
+        ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true, activityTypeAssumedAt: true,
+      },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
@@ -747,6 +754,11 @@ router.put(
         return res.status(400).json({ error: 'invalid_activity_type' });
       }
       data.activityType = b.activityType || null;
+      // An operator naming the activity type IS the answer to a value the
+      // system had to resolve on its own (deals/resolveActivityType.js). The
+      // pending question dies with the edit — asking again through the
+      // post-payment card would be asking something already answered.
+      data.activityTypeAssumedAt = null;
     }
     // Deal.organizationTypeId = the deal's classification ONLY while no
     // organization is linked. reconcileClassification (below, after all fields
@@ -1021,6 +1033,15 @@ router.put(
       after: deal,
       origin,
     });
+    // The operator just answered the classification question by hand — retire
+    // the card that was going to ask it. Non-fatal: the durable answer is the
+    // cleared activityTypeAssumedAt above, this only tidies the inbox.
+    if (b.activityType !== undefined && existing.activityTypeAssumedAt) {
+      await clearPostPaymentCompletion(prisma, req.params.id, {
+        userId: req.adminAuth?.userId || null,
+        userName: req.adminAuth?.userName || null,
+      }).catch(() => {});
+    }
     // Post-commit WON effects — Communication Center triggers + Manager Report
     // #26, fire-and-forget, exactly once: only the transaction that actually
     // flipped the status (wonNow) notifies; a concurrent duplicate does not.
@@ -1285,6 +1306,19 @@ router.post(
           origin,
           allowOverbook: req.body?.allowOverbook === true,
         });
+        // The delayed half of a settlement must leave the SAME record the
+        // immediate one would have: a tour that arrives minutes after the money
+        // still carries a confirmed, paid seat. Evidence comes from the frozen
+        // Deal.wonActor — a manually closed deal proves no payment and stamps
+        // nothing, so this can never invent a payment that did not happen.
+        const settled = settledPaymentStateFor(full);
+        if (settled) {
+          await stampSettledRegistration(tx, {
+            dealId: req.params.id,
+            tourEventId: tourEvent.id,
+            paymentStatus: settled.paymentStatus,
+          });
+        }
         const after = await tx.deal.update({
           where: { id: req.params.id },
           data: dealSync || {},
@@ -1323,6 +1357,51 @@ router.post(
       actorUserId: req.adminAuth?.userId || null,
     });
     res.json({ ...withTourUpdatePending(await loadDeal(req.params.id)), confirmationEmail });
+  }),
+);
+
+// Confirm (or correct) a classification the system resolved when a payment
+// closed the deal before anyone chose one — the answer to the post-payment
+// completion card.
+//
+// Confirming is not a no-op write: activityTypeAssumedAt is what makes the Deal
+// say "nobody has looked at this yet", so clearing it IS the operator's answer.
+// Correcting goes through the normal classification path so the org rule still
+// governs (an org-linked deal cannot be talked into 'private' here).
+// Idempotent: a deal with nothing assumed returns ok and changes nothing.
+router.post(
+  '/:id/confirm-classification',
+  handle(async (req, res) => {
+    const before = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      select: { ...DEAL_DIFF_SELECT, activityTypeAssumedAt: true, organizationId: true, orderNo: true },
+    });
+    if (!before) return res.status(404).json({ error: 'not_found' });
+
+    const chosen = req.body?.activityType ? String(req.body.activityType) : null;
+    if (chosen && !VALID_ACTIVITY_TYPES.includes(chosen)) {
+      return res.status(400).json({ error: 'invalid_activity_type' });
+    }
+    // The org rule is canonical and outranks a hand-picked value here: an
+    // org-linked deal is business, full stop (deals/classification.js).
+    if (chosen && chosen !== 'business' && before.organizationId) {
+      return res.status(409).json({ error: 'organization_forces_business' });
+    }
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const after = await prisma.deal.update({
+      where: { id: req.params.id },
+      data: {
+        ...(chosen ? { activityType: chosen } : {}),
+        activityTypeAssumedAt: null,
+      },
+    });
+    await recordDealChanges(prisma, { dealId: req.params.id, before, after, origin });
+    await clearPostPaymentCompletion(prisma, req.params.id, {
+      userId: req.adminAuth?.userId || null,
+      userName: req.adminAuth?.userName || null,
+    });
+    res.json(withTourUpdatePending(await loadDeal(req.params.id)));
   }),
 );
 

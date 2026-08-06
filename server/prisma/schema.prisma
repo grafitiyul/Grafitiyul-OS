@@ -1064,6 +1064,13 @@ model Deal {
   // now and later to the actual tour/activity. Nullable for backward compat;
   // no Postgres enum (project convention is string enums validated at the API).
   activityType                 String?
+  // Set when activityType was RESOLVED by the system rather than chosen by an
+  // operator (deals/resolveActivityType.js) — a payment closed the deal while
+  // the field was still empty, and the sale is never blocked over it. The value
+  // above is real and authoritative; this timestamp only records that nobody
+  // confirmed it yet, and is cleared the moment an operator confirms or changes
+  // the classification. Null = human-chosen (or already confirmed).
+  activityTypeAssumedAt        DateTime?
   // The deal's organization type — authoritative ONLY while no Organization is
   // linked (manual classification). Once an Organization is attached the deal is
   // forced to activityType='business' and this field is force-cleared by the API

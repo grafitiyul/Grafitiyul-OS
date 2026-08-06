@@ -1,0 +1,84 @@
+// THE canonical resolver for "what kind of activity is this deal?" when the
+// operator never said.
+//
+// The production case (deal #27105): a lead was priced, given a payment link and
+// PAID — with six of the seven planning fields filled and `activityType` left
+// null. The WON transition succeeded (the money is real), but the tour gate
+// refused to create a TourEvent over that one missing field, so a paying
+// customer was commercially closed and operationally invisible for 48 seconds
+// until a person noticed.
+//
+// The business rule that replaces "block until someone picks": the sale is never
+// blocked, and a missing activityType is RESOLVED rather than guessed at random.
+//
+//   1. explicit GROUP context (a group slot is actually selected/held) → group.
+//      Never inferred from anything softer — a group registration owns a real
+//      seat on a real slot, and inventing one would fabricate operational state.
+//   2. an ORGANIZATION is linked → business. This is not a guess: it is the
+//      project's existing canonical classification rule (deals/classification.js
+//      normalizeClassification force-writes activityType='business' for every
+//      org-linked deal on create and update). Applying it here just applies it
+//      LATE, to a row that predates the rule or never passed through the API.
+//   3. otherwise → private. The residual case, and the overwhelmingly common
+//      one: a private customer bought a private experience.
+//
+// Everything this resolver derives is marked ASSUMED. The value is persisted
+// (one source of truth — pricing, reports and Communication conditions all read
+// Deal.activityType, and a null there is its own bug), but the assumption is
+// stamped alongside it so the operator is asked to confirm exactly once. The
+// system commits to a working answer AND admits it chose it — it never silently
+// classifies a customer's business.
+
+/** Payment/WON causes that PROVE money actually arrived (Deal.wonActor.cause). */
+const PAID_CAUSES = new Set(['card_payment', 'icount_payment', 'cardcom_payment', 'woo_order']);
+
+/**
+ * Resolve the deal's effective activity type.
+ *
+ * `groupSlotSelected` is the ONLY group signal accepted, and the caller must
+ * derive it from a real TourEvent of kind 'group_slot' (an explicitly passed
+ * target, or the deal's own held/expired reservation). A deal that merely
+ * *looks* like a group booking is never treated as one.
+ *
+ * @returns {{ activityType: 'group'|'private'|'business', assumed: boolean, reason: string|null }}
+ *   `assumed: false` means the deal already carried the value — nothing was
+ *   decided here and nothing should be written or reviewed.
+ */
+export function resolveActivityType(deal, { groupSlotSelected = false } = {}) {
+  if (deal?.activityType) {
+    return { activityType: deal.activityType, assumed: false, reason: null };
+  }
+  if (groupSlotSelected) {
+    return { activityType: 'group', assumed: true, reason: 'group_slot_selected' };
+  }
+  if (deal?.organizationId) {
+    return { activityType: 'business', assumed: true, reason: 'organization_linked' };
+  }
+  return { activityType: 'private', assumed: true, reason: 'default_private' };
+}
+
+/** Hebrew wording for the assumption, rendered verbatim in the review card. */
+export const ASSUMPTION_REASON_HE = {
+  group_slot_selected: 'שויך לסיור קבוצתי קיים',
+  organization_linked: 'משויך לארגון — סווג כפעילות עסקית',
+  default_private: 'לא נבחר סוג פעילות — סווג כפעילות פרטית',
+};
+
+/**
+ * The money state a SETTLED deal proves, derived from the frozen closer record
+ * (Deal.wonActor, stamped by the canonical transition and never rewritten).
+ *
+ * This exists so the delayed recovery path can stamp a registration with the
+ * same truth the immediate settlement would have stamped, WITHOUT inventing
+ * evidence: a deal closed by an operator's manual WON proves no payment, so it
+ * returns null and nothing is stamped.
+ *
+ * @returns {{ paymentStatus: 'paid'|'waived' }|null}
+ */
+export function settledPaymentStateFor(deal) {
+  const cause = deal?.wonActor?.cause || null;
+  if (!cause) return null;
+  if (PAID_CAUSES.has(cause)) return { paymentStatus: 'paid' };
+  if (cause === 'no_payment') return { paymentStatus: 'waived' };
+  return null; // manual / historical_correction — no verified payment
+}

@@ -454,6 +454,11 @@ export async function runWooOrderOperational({ dealId, normalized, storeKey }, {
       paymentAmountMinor,
       recordChangelog: true,
       cause: 'woo_order',
+      // This pipeline raises its OWN follow-up card (woo_order_attention) that
+      // names the actual Woo-side problem — an unmapped line, an order spanning
+      // two dates. The generic post-payment card would be a second row for the
+      // same gap, so the office is told once, precisely.
+      postPaymentReview: false,
     };
     try {
       settle = await settleDealWon(db, { ...settleOpts, targetTourEventId: resolution.tourEventId || null });

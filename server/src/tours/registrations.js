@@ -10,7 +10,7 @@
 
 import { recomputeTourOperationalProduct } from './operationalProduct.js';
 import { markTourWooPending } from './woo/service.js';
-import { REG_HELD, REG_EXPIRED, REG_CONFIRMED, CAPACITY_STATUSES } from './registrationStatus.js';
+import { REG_HELD, REG_EXPIRED, REG_CONFIRMED, REG_ACTIVE, CAPACITY_STATUSES } from './registrationStatus.js';
 
 // A booking's allocation state maps onto its registration: only 'active' seats
 // count. 'orphaned' (deal left WON but tour kept) is intentionally NOT counted,
@@ -71,7 +71,19 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
     });
     if (existing) adopting = true;
   }
-  const status = adopting ? REG_CONFIRMED : regStatusFromBooking(booking.status);
+  // CONFIRMED is a STRONGER state than the legacy 'active', never a parallel
+  // one — it means a verified payment was stamped on this seat. This sync runs
+  // after EVERY booking mutation (seat change, "עדכון סיור", reconnect), and it
+  // used to recompute the status purely from the booking, quietly rewriting a
+  // paid 'confirmed' row back to 'active' on the next unrelated tour edit. The
+  // seat still counted (both are capacity + confirmed statuses), so nothing
+  // visibly broke — the settlement record just decayed. A live booking may only
+  // ever move a registration UP to confirmed, never back down.
+  const fromBooking = regStatusFromBooking(booking.status);
+  const status =
+    adopting || (fromBooking === REG_ACTIVE && existing?.status === REG_CONFIRMED)
+      ? REG_CONFIRMED
+      : fromBooking;
   // Explicit selection wins; else keep the existing row's variant; else fall
   // back to the tour's (last resort, e.g. a legacy row with no deal context).
   const productVariantId =
@@ -139,4 +151,44 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
     await markTourWooPending(tx, tour.id);
   }
   return regId;
+}
+
+// Stamp the SETTLED money state onto the deal's seat line — THE one place a
+// verified payment becomes visible on the registration.
+//
+// Why this is a shared function and not an inline block: the immediate
+// settlement (settleDealWon) and the delayed recovery (complete-tour-setup)
+// must produce IDENTICAL records. Before it existed the stamp lived inside
+// settleDealWon's "the tour was created" branch, so a deal whose tour could not
+// be created at payment time — exactly the case the recovery flow exists for —
+// got its tour minutes later with the registration still reading 'active' and
+// paymentStatus null, as if nobody had paid (production #27105, #27074, #27060).
+//
+// `paymentStatus` must come from PROVEN evidence (settledPaymentStateFor reads
+// the frozen Deal.wonActor), never from an assumption: a manually closed deal
+// stamps nothing.
+//
+// Idempotent by construction: rows already carrying this exact settled state are
+// excluded, so a retry or a second recovery click cannot rewrite confirmedAt.
+// Returns the number of rows actually stamped.
+export async function stampSettledRegistration(
+  tx,
+  { dealId, tourEventId, paymentStatus, noPaymentReason = null },
+) {
+  if (!dealId || !tourEventId || !paymentStatus) return 0;
+  const res = await tx.ticketRegistration.updateMany({
+    where: {
+      dealId,
+      tourEventId,
+      status: { in: [REG_ACTIVE, REG_CONFIRMED] },
+      NOT: { status: REG_CONFIRMED, paymentStatus, confirmedAt: { not: null } },
+    },
+    data: {
+      status: REG_CONFIRMED,
+      confirmedAt: new Date(),
+      paymentStatus,
+      ...(noPaymentReason ? { noPaymentReason } : {}),
+    },
+  });
+  return res.count;
 }
