@@ -16,6 +16,9 @@ import {
 import { readableSlug } from './suggestConfig.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
 import { reconcileProductOptions, dateMenuOrder, timeMenuOrder } from './productOptions.js';
+import { isOccurrenceSellable, salesWindowClosed } from './sellability.js';
+import { reconcileProductSaleState } from './productSaleState.js';
+import { wooPendingPatch } from './service.js';
 
 // GOS → WooCommerce sync worker. For every sellable TourEvent (a group slot whose
 // template has a mapped Pricing Card) it mirrors the concrete occurrence to a
@@ -34,17 +37,11 @@ function backoffMs(attempts) {
   return BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length) - 1] * 60_000;
 }
 
-// Registration cutoff: hidden once now ≥ occurrence − closeMinutes. IL wall time
-// with a month-based DST approximation (a booking cutoff tolerates the twice-a-
-// year edge; exactness is immaterial). closeMinutes null → never auto-closes.
-export function occurrenceClosed(date, startTime, closeMinutes, nowMs) {
-  if (closeMinutes == null || !date || !startTime) return false;
-  const month = Number(String(date).slice(5, 7));
-  const offsetH = month >= 4 && month <= 9 ? 3 : 2; // Asia/Jerusalem DST approx
-  const wallAsUtc = Date.parse(`${date}T${startTime}:00Z`);
-  const occMs = wallAsUtc - offsetH * 3_600_000;
-  return nowMs >= occMs - closeMinutes * 60_000;
-}
+// Registration cutoff — kept as a named re-export for existing importers. The
+// rule itself (including the "null closeMinutes closes AT start time, not never"
+// correction and the DST-exact wall clock) now lives in the ONE canonical
+// sellability module.
+export { salesWindowClosed as occurrenceClosed };
 
 // The desired variation SET for one (occurrence × card): the global model when
 // the mapping carries a config, else the legacy single-variation local path.
@@ -57,7 +54,7 @@ function desiredVariationSet(tour, card, ctx) {
       config: card.config,
       capacity: ctx.capacity,
       remaining: ctx.remaining,
-      registrationClosed: ctx.registrationClosed,
+      sellable: ctx.sellable,
       durationHours: ctx.durationHours,
     });
   }
@@ -77,7 +74,7 @@ function desiredVariationSet(tour, card, ctx) {
     remaining: ctx.remaining,
     priceMinor: rows[0]?.unitPriceMinor ?? null,
     dateAttribute: card.dateAttribute || WOO_DATE_ATTRIBUTE(),
-    registrationClosed: ctx.registrationClosed,
+    sellable: ctx.sellable,
   });
   return [
     { variantKey: 'default', ticketTypeId: rows[0]?.ticketTypeId || null, priceMinor: rows[0]?.unitPriceMinor ?? null, payload },
@@ -174,7 +171,7 @@ function creationProvenance(origin, adopted) {
 // stored variation, else adopt one matched by our stable per-variant meta, else
 // create. NEVER deletes. On a mapping product change, the OLD-product variation
 // is disabled first so an occurrence never has two active sellable variations.
-async function reconcileVariant(deps, tour, card, desired, existing) {
+async function reconcileVariant(deps, tour, card, desired, existing, sellable) {
   const { db, woo, log } = deps;
   const key = {
     tourEventId_cardGroupId_variantKey: {
@@ -200,6 +197,18 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
     }
   }
 
+  // NEVER CREATE a variation for something that may not be sold. Creating one
+  // only to immediately draft it litters the product with dead children (which
+  // the live theme still enumerates) and can resurrect a date term. Nothing
+  // exists to converge, so there is nothing to do.
+  if (!variationId && !sellable) {
+    log?.log?.(
+      `[woo-sync] skip create (not sellable) tour=${tour.id} date=${tour.date} ` +
+        `card=${card.cardGroupId} variant=${desired.variantKey}`,
+    );
+    return;
+  }
+
   let resultId;
   let createdVia = null;
   if (variationId) {
@@ -216,6 +225,11 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
     );
   }
 
+  // The link RECORDS the sellable state we just converged to. This is what makes
+  // the unsellable sweep self-terminating: once every link of a finished
+  // occurrence reads 'disabled', the sweep stops selecting it, and reopening the
+  // occurrence flips it back to 'synced' on the next converge.
+  const linkStatus = sellable ? 'synced' : 'disabled';
   await db.wooVariationLink.upsert({
     where: key,
     create: {
@@ -225,7 +239,7 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
       ticketTypeId: desired.ticketTypeId,
       wooProductId: card.wooProductId,
       wooVariationId: resultId,
-      status: 'synced',
+      status: linkStatus,
       // Adoption is also provenance when the LINK is new but the variation existed.
       createdVia: createdVia || creationProvenance(tour.wooSyncOrigin, adopted),
       lastError: null,
@@ -234,7 +248,7 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
       ticketTypeId: desired.ticketTypeId,
       wooProductId: card.wooProductId,
       wooVariationId: resultId ?? variationId ?? null,
-      status: 'synced',
+      status: linkStatus,
       lastError: null,
       // createdVia deliberately NOT updated — creation provenance is immutable.
     },
@@ -269,7 +283,7 @@ async function reconcileCard(deps, tour, card, ctx) {
   let cache = null;
   const existing = async () => (cache ||= await woo.listVariations(card.wooProductId));
 
-  for (const d of desired) await reconcileVariant(deps, tour, card, d, existing);
+  for (const d of desired) await reconcileVariant(deps, tour, card, d, existing, ctx.sellable);
   await retireStaleVariants(deps, tour, card, new Set(desired.map((d) => d.variantKey)));
 }
 
@@ -351,8 +365,11 @@ export async function reconcileTourWoo(deps, tourId) {
     });
     closeMinutes = tpl?.registrationCloseMinutes ?? null;
   }
-  const registrationClosed = occurrenceClosed(tour.date, tour.startTime, closeMinutes, now);
-  const ctx = { capacity: tour.capacity, remaining, registrationClosed };
+  // THE canonical public-sellability verdict for this occurrence — status, a
+  // concrete date/time, the occurrence not being over, and the sales window.
+  // Derived ONCE here and passed down; nothing below re-decides it.
+  const sellable = isOccurrenceSellable({ tour, closeMinutes, nowMs: now });
+  const ctx = { capacity: tour.capacity, remaining, sellable };
 
   const errors = [];
   for (const card of cards) {
@@ -418,27 +435,67 @@ export async function sweepUnsyncedWooTours(db, { today = israelToday() } = {}) 
   return res.count;
 }
 
-// Expiry: a synced occurrence whose date has PASSED must not stay published on
+// Expiry: an occurrence that may no longer be sold must not stay published on
 // the storefront — a published past variation pollutes the public date list and
-// keeps its price inside Woo's "starting from" range forever. Re-pend each such
-// tour ONCE (origin 'expiry'); normal convergence then drafts every variation via
-// the disabled derivation (completed/cancelled status or a passed registration
-// cutoff). Only already-linked tours qualify, so the first-publication gate never
-// fires and this can only ever HIDE, never publish. Idempotent: convergence
-// leaves origin 'expiry' on the row, which excludes it from the next sweep.
-export async function sweepExpiredWooTours(db, { today = israelToday() } = {}) {
+// keeps its price inside Woo's "starting from" range forever.
+//
+// The selector is the LINK STATE, not the sync origin. The previous version
+// excluded rows whose wooSyncOrigin was already 'expiry', making the sweep a
+// ONE-SHOT: if that single pass converged while the tour was still `scheduled`
+// (the completion worker had not yet flipped it, and the template has no
+// registrationCloseMinutes) the occurrence derived as PUBLISHABLE, was stamped
+// synced/expiry, and could never be swept again — the storefront kept selling a
+// finished tour forever. That is exactly what happened to 02.08 and 04.08 on
+// product 167 while 01.08 / 03.08 / 05.08 (whose completion won the same race)
+// were correctly hidden.
+//
+// Now: any linked occurrence that is past-or-not-scheduled and still has a link
+// NOT recorded as 'disabled' is re-pended, however many times it takes. Since
+// convergence writes 'disabled' on every link of a non-sellable occurrence, the
+// sweep is self-terminating and idempotent — and self-HEALING, because a wrong
+// outcome leaves the links 'synced' and is therefore picked up again.
+//
+// Only already-linked tours qualify, so the first-publication gate never fires
+// and this can only ever HIDE, never publish.
+export async function sweepUnsellableWooTours(db, { today = israelToday() } = {}) {
   const templateIds = await mappedTemplateIds(db);
   if (!templateIds.length) return 0;
   const res = await db.tourEvent.updateMany({
     where: {
-      wooSyncStatus: 'synced',
-      OR: [{ wooSyncOrigin: null }, { wooSyncOrigin: { not: 'expiry' } }],
       kind: 'group_slot',
-      date: { lt: today },
       openTourTemplateId: { in: templateIds },
-      wooVariationLinks: { some: {} },
+      // Not sellable: the date has passed, or it is no longer a scheduled tour.
+      OR: [{ date: { lt: today } }, { status: { not: 'scheduled' } }],
+      // …yet at least one variation is still recorded as live on the storefront.
+      wooVariationLinks: { some: { status: { not: 'disabled' } } },
     },
-    data: { wooSyncStatus: 'pending', wooSyncOrigin: 'expiry' },
+    data: wooPendingPatch('expiry'),
+  });
+  return res.count;
+}
+
+// Back-compat alias for the previous name.
+export const sweepExpiredWooTours = sweepUnsellableWooTours;
+
+// Revision drift: the structural net service.js has always DOCUMENTED but that
+// was never actually implemented — wooSyncedRevision was written and never read.
+// Every dirty-mark bumps wooDesiredRevision; the worker stamps the revision it
+// converged. A tour sitting at 'synced' whose desired revision moved past its
+// synced revision had a sellable-state change that no longer has a pending row
+// to carry it (a mutation that raced an in-flight sync, or a crashed tick), so
+// re-pend it. Compared in JS rather than through a Prisma field reference so the
+// in-memory test client models it exactly like production.
+export async function sweepWooRevisionDrift(db, { limit = 500 } = {}) {
+  const rows = await db.tourEvent.findMany({
+    where: { wooSyncStatus: 'synced', wooVariationLinks: { some: {} } },
+    select: { id: true, wooDesiredRevision: true, wooSyncedRevision: true },
+    take: limit,
+  });
+  const drifted = rows.filter((r) => (r.wooSyncedRevision ?? -1) !== (r.wooDesiredRevision ?? 0));
+  if (!drifted.length) return 0;
+  const res = await db.tourEvent.updateMany({
+    where: { id: { in: drifted.map((r) => r.id) } },
+    data: wooPendingPatch('drift'),
   });
   return res.count;
 }
@@ -484,10 +541,12 @@ export function startWooSyncWorker(log = console) {
         if (swept) log?.log?.(`[woo-sync] backfill: marked ${swept} tours pending`);
       }
 
-      // Not bulk-gated: expiry only converges ALREADY-linked occurrences (it
-      // drafts them), which plain WOO_SYNC_ENABLED already permits.
-      const expired = await sweepExpiredWooTours(prisma);
-      if (expired) log?.log?.(`[woo-sync] expiry: marked ${expired} past tours pending (draft on storefront)`);
+      // Not bulk-gated: these only converge ALREADY-linked occurrences (they
+      // draft them), which plain WOO_SYNC_ENABLED already permits.
+      const expired = await sweepUnsellableWooTours(prisma);
+      if (expired) log?.log?.(`[woo-sync] expiry: marked ${expired} unsellable tours pending (draft on storefront)`);
+      const drifted = await sweepWooRevisionDrift(prisma);
+      if (drifted) log?.log?.(`[woo-sync] drift: marked ${drifted} tours pending (desired revision ≠ synced)`);
 
       const due = {
         wooSyncStatus: 'pending',
@@ -515,6 +574,12 @@ export function startWooSyncWorker(log = console) {
       for (const { wooProductId } of touched) {
         await reconcileProductOptions(deps, wooProductId).catch((e) =>
           log?.warn?.(`[woo-sync] product-options reconcile failed for ${wooProductId}: ${e?.message}`),
+        );
+        // …and the PRODUCT-level gate: a mapped product with no sellable
+        // occurrence left must leave the public catalog entirely (no price CTA,
+        // nothing purchasable), and return to it when one is published again.
+        await reconcileProductSaleState(deps, wooProductId).catch((e) =>
+          log?.warn?.(`[woo-sync] product sale-state reconcile failed for ${wooProductId}: ${e?.message}`),
         );
       }
     } catch (e) {

@@ -132,6 +132,7 @@ test('shared capacity: EVERY sibling variation advertises the SAME stock', () =>
     config: CONFIG_TA,
     capacity: 20,
     remaining: 3,
+    sellable: true,
   });
   for (const v of set) {
     assert.equal(v.payload.stock_quantity, 3);
@@ -156,7 +157,7 @@ test('cancelled/postponed occurrence → every variation hidden + zero stock, ne
   }
 });
 
-test('registration cutoff hides every sibling', () => {
+test('a non-sellable occurrence hides every sibling (cutoff, or simply over)', () => {
   const closed = buildOccurrenceVariations({
     tour: TOUR,
     cardGroupId: 'cardTourOnly',
@@ -164,7 +165,7 @@ test('registration cutoff hides every sibling', () => {
     config: CONFIG_TA,
     capacity: 20,
     remaining: 7,
-    registrationClosed: true,
+    sellable: false,
   });
   for (const v of closed) assert.equal(v.payload.status, 'draft');
 });

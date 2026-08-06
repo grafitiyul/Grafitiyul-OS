@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { wooConfigured, wooSyncEnabled, wooSyncActive, wooSyncBulkEnabled } from './wooClient.js';
+import { wooConfigured, wooSyncEnabled, wooSyncActive, wooSyncBulkEnabled, wooStoreUrl } from './wooClient.js';
 
 // The env-var contract + the explicit activation gate. wooConfigured() only asks
 // "do we have credentials"; wooSyncActive() additionally requires a human to have
@@ -110,4 +110,32 @@ test('bulk gate is a SECOND, independent switch (write on ≠ bulk on)', () => {
     assert.equal(wooSyncActive(), false);
     assert.equal(wooSyncBulkEnabled(), true);
   });
+});
+
+// ── 11. No old/new Woo-store confusion ───────────────────────────────────────
+// This project has TWO Woo stores in its history: the retired theguy4u.co.il and
+// the live grafitiyul.co.il. Every write must provably target the NEW one, so
+// the resolution order is pinned rather than left implicit.
+
+test('11. WOOCOMMERCE_BASE_URL wins over the legacy WOO_STORE_URL fallback', () => {
+  withEnv(
+    {
+      ...CLEAR,
+      WOOCOMMERCE_BASE_URL: 'https://grafitiyul.co.il',
+      WOO_STORE_URL: 'https://theguy4u.co.il', // the retired store
+      WOOCOMMERCE_CONSUMER_KEY: 'ck_x',
+      WOOCOMMERCE_CONSUMER_SECRET: 'cs_x',
+    },
+    () => {
+      assert.equal(wooStoreUrl(), 'https://grafitiyul.co.il');
+      assert.ok(!wooStoreUrl().includes('theguy4u'), 'must never resolve to the retired store');
+    },
+  );
+});
+
+test('11b. a trailing slash never produces a double-slashed REST path', () => {
+  withEnv(
+    { ...CLEAR, WOOCOMMERCE_BASE_URL: 'https://grafitiyul.co.il///', WOOCOMMERCE_CONSUMER_KEY: 'k', WOOCOMMERCE_CONSUMER_SECRET: 's' },
+    () => assert.equal(wooStoreUrl(), 'https://grafitiyul.co.il'),
+  );
 });

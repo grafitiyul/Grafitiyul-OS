@@ -2,6 +2,14 @@
 // canonical capacity → the WooCommerce Variation payload. No IO, so the mirror
 // rules are unit-tested in isolation. WooCommerce simply REFLECTS canonical GOS
 // state — there is no business logic here beyond formatting.
+//
+// SELLABILITY IS NOT DECIDED HERE. Both builders take a `sellable` boolean that
+// the ONE canonical predicate (sellability.js `isOccurrenceSellable`) produced.
+// They used to re-derive it from `status !== 'scheduled' || !hasDate ||
+// registrationClosed`, which had no past-date term and left finished occurrences
+// published on the storefront. Formatting only, one owner for the rule.
+
+import { isSentinelPriceMinor, MAX_PUBLIC_TICKET_PRICE_MINOR } from './sellability.js';
 
 // Metadata keys that give every generated variation a stable link back to GOS
 // (idempotent updates, webhook matching in the next slice, debugging).
@@ -44,8 +52,19 @@ export const DISABLED_VARIATION_STATUS = 'draft';
 
 // Minor units → WooCommerce decimal price string ("45.00"). Undefined when no
 // price is known (the reconciler then leaves the variation price untouched).
+//
+// REFUSES a placeholder price. A sentinel value must never be published to a
+// customer, and a silent skip would just leave whatever Woo already had on the
+// variation — so this throws, and the reconciler records the card as failed and
+// retries (the same visible-failure contract as an unmapped duration/age term).
 export function minorToWooPrice(minor) {
   if (minor == null) return undefined;
+  if (isSentinelPriceMinor(minor)) {
+    throw new Error(
+      `woo: refusing to publish placeholder price ${minor} minor ` +
+        `(≥ ${MAX_PUBLIC_TICKET_PRICE_MINOR} is a technical sentinel, never a customer price)`,
+    );
+  }
   return (Number(minor) / 100).toFixed(2);
 }
 
@@ -61,10 +80,12 @@ export function findVariationForTour(variations, tourEventId) {
   return (variations || []).find((v) => String(metaValue(v, META_TOUREVENT_ID)) === String(tourEventId)) || null;
 }
 
-// Build the WooCommerce variation payload. `disabled` collapses to a HIDDEN,
-// zero-stock, unpurchasable variation (cancelled/completed/postponed/closed) —
-// the reconciler NEVER deletes, so orders keep their integrity.
+// Build the WooCommerce variation payload. A non-sellable occurrence collapses
+// to a HIDDEN, zero-stock, unpurchasable variation (cancelled/completed/
+// postponed/past/closed) — the reconciler NEVER deletes, so orders keep their
+// integrity.
 //   tour: { id, status, date, startTime }
+//   sellable: the canonical isOccurrenceSellable() verdict (see sellability.js)
 //   capacity: the ONE canonical capacity (shared across all cards on the tour)
 //   remaining: capacity − active registration seats (derived; shared)
 //   priceMinor: the card's representative ticket price (or null → leave as-is)
@@ -75,10 +96,10 @@ export function buildVariationPayload({
   remaining,
   priceMinor,
   dateAttribute,
-  registrationClosed = false,
+  sellable = false,
 }) {
   const hasDate = Boolean(tour.date && tour.startTime);
-  const disabled = tour.status !== 'scheduled' || !hasDate || registrationClosed;
+  const disabled = !sellable;
   const stock = Math.max(0, Number.isFinite(remaining) ? remaining : 0);
 
   const payload = {
@@ -167,12 +188,12 @@ export function buildOccurrenceVariations({
   config,
   capacity,
   remaining,
-  registrationClosed = false,
+  sellable = false,
   durationHours = null,
 }) {
   const cfg = config || {};
   const hasDate = Boolean(tour.date && tour.startTime);
-  const disabled = tour.status !== 'scheduled' || !hasDate || registrationClosed;
+  const disabled = !sellable;
   const stock = Math.max(0, Number.isFinite(remaining) ? remaining : 0);
 
   // Attributes shared by every sibling variation of this occurrence+card.

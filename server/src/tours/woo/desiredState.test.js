@@ -28,6 +28,7 @@ test('scheduled occurrence → published, in-stock, with the stable GOS metadata
     remaining: 7,
     priceMinor: 4500,
     dateAttribute: 'Date',
+    sellable: true,
   });
   assert.equal(p.status, 'publish');
   assert.equal(p.manage_stock, true);
@@ -42,7 +43,7 @@ test('scheduled occurrence → published, in-stock, with the stable GOS metadata
 });
 
 test('a full tour is out of stock but still published', () => {
-  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 0, priceMinor: 4500, dateAttribute: 'Date' });
+  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 0, priceMinor: 4500, dateAttribute: 'Date', sellable: true });
   assert.equal(p.status, 'publish');
   assert.equal(p.stock_quantity, 0);
   assert.equal(p.stock_status, 'outofstock');
@@ -76,14 +77,14 @@ test('postponed (no date) → hidden and the date attribute is NOT rewritten', (
   assert.equal(p.attributes, undefined); // keep whatever the variation already had
 });
 
-test('registrationClosed hides the occurrence even while scheduled', () => {
-  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date', registrationClosed: true });
+test('not sellable hides the occurrence even while scheduled with seats left', () => {
+  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date', sellable: false });
   assert.equal(p.status, 'draft');
   assert.equal(p.stock_quantity, 0);
 });
 
 test('no known price → regular_price omitted (variation price left untouched)', () => {
-  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: null, dateAttribute: 'Date' });
+  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: null, dateAttribute: 'Date', sellable: true });
   assert.equal('regular_price' in p, false);
 });
 
@@ -109,7 +110,7 @@ test('variationMenuOrder is monotonic across days, months, years and times', () 
 });
 
 test('payload carries the chronological menu_order for the occurrence', () => {
-  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date' });
+  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date', sellable: true });
   assert.equal(p.menu_order, variationMenuOrder(TOUR.date, TOUR.startTime));
   assert.ok(Number.isInteger(p.menu_order) && p.menu_order > 0);
 });

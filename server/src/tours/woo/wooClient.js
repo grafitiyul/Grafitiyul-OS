@@ -20,6 +20,15 @@ const CS = () => process.env.WOOCOMMERCE_CONSUMER_SECRET || process.env.WOO_CONS
 // primary date model.
 export const WOO_DATE_ATTRIBUTE = () => process.env.WOO_DATE_ATTRIBUTE || 'Date';
 
+// THE resolved store this process writes to. Exported so the store identity is
+// observable and assertable rather than implicit: there are two Woo stores in
+// this project's history (the retired theguy4u.co.il and the live
+// grafitiyul.co.il), and every write must be provably aimed at the NEW one.
+// WOOCOMMERCE_BASE_URL always WINS over the legacy WOO_STORE_URL fallback.
+export function wooStoreUrl() {
+  return STORE_URL();
+}
+
 // Credentials present? (Store URL + key + secret.) With none, the worker is a
 // silent no-op — the same contract as the calendar worker without Google.
 export function wooConfigured() {
@@ -81,6 +90,12 @@ async function wooFetch(path, { method = 'GET', query, body } = {}) {
 export const woo = {
   getProduct: (productId) => wooFetch(`/products/${productId}`),
   updateProduct: (productId, data) => wooFetch(`/products/${productId}`, { method: 'PUT', body: data }),
+  // The whole catalog, paged. Used by the catalog sale-gate audit, which must
+  // see EVERY product — including ones GOS does not map — to prove the
+  // invariant holds. Read-only for the products it does not correct.
+  async listProducts(query = {}) {
+    return wooFetch('/products', { query: { per_page: 100, status: 'any', ...query } });
+  },
   // WooCommerce caps per_page at 100; a Variable Product can hold many date
   // variations, so page through until a short page.
   async listVariations(productId) {

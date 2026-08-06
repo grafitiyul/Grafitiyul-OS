@@ -13,6 +13,7 @@
 import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { calendarPendingPatch } from './calendar/service.js';
+import { wooPendingPatch } from './woo/service.js';
 import { ensureTourPayroll, cancelTourPayroll } from '../payroll/service.js';
 import { ISRAEL_TZ, israelToday, midnightAfterMs as ilMidnightAfterMs } from '../lib/israelDate.js';
 
@@ -95,7 +96,17 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
   const stamp = completedAt || new Date();
   await client.tourEvent.update({
     where: { id: tourEventId },
-    data: { status: 'completed', completedAt: stamp, completedReason: reason },
+    data: {
+      status: 'completed',
+      completedAt: stamp,
+      completedReason: reason,
+      // Completion CHANGES PUBLIC SELLABILITY, so the Woo mirror must be told —
+      // in the SAME write, atomically. It was not, and that silence is half of
+      // why finished tours stayed on sale: the midnight sweep flipped `status`
+      // (the field the desired-state derivation reads) with no dirty-mark and no
+      // revision bump, so the Woo worker had no idea anything had changed.
+      ...wooPendingPatch('completion'),
+    },
   });
   await emitTimelineEvent(client, {
     subjectType: 'tour_event',
@@ -147,7 +158,16 @@ export async function reopenTour(client, tourEventId, { actorName = null, nowMs 
   // marking pending reconciles the SAME gcalEventId — no duplicate event.
   await client.tourEvent.update({
     where: { id: tourEventId },
-    data: { status: 'scheduled', completedAt: null, completedReason: null, ...calendarPendingPatch() },
+    data: {
+      status: 'scheduled',
+      completedAt: null,
+      completedReason: null,
+      ...calendarPendingPatch(),
+      // Symmetric to completion: reopening restores public sellability (the
+      // guard above already proved the date has not passed), so the storefront
+      // must get the occurrence back. Without this the variations stayed drafted.
+      ...wooPendingPatch('reopen'),
+    },
   });
 
   const bookings = await client.booking.findMany({

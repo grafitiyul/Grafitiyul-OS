@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reconcileTourWoo, occurrenceClosed } from './syncWorker.js';
+import { reconcileTourWoo, occurrenceClosed, sweepWooRevisionDrift } from './syncWorker.js';
 import { META_TOUREVENT_ID, META_CARD_GROUP_ID, META_VARIANT_KEY } from './desiredState.js';
 
 // GOS→Woo reconciler with in-memory fakes for `db` and the `woo` client. Covers
@@ -630,7 +630,7 @@ test('a successful sync records the revision it synced (wooSyncedRevision)', asy
 });
 
 // ── Expiry sweep ─────────────────────────────────────────────────────────────
-import { sweepExpiredWooTours } from './syncWorker.js';
+import { sweepUnsellableWooTours } from './syncWorker.js';
 
 function expiryDb({ mappings = [{ cardGroupId: 'cardA', active: true }], templateProducts = [{ templateId: 'tpl1' }] } = {}) {
   const updates = [];
@@ -647,30 +647,189 @@ function expiryDb({ mappings = [{ cardGroupId: 'cardA', active: true }], templat
   };
 }
 
-test('sweepExpiredWooTours re-pends synced PAST linked tours once, origin expiry', async () => {
+test('sweepUnsellableWooTours re-pends by LINK STATE, not by sync origin', async () => {
   const db = expiryDb();
-  const n = await sweepExpiredWooTours(db, { today: '2026-08-02' });
+  const n = await sweepUnsellableWooTours(db, { today: '2026-08-02' });
   assert.equal(n, 3);
   const { where, data } = db.updates[0];
-  assert.equal(where.wooSyncStatus, 'synced'); // never touches pending/failed/null
-  assert.deepEqual(where.date, { lt: '2026-08-02' }); // strictly past days only
-  assert.deepEqual(where.wooVariationLinks, { some: {} }); // linked only — can never trigger first publication
-  // origin 'expiry' rows are excluded → one-shot per tour, no permanent churn
-  assert.deepEqual(where.OR, [{ wooSyncOrigin: null }, { wooSyncOrigin: { not: 'expiry' } }]);
-  assert.deepEqual(data, { wooSyncStatus: 'pending', wooSyncOrigin: 'expiry' });
+  // Past OR no longer scheduled — both mean "must not be on sale".
+  assert.deepEqual(where.OR, [{ date: { lt: '2026-08-02' } }, { status: { not: 'scheduled' } }]);
+  // Linked only — can never trigger a first publication…
+  // …and ONLY while a link is still recorded as live. This is what makes the
+  // sweep self-terminating AND self-healing: it no longer excludes rows by
+  // wooSyncOrigin, so a pass that converged to the WRONG outcome (the tour was
+  // still 'scheduled' when the reconcile read it) is picked up again instead of
+  // being locked out forever — the defect that kept 02.08 and 04.08 on sale.
+  assert.deepEqual(where.wooVariationLinks, { some: { status: { not: 'disabled' } } });
+  assert.equal('wooSyncStatus' in where, false); // failed/null rows are swept too
+  assert.equal(data.wooSyncStatus, 'pending');
+  assert.equal(data.wooSyncOrigin, 'expiry');
+  assert.deepEqual(data.wooDesiredRevision, { increment: 1 }); // desired-state bump
 });
 
-test('sweepExpiredWooTours is a no-op with no active mapping', async () => {
+test('sweepUnsellableWooTours is a no-op with no active mapping', async () => {
   const db = expiryDb({ mappings: [] });
-  assert.equal(await sweepExpiredWooTours(db, { today: '2026-08-02' }), 0);
+  assert.equal(await sweepUnsellableWooTours(db, { today: '2026-08-02' }), 0);
   assert.equal(db.updates.length, 0);
 });
 
 // ── Cutoff helper ────────────────────────────────────────────────────────────
 
 test('occurrenceClosed respects the close cutoff', () => {
-  const cutoffMs = Date.parse('2026-08-08T05:00:00Z');
+  const cutoffMs = Date.parse('2026-08-08T05:00:00Z'); // 08:00 IL = 10:00 − 120m
   assert.equal(occurrenceClosed('2026-08-08', '10:00', 120, cutoffMs - 60_000), false);
   assert.equal(occurrenceClosed('2026-08-08', '10:00', 120, cutoffMs + 60_000), true);
-  assert.equal(occurrenceClosed('2026-08-08', '10:00', null, cutoffMs + 1e9), false);
+  // NULL closeMinutes closes AT THE START TIME — it does NOT mean "never".
+  // The old "null → never auto-closes" contract is precisely why a finished tour
+  // could stay purchasable: the live Tel Aviv template has no cutoff configured.
+  const startMs = Date.parse('2026-08-08T07:00:00Z'); // 10:00 IL (UTC+3, DST)
+  assert.equal(occurrenceClosed('2026-08-08', '10:00', null, startMs - 60_000), false);
+  assert.equal(occurrenceClosed('2026-08-08', '10:00', null, startMs), true);
+  assert.equal(occurrenceClosed('2026-08-08', '10:00', null, startMs + 1e9), true);
+});
+
+// ── The 06.08.2026 storefront defect, reproduced at the worker level ─────────
+//
+// Production: Woo product 167 publicly offered 02.08.2026 and 04.08.2026 after
+// they had happened. Both TourEvents were still `status:'scheduled'` when the
+// expiry sweep's reconcile read them (the midnight completion sweep had not yet
+// flipped them), the template has NO registrationCloseMinutes, and the desired
+// state had no past-date term — so they derived as PUBLISHABLE and were stamped
+// synced/expiry, which permanently excluded them from any later sweep.
+
+const AUG6_NOON = Date.parse('2026-08-06T12:00:00Z');
+
+// A tour on 02.08 that STILL READS 'scheduled' — the exact production row.
+const pastButScheduled = (over = {}) => ({
+  tour: {
+    id: 'slotPast',
+    status: 'scheduled',
+    date: '2026-08-02',
+    startTime: '17:00',
+    capacity: 20,
+    openTourTemplateId: 'tpl1',
+    updatedAt: 'u1',
+    wooSyncStatus: 'pending',
+    wooSyncOrigin: 'expiry',
+    wooAttempts: 0,
+  },
+  links: {
+    'slotPast::cardA::default': {
+      tourEventId: 'slotPast', cardGroupId: 'cardA', variantKey: 'default',
+      wooVariationId: 2033, wooProductId: 101, status: 'synced',
+    },
+  },
+  ...over,
+});
+
+test('REGRESSION: a past occurrence still marked scheduled is DRAFTED, not published', async () => {
+  const env = makeEnv(pastButScheduled());
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slotPast');
+
+  assert.equal(env.calls.created.length, 0);
+  assert.equal(env.calls.updated.length, 1);
+  const { variationId, data } = env.calls.updated[0];
+  assert.equal(variationId, 2033);
+  // Off the storefront AND unpurchasable — not merely hidden client-side.
+  assert.equal(data.status, 'draft');
+  assert.equal(data.stock_quantity, 0);
+  assert.equal(data.stock_status, 'outofstock');
+});
+
+test('REGRESSION: converging a past occurrence records its links DISABLED', async () => {
+  // This is what makes the unsellable sweep self-terminating: once the links
+  // read 'disabled' the sweep stops selecting the tour. While they read 'synced'
+  // (the old behaviour) the sweep keeps retrying — so a wrong outcome heals.
+  const env = makeEnv(pastButScheduled());
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slotPast');
+  assert.equal(env.linkStore['slotPast::cardA::default'].status, 'disabled');
+  // …and the link itself is PRESERVED, never deleted (order history + restore).
+  assert.equal(env.linkStore['slotPast::cardA::default'].wooVariationId, 2033);
+  assert.equal(env.linkStore['slotPast::cardA::default'].wooProductId, 101);
+});
+
+test('REGRESSION: a past occurrence is NEVER newly created on the storefront', async () => {
+  // No existing link → nothing to converge. Creating a variation only to draft
+  // it would litter the product with dead children the live theme enumerates.
+  const env = makeEnv(pastButScheduled({ links: {} }));
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slotPast');
+  assert.equal(env.calls.created.length, 0);
+  assert.equal(env.calls.updated.length, 0);
+});
+
+test('a still-future occurrence is untouched by the past-date rule', async () => {
+  const env = makeEnv(); // 2026-08-08 10:00, now = AUG6 noon → sellable
+  await reconcileTourWoo(deps(env, AUG6_NOON), 'slot1');
+  assert.equal(env.calls.created.length, 1);
+  assert.equal(env.calls.created[0].data.status, 'publish');
+  assert.equal(env.linkStore['slot1::cardA::default'].status, 'synced');
+});
+
+test('reopening a hidden occurrence republishes it through the same path', async () => {
+  // Same tour, same link — only the clock moved back before the start. The link
+  // flips 'disabled' → 'synced' and the variation is published again.
+  const env = makeEnv({
+    ...pastButScheduled(),
+    links: {
+      'slotPast::cardA::default': {
+        tourEventId: 'slotPast', cardGroupId: 'cardA', variantKey: 'default',
+        wooVariationId: 2033, wooProductId: 101, status: 'disabled',
+      },
+    },
+  });
+  await reconcileTourWoo(deps(env, Date.parse('2026-08-01T12:00:00Z')), 'slotPast');
+  assert.equal(env.calls.updated[0].data.status, 'publish');
+  assert.equal(env.linkStore['slotPast::cardA::default'].status, 'synced');
+});
+
+test('an occurrence past its configured sales window is drafted', async () => {
+  // 08.08 10:00 IL = 07:00Z. A 120-minute cutoff closes it at 05:00Z.
+  const env = makeEnv({
+    registrationCloseMinutes: 120,
+    links: {
+      'slot1::cardA::default': {
+        tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: 'default',
+        wooVariationId: 777, wooProductId: 101, status: 'synced',
+      },
+    },
+  });
+  await reconcileTourWoo(deps(env, Date.parse('2026-08-08T06:00:00Z')), 'slot1');
+  assert.equal(env.calls.updated[0].data.status, 'draft');
+});
+
+// ── Revision-drift sweep ─────────────────────────────────────────────────────
+
+test('sweepWooRevisionDrift re-pends tours whose desired revision moved past synced', async () => {
+  const rows = [
+    { id: 'a', wooDesiredRevision: 4, wooSyncedRevision: 4 }, // converged
+    { id: 'b', wooDesiredRevision: 5, wooSyncedRevision: 4 }, // drifted
+    { id: 'c', wooDesiredRevision: 1, wooSyncedRevision: null }, // never stamped
+  ];
+  const updates = [];
+  const db = {
+    tourEvent: {
+      findMany: async ({ where }) => {
+        assert.equal(where.wooSyncStatus, 'synced');
+        assert.deepEqual(where.wooVariationLinks, { some: {} });
+        return rows;
+      },
+      updateMany: async ({ where, data }) => {
+        updates.push({ where, data });
+        return { count: where.id.in.length };
+      },
+    },
+  };
+  assert.equal(await sweepWooRevisionDrift(db), 2);
+  assert.deepEqual(updates[0].where.id.in, ['b', 'c']);
+  assert.equal(updates[0].data.wooSyncOrigin, 'drift');
+});
+
+test('sweepWooRevisionDrift is a no-op when everything is converged', async () => {
+  const db = {
+    tourEvent: {
+      findMany: async () => [{ id: 'a', wooDesiredRevision: 2, wooSyncedRevision: 2 }],
+      updateMany: async () => assert.fail('must not write when nothing drifted'),
+    },
+  };
+  assert.equal(await sweepWooRevisionDrift(db), 0);
 });

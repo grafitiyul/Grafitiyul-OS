@@ -817,6 +817,15 @@ app.listen(port, () => {
     .then(({ startWooSellableRepair }) => startWooSellableRepair(prisma, console))
     .catch((e) => console.warn('[maintenance] woo sellable repair failed:', e?.message));
 
+  // Durable one-time enforcement of the canonical sale-enable invariant across
+  // the catalog: a product GOS never approved for sale must not be purchasable
+  // and must never show a placeholder price (Woo 171 was publicly on sale at
+  // "100,000.00 ₪" with no GOS mapping at all). Corrects ONLY genuinely
+  // violating ungoverned products; deletes nothing and touches no mapping.
+  import('./maintenance/repairWooCatalogSaleGate.js')
+    .then(({ startWooCatalogSaleGate }) => startWooCatalogSaleGate(prisma, console))
+    .catch((e) => console.warn('[maintenance] woo catalog sale gate failed:', e?.message));
+
   // Durable one-time dedupe of raced duplicate open-tour slots (2026-07-13
   // generation race): the oldest twin is kept, empty newer twins are cancelled
   // through the normal Woo/Calendar mirrors — never deleted, never registered.
