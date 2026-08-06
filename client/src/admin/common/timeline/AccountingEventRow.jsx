@@ -50,7 +50,7 @@ function Shell({ tone = 'emerald', icon = '🧾', dragHandle, children, right, f
       <div className="flex items-start gap-2">
         {dragHandle}
         <span className="mt-0.5 text-[18px]" aria-hidden>{icon}</span>
-        <div className="min-w-0 flex-1">
+        <div className="gos-stack min-w-0 flex-1">
           {children}
           {footer}
         </div>
@@ -73,8 +73,15 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
     </button>
   ) : null;
 
+  // WHEN + provenance — the metadata level, always the last line of the card
+  // and always the smallest thing on it. The timestamp is its own token with
+  // tabular figures so stamps align down a stacked feed.
   const stamp = (note) => (
-    <p className="mt-0.5 text-[11.5px] text-gray-500">{fmtWhen(entry.createdAt)}{note ? ` · ${note}` : ''}</p>
+    <p className="gos-meta-cluster">
+      <span className="gos-meta whitespace-nowrap" dir="ltr">{fmtWhen(entry.createdAt)}</span>
+      {note && <span className="gos-sep" aria-hidden>·</span>}
+      {note && <span className="gos-meta">{note}</span>}
+    </p>
   );
 
   // ── iCount documents (issued / linked) — 3-dot actions menu ────────────────
@@ -106,13 +113,13 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
     ) : null;
     return (
       <Shell dragHandle={dragHandle} right={<>{menu}{pinBtn}</>}>
-        <p className="text-[13.5px] font-semibold text-gray-900">
+        <p className="gos-title-sm">
           {d.doctypeLabel || d.doctype}{d.docnum ? ` מס׳ ${d.docnum}` : ''}
-          <span className="font-normal text-gray-600"> · {fmtMoney(d.amountIls, d.currency)}</span>
+          <span className="gos-sep"> · </span>{fmtMoney(d.amountIls, d.currency)}
         </p>
-        <p className="text-[12.5px] text-gray-600">
+        <p className="gos-subject">
           {d.clientName}
-          {d.basedOnDocnum && <span className="text-gray-500"> · על בסיס מסמך {d.basedOnDocnum}</span>}
+          {d.basedOnDocnum && <span className="gos-detail"> · על בסיס מסמך {d.basedOnDocnum}</span>}
         </p>
         {stamp(sourceNote)}
       </Shell>
@@ -123,10 +130,10 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
   if (d.event === 'icount_document_sent') {
     return (
       <Shell dragHandle={dragHandle} icon="✉️" right={pinBtn}>
-        <p className="text-[13.5px] font-semibold text-gray-900">
+        <p className="gos-title-sm">
           נשלח ללקוח באימייל: {d.doctypeLabel || d.doctype}{d.docnum ? ` מס׳ ${d.docnum}` : ''}
         </p>
-        <p className="truncate text-[12.5px] text-gray-600" dir="ltr">{d.recipient}</p>
+        <p className="gos-subject truncate" dir="ltr">{d.recipient}</p>
         {stamp(`${d.via === 'gmail' ? 'נשלח קישור למסמך דרך המייל של המערכת' : 'נשלח דרך iCount'} · ע״י ${who}`)}
       </Shell>
     );
@@ -144,10 +151,10 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
         )}
         {pinBtn}
       </>}>
-        <p className="text-[13.5px] font-semibold text-gray-900">
-          קישור לתשלום מותאם אישית<span className="font-normal text-gray-600"> · {fmtMoney(d.amountIls, d.currency)}</span>
+        <p className="gos-title-sm">
+          קישור לתשלום מותאם אישית<span className="gos-sep"> · </span>{fmtMoney(d.amountIls, d.currency)}
         </p>
-        <p className="truncate text-[12.5px] text-gray-600" dir="auto">{d.description}</p>
+        <p className="gos-subject truncate" dir="auto">{d.description}</p>
         {stamp(`הופק ע״י ${who}`)}
       </Shell>
     );
@@ -157,10 +164,10 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
   if (d.event === 'cardcom_payment') {
     return (
       <Shell dragHandle={dragHandle} icon="💳" right={pinBtn}>
-        <p className="text-[13.5px] font-semibold text-emerald-800">
-          ✓ תשלום כרטיס תייר התקבל (קארדקום)<span className="font-normal text-gray-600"> · {fmtMoney(d.amountIls, d.currency)}</span>
+        <p className="gos-title-sm text-emerald-800">
+          ✓ תשלום כרטיס תייר התקבל (קארדקום)<span className="gos-sep"> · </span>{fmtMoney(d.amountIls, d.currency)}
         </p>
-        <p className="truncate text-[12.5px] text-gray-600" dir="auto">
+        <p className="gos-subject truncate" dir="auto">
           {d.productDescriptionEn}
           {d.cardLast4 ? ` · •••• ${d.cardLast4}` : ''}
           {d.transactionId ? ` · אסמכתא ${d.transactionId}` : ''}
@@ -174,7 +181,7 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
   if (d.event === 'cardcom_doc_pending') {
     return (
       <Shell dragHandle={dragHandle} tone="amber" icon="⚠️" right={pinBtn}>
-        <p className="text-[13.5px] font-semibold text-amber-800">{d.message || 'תשלום התקבל בקארדקום — נדרשת הפקת מסמך ידנית'}</p>
+        <p className="gos-title-sm text-amber-800">{d.message || 'תשלום התקבל בקארדקום — נדרשת הפקת מסמך ידנית'}</p>
         {stamp(null)}
       </Shell>
     );
@@ -190,10 +197,10 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
         : 'נוצר קישור לתשלום כרטיס תייר';
     return (
       <Shell dragHandle={dragHandle} tone={canceled ? 'gray' : 'emerald'} icon="💳" right={pinBtn}>
-        <p className="text-[13.5px] font-semibold text-gray-900">
-          {title}<span className="font-normal text-gray-600"> · {fmtMoney(d.amountIls, d.currency)}</span>
+        <p className="gos-title-sm">
+          {title}<span className="gos-sep"> · </span>{fmtMoney(d.amountIls, d.currency)}
         </p>
-        {d.productDescriptionEn && <p className="truncate text-[12.5px] text-gray-600" dir="auto">{d.productDescriptionEn}</p>}
+        {d.productDescriptionEn && <p className="gos-subject truncate" dir="auto">{d.productDescriptionEn}</p>}
         {stamp(`ע״י ${who}`)}
       </Shell>
     );
@@ -202,7 +209,7 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
   // Unknown accounting shape — minimal, never crash.
   return (
     <Shell dragHandle={dragHandle} right={pinBtn}>
-      <p className="text-[13px] text-gray-700">{d.event || 'אירוע חשבונאי'}</p>
+      <p className="gos-title-sm">{d.event || 'אירוע חשבונאי'}</p>
       {stamp(`ע״י ${who}`)}
     </Shell>
   );

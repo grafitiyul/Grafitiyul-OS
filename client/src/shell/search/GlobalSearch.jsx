@@ -449,9 +449,9 @@ export default function GlobalSearch() {
                   {(data?.groups || []).map((g) => (
                     <li key={g.category}>
                       {grouped && (
-                        <div className="sticky top-0 bg-gray-50 px-3 py-1 text-[11px] text-gray-500 border-y border-gray-100">
+                        <div className="gos-group-label sticky top-0 z-[1] border-y border-gray-200 bg-gray-100 px-3 py-1.5">
                           {g.label}
-                          <span className="text-gray-400">
+                          <span className="gos-meta">
                             {' '}
                             · {g.total}
                             {g.truncated ? '+' : ''}

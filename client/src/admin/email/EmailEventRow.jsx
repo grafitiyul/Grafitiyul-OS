@@ -3,6 +3,8 @@
 // copied into TimelineEntry). Shows direction, subject, snippet and the
 // honest engagement signal for GOS-sent mail.
 
+import EventRowShell from '../common/timeline/EventRowShell.jsx';
+
 function GmailGlyph() {
   return (
     <svg viewBox="0 0 48 48" width="15" height="15" aria-hidden>
@@ -17,39 +19,35 @@ function GmailGlyph() {
 
 export default function EmailEventRow({ entry }) {
   const data = entry.data || {};
-  const when = entry.createdAt ? new Date(entry.createdAt) : null;
   const outbound = data.direction === 'outbound';
   const opens = data.engagement?.openCount || 0;
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <span className="shrink-0 leading-none"><GmailGlyph /></span>
-      <span
-        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ${
-          outbound ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-gray-100 text-gray-600 ring-gray-200'
-        }`}
-      >
-        {outbound ? 'נשלח מייל' : 'התקבל מייל'}
+    <EventRowShell
+      icon={<GmailGlyph />}
+      chip={{
+        label: outbound ? 'נשלח מייל' : 'התקבל מייל',
+        tone: outbound ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-gray-100 text-gray-600 ring-gray-200',
+      }}
+      when={entry.createdAt}
+      // Inbound mail's origin is the sender; outbound's is whoever sent it from
+      // GOS. Both are the same metadata slot, so they line up down the feed.
+      actor={outbound ? entry.createdByName || 'המערכת' : data.fromName || null}
+      trailing={
+        outbound && opens > 0 ? (
+          <span
+            className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold leading-none text-emerald-700 ring-1 ring-emerald-200"
+            title="אינדיקציית פתיחה — אינה מדויקת ב-100% (חוסמי תמונות, פרוקסי של Gmail וכד')"
+          >
+            נפתח · {opens}
+          </span>
+        ) : null
+      }
+    >
+      <span dir="auto">
+        {data.subject || '(ללא נושא)'}
+        {data.snippet && <span className="gos-detail"> — {data.snippet}</span>}
       </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800" dir="auto">
-        <span className="font-medium">{data.subject || '(ללא נושא)'}</span>
-        {data.snippet && <span className="text-gray-400"> — {data.snippet}</span>}
-      </span>
-      {outbound && opens > 0 && (
-        <span
-          className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700 ring-1 ring-emerald-200"
-          title="אינדיקציית פתיחה — אינה מדויקת ב-100% (חוסמי תמונות, פרוקסי של Gmail וכד')"
-        >
-          נפתח · {opens}
-        </span>
-      )}
-      {!outbound && data.fromName && (
-        <span className="shrink-0 text-[11px] text-gray-400" dir="auto">{data.fromName}</span>
-      )}
-      <span className="shrink-0 text-[11px] text-gray-400">
-        {when ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
-        {outbound && ` · ${entry.createdByName || 'המערכת'}`}
-      </span>
-    </div>
+    </EventRowShell>
   );
 }

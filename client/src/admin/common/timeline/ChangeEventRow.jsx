@@ -1,4 +1,5 @@
 import { dealChangeFieldLabel } from '../../../../../shared/dealStatus.mjs';
+import EventRowShell from './EventRowShell.jsx';
 
 // Compact history row for a structured Deal change event (TimelineEntry
 // kind='change'). Emitted by the backend Deal update paths — one entry per
@@ -30,13 +31,13 @@ function PencilIcon() {
   );
 }
 
+// Reading hierarchy inside a change line: the FIELD NAME and the OLD value are
+// context (.gos-detail); the NEW value is the answer, so it inherits the row's
+// primary weight instead of being one more grey token in a grey sentence.
 function Val({ v, strong = false }) {
   const empty = v === null || v === undefined || v === '';
-  return (
-    <span className={empty ? 'text-gray-400' : strong ? 'font-semibold text-gray-900' : 'text-gray-500'}>
-      {empty ? 'ללא' : v}
-    </span>
-  );
+  if (empty) return <span className="gos-meta">ללא</span>;
+  return <span className={strong ? '' : 'gos-detail'}>{v}</span>;
 }
 
 function ChangeLine({ c }) {
@@ -44,22 +45,22 @@ function ChangeLine({ c }) {
   if (c.fieldKey === 'contactLinked') {
     return (
       <>
-        <span className="text-gray-600">נוסף איש קשר:</span> <Val v={c.newDisplay} strong />
+        <span className="gos-detail">נוסף איש קשר:</span> <Val v={c.newDisplay} strong />
       </>
     );
   }
   if (c.fieldKey === 'contactUnlinked') {
     return (
       <>
-        <span className="text-gray-600">הוסר איש קשר:</span> <Val v={c.oldDisplay} strong />
+        <span className="gos-detail">הוסר איש קשר:</span> <Val v={c.oldDisplay} strong />
       </>
     );
   }
   return (
     <>
-      <span className="text-gray-600">{dealChangeFieldLabel(c.fieldKey, c.labelHe)}:</span>{' '}
+      <span className="gos-detail">{dealChangeFieldLabel(c.fieldKey, c.labelHe)}:</span>{' '}
       <Val v={c.oldDisplay} />
-      <span className="mx-1 text-gray-400" aria-hidden>←</span>
+      <span className="gos-sep mx-1" aria-hidden>←</span>
       <Val v={c.newDisplay} strong />
     </>
   );
@@ -67,8 +68,6 @@ function ChangeLine({ c }) {
 
 export default function ChangeEventRow({ entry }) {
   const changes = Array.isArray(entry.data?.changes) ? entry.data.changes : [];
-  const when = entry.createdAt ? new Date(entry.createdAt) : null;
-  const actor = entry.createdByName || entry.actorLabel || 'מערכת';
   // Titled entries (questionnaire history: "טופס X הוגש/עודכן") keep the
   // title as the header and expand ALL changes below it; untitled entries
   // (deal/person changelog) keep the original compact behavior.
@@ -76,40 +75,28 @@ export default function ChangeEventRow({ entry }) {
   const multi = title ? changes.length > 0 : changes.length > 1;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 leading-none"><PencilIcon /></span>
-        <span className="inline-flex shrink-0 items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10.5px] font-semibold text-blue-700 ring-1 ring-blue-200">
-          עדכון
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">
-          {title ? (
-            <span className="font-medium">{title}</span>
-          ) : changes.length > 1 ? (
-            <span className="font-medium">{changes.length} שינויים בפרטי הדיל</span>
-          ) : changes.length === 1 ? (
-            <ChangeLine c={changes[0]} />
-          ) : (
-            'עדכון פרטים'
-          )}
-        </span>
-        <span className="shrink-0 text-[11px] text-gray-400">
-          {when
-            ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-            : ''}
-          {' · '}
-          {actor}
-        </span>
-      </div>
-      {multi && (
-        <ul className="mt-1.5 space-y-1 pr-7">
-          {changes.map((c, i) => (
-            <li key={i} className="text-[13px] text-gray-800">
-              <ChangeLine c={c} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <EventRowShell
+      icon={<PencilIcon />}
+      chip={{ label: 'עדכון', tone: 'bg-blue-50 text-blue-700 ring-blue-200' }}
+      when={entry.createdAt}
+      actor={entry.createdByName || entry.actorLabel || 'מערכת'}
+      below={
+        multi ? (
+          <ul className="gos-stack mt-2 border-t border-gray-100 pr-7 pt-2">
+            {changes.map((c, i) => (
+              <li key={i} className="gos-subject">
+                <ChangeLine c={c} />
+              </li>
+            ))}
+          </ul>
+        ) : null
+      }
+    >
+      {title || (changes.length > 1
+        ? `${changes.length} שינויים בפרטי הדיל`
+        : changes.length === 1
+          ? <ChangeLine c={changes[0]} />
+          : 'עדכון פרטים')}
+    </EventRowShell>
   );
 }

@@ -97,17 +97,20 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
         acknowledged ? 'opacity-60' : ''
       }`}
     >
+      {/* Reading hierarchy (index.css §GOS READING HIERARCHY): the issue TITLE
+          is what the operator triages on, so it takes the primary level; the
+          module chip and the detection time are metadata and recede. */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`inline-block w-2 h-2 rounded-full ${sev.dot}`} />
-        <span className="font-semibold text-gray-900 text-[14px]">{issue.title}</span>
-        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${sev.chip}`}>
+        <span className="gos-title">{issue.title}</span>
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold leading-none ${sev.chip}`}>
           {MODULE_LABELS[issue.sourceModule] || issue.sourceModule}
         </span>
-        <span className="ms-auto text-[12px] text-gray-400" title={new Date(issue.detectedAt).toLocaleString('he-IL')}>
+        <span className="gos-meta ms-auto" title={new Date(issue.detectedAt).toLocaleString('he-IL')}>
           {fmtDetected(issue.detectedAt)}
         </span>
       </div>
-      <p className="mt-1.5 text-[13px] text-gray-600 leading-relaxed whitespace-pre-line">{issue.explanation}</p>
+      <p className="gos-body mt-2 whitespace-pre-line">{issue.explanation}</p>
 
       {diffs && showDiffs && (
         <div className="mt-2 overflow-x-auto">

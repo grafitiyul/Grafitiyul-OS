@@ -38,6 +38,137 @@ body {
   display: none;
 }
 
+/* ===========================================================================
+   GOS READING HIERARCHY — the ONE typography + rhythm scale for every dense
+   information surface (timeline cards, search results, list rows, activity
+   cards, review/control cards).
+   ---------------------------------------------------------------------------
+   The problem this solves: almost every dense component was written with
+   text-[13px] / text-[12px] / text-[11px] and gray-900 / gray-500 / gray-400.
+   A 1px size step and a weight that never changes means EVERYTHING has the
+   same visual weight — the operator has to consciously read each row instead
+   of recognising it. The fix is a scale with real gaps: size AND weight AND
+   colour all step together.
+
+   Four levels. A component picks the level by ROLE, never by taste:
+
+     L1  .gos-title      the item's identity          — "what is this row"
+         .gos-title-sm   same role, one-line dense rows (timeline events)
+     L2  .gos-subject    who / which organisation     — the people axis
+     L3  .gos-detail     what / when                  — product, date, descriptive
+     L4  .gos-meta       technical metadata           — timestamps, #numbers, source
+         .gos-meta-key   the ONE findable token inside a metadata cluster
+                         (author name) — same size, much stronger weight
+
+   Prose (authored multi-line content, explanations) is .gos-body. Rich HTML
+   keeps using .gos-prose (rule §16) — .gos-body is for plain text only.
+
+   Rhythm: .gos-stack spaces the levels WITHIN one item; .gos-stack-block
+   separates logical sections. Never hardcode these gaps per component.
+
+   Declared in @layer components so a Tailwind utility on the same element
+   still wins (e.g. `class="gos-detail text-green-700"` recolours L3 without
+   forking the scale).
+   =========================================================================== */
+:root {
+  --gos-fs-title: 15px;
+  --gos-fs-title-sm: 13.5px;
+  --gos-fs-subject: 13px;
+  --gos-fs-detail: 12.5px;
+  --gos-fs-meta: 11px;
+  --gos-fs-body: 14.5px;
+
+  --gos-fg-title: rgb(17 24 39); /* gray-900 */
+  --gos-fg-subject: rgb(55 65 81); /* gray-700 */
+  --gos-fg-detail: rgb(107 114 128); /* gray-500 */
+  --gos-fg-meta: rgb(156 163 175); /* gray-400 */
+  --gos-fg-meta-key: rgb(75 85 99); /* gray-600 */
+  --gos-fg-body: rgb(31 41 55); /* gray-800 */
+
+  /* Vertical rhythm. One number per relationship, used everywhere. */
+  --gos-gap-line: 3px; /* between hierarchy levels of the SAME item */
+  --gos-gap-block: 10px; /* between logical sections of an item */
+}
+
+@layer components {
+  .gos-title {
+    font-size: var(--gos-fs-title);
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--gos-fg-title);
+  }
+  .gos-title-sm {
+    font-size: var(--gos-fs-title-sm);
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--gos-fg-title);
+  }
+  .gos-subject {
+    font-size: var(--gos-fs-subject);
+    font-weight: 500;
+    line-height: 1.45;
+    color: var(--gos-fg-subject);
+  }
+  .gos-detail {
+    font-size: var(--gos-fs-detail);
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--gos-fg-detail);
+  }
+  /* Metadata is scanned, not read: small, medium weight, and — critically —
+     tabular figures so dates/times/#numbers line up column-wise between rows.
+     That alignment is most of why a metadata cluster becomes findable. */
+  .gos-meta {
+    font-size: var(--gos-fs-meta);
+    font-weight: 500;
+    line-height: 1.45;
+    color: var(--gos-fg-meta);
+    font-variant-numeric: tabular-nums;
+  }
+  .gos-meta-key {
+    font-size: var(--gos-fs-meta);
+    font-weight: 700;
+    line-height: 1.45;
+    color: var(--gos-fg-meta-key);
+  }
+  /* Authored plain-text content (note previews, explanations, snippets). */
+  .gos-body {
+    font-size: var(--gos-fs-body);
+    font-weight: 400;
+    line-height: 1.65;
+    color: var(--gos-fg-body);
+  }
+  /* Section label above a group of rows (search groups, card sections). */
+  .gos-group-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.06em;
+    color: var(--gos-fg-detail);
+  }
+
+  /* Rhythm. `.gos-stack` on the container; every level inside is a direct
+     child, so the gaps stay identical across every component that uses it. */
+  .gos-stack > * + * {
+    margin-top: var(--gos-gap-line);
+  }
+  .gos-stack-block > * + * {
+    margin-top: var(--gos-gap-block);
+  }
+  /* One metadata cluster: tokens separated by a quiet dot, never by the same
+     gap as the content above it. */
+  .gos-meta-cluster {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 2px;
+  }
+  .gos-sep {
+    color: rgb(209 213 219); /* gray-300 — a separator, not a character to read */
+  }
+}
+
 /* Subtle entrance for inline-edit fields (platform pattern). */
 @keyframes inlineIn {
   from { opacity: 0; transform: translateY(-1px); }

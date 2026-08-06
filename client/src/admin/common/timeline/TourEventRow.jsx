@@ -1,4 +1,5 @@
 import { fmtTourDate } from '../../tours/config.js';
+import EventRowShell from './EventRowShell.jsx';
 
 // Compact history row for a Tours lifecycle event (TimelineEntry kind='tour').
 // Emitted by the server tours module (src/tours/tourFromDeal.js) on the DEAL
@@ -35,45 +36,31 @@ const REASON_TEXT = {
 
 export default function TourEventRow({ entry }) {
   const d = entry.data || {};
-  const when = entry.createdAt ? new Date(entry.createdAt) : null;
-  const actor = entry.createdByName || entry.actorLabel || 'מערכת';
   const text = EVENT_TEXT[d.event] || 'עדכון סיור';
   const reason = REASON_TEXT[d.reason];
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[15px] leading-none" aria-hidden>🧭</span>
-        <span className="inline-flex shrink-0 items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10.5px] font-semibold text-indigo-700 ring-1 ring-indigo-200">
-          סיור
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">
-          <span className="font-medium">{text}</span>
-          {d.date && (
-            <span className="text-gray-500">
-              {' · '}
-              {fmtTourDate(d.date)}
-              {d.startTime && (
-                <>
-                  {' '}
-                  <span dir="ltr" className="tabular-nums">{d.startTime}</span>
-                </>
-              )}
-            </span>
-          )}
-          {Number.isInteger(d.seats) && d.seats > 0 && (
-            <span className="text-gray-500"> · {d.seats} משתתפים</span>
-          )}
-          {reason && <span className="text-gray-500"> · {reason}</span>}
-        </span>
-        <span className="shrink-0 text-[11px] text-gray-400">
-          {when
-            ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-            : ''}
+    <EventRowShell
+      icon={<span className="text-[15px]" aria-hidden>🧭</span>}
+      chip={{ label: 'סיור', tone: 'bg-indigo-50 text-indigo-700 ring-indigo-200' }}
+      when={entry.createdAt}
+      actor={entry.createdByName || entry.actorLabel || 'מערכת'}
+    >
+      {text}
+      {d.date && (
+        <span className="gos-detail">
           {' · '}
-          {actor}
+          {fmtTourDate(d.date)}
+          {d.startTime && (
+            <>
+              {' '}
+              <span dir="ltr" className="tabular-nums">{d.startTime}</span>
+            </>
+          )}
         </span>
-      </div>
-    </div>
+      )}
+      {Number.isInteger(d.seats) && d.seats > 0 && <span className="gos-detail"> · {d.seats} משתתפים</span>}
+      {reason && <span className="gos-detail"> · {reason}</span>}
+    </EventRowShell>
   );
 }

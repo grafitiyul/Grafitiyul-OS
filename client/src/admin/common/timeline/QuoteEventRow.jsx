@@ -4,6 +4,8 @@
 // The public URL is permanent (immutable snapshot), so linking straight to it
 // from history is always safe.
 
+import EventRowShell from './EventRowShell.jsx';
+
 function DocIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"
@@ -16,8 +18,6 @@ function DocIcon() {
 
 export default function QuoteEventRow({ entry }) {
   const d = entry.data || {};
-  const when = entry.createdAt ? new Date(entry.createdAt) : null;
-  const actor = entry.createdByName || entry.actorLabel || 'מערכת';
   const sent = d.event === 'quote_sent';
   const won = d.event === 'won_reference';
   const version = d.versionNo ? `גרסה ${d.versionNo}` : null;
@@ -25,32 +25,29 @@ export default function QuoteEventRow({ entry }) {
   const url = d.publicToken ? `/quote/${d.publicToken}` : null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 leading-none"><DocIcon /></span>
-        <span className="inline-flex shrink-0 items-center rounded-full bg-teal-50 px-2 py-0.5 text-[10.5px] font-semibold text-teal-700 ring-1 ring-teal-200">
-          הצעת מחיר
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">
-          <span className="font-medium">
-            {won ? '🏆 העסקה נסגרה על בסיס הצעה זו' : sent ? `נשלחה ${d.channel === 'email' ? 'במייל' : 'ללקוח'}` : 'הופקה'}
-          </span>
-          {[offer, version].filter(Boolean).map((part) => (
-            <span key={part} className="text-gray-500"> · {part}</span>
-          ))}
-          {sent && d.to && <span className="text-gray-500"> · אל {d.to}</span>}
-          {url && (
-            <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline"> · פתח ↗</a>
-          )}
-        </span>
-        <span className="shrink-0 text-[11px] text-gray-400">
-          {when
-            ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-            : ''}
-          {' · '}
-          {actor}
-        </span>
-      </div>
-    </div>
+    <EventRowShell
+      icon={<DocIcon />}
+      chip={{ label: 'הצעת מחיר', tone: 'bg-teal-50 text-teal-700 ring-teal-200' }}
+      when={entry.createdAt}
+      actor={entry.createdByName || entry.actorLabel || 'מערכת'}
+      trailing={
+        url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
+          >
+            פתח ↗
+          </a>
+        ) : null
+      }
+    >
+      {won ? '🏆 העסקה נסגרה על בסיס הצעה זו' : sent ? `נשלחה ${d.channel === 'email' ? 'במייל' : 'ללקוח'}` : 'הופקה'}
+      {[offer, version].filter(Boolean).map((part) => (
+        <span key={part} className="gos-detail"> · {part}</span>
+      ))}
+      {sent && d.to && <span className="gos-detail"> · אל {d.to}</span>}
+    </EventRowShell>
   );
 }

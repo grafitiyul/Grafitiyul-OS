@@ -48,28 +48,35 @@ export default function TaskCards({
             onChange={() => onToggleSelect(row.id, idx)}
             className="mt-1 accent-blue-600"
           />
-          <div className="min-w-0 flex-1">
+          {/* Reading hierarchy (index.css §GOS READING HIERARCHY):
+              L1 task title → L2 who it is for → L3 when it is due →
+              L4 deal number + owner. Same levels the Deal timeline and the
+              global search rows use, so a task looks like a task everywhere. */}
+          <div className="gos-stack min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="shrink-0"><TaskIcon name={row.icon} channel={row.channel} size={14} /></span>
-              <span className="truncate text-[13px] font-medium text-gray-900">{row.title}</span>
+              <span className="shrink-0"><TaskIcon name={row.icon} channel={row.channel} size={15} /></span>
+              <span className="gos-title truncate">{row.title}</span>
               {row.priority && (
-                <span className={`ms-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${PRIORITY_TONE[row.priority]}`}>
+                <span className={`ms-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ring-1 ring-inset ${PRIORITY_TONE[row.priority]}`}>
                   {priorityLabel(row.priority)}
                 </span>
               )}
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-500">
-              <span dir="ltr" className="tabular-nums">
+            {(row.customer?.name || row.deal) && (
+              <div className="gos-subject truncate">
+                {row.customer?.name || row.deal?.title}
+              </div>
+            )}
+            <div className="gos-detail" dir="ltr">
+              <span className="tabular-nums">
                 {fmtDate(dueDateOf(row))}
                 {row.dueTime ? ` · ${row.dueTime}` : ''}
               </span>
-              {row.deal && (
-                <span className="truncate">
-                  #{row.deal.orderNo} · {row.deal.title}
-                </span>
-              )}
-              {row.customer?.name && <span className="truncate">{row.customer.name}</span>}
-              {row.owner?.name && <span className="text-gray-400">{row.owner.name}</span>}
+            </div>
+            <div className="gos-meta-cluster">
+              {row.deal && <span className="gos-meta font-mono">#{row.deal.orderNo}</span>}
+              {row.deal && row.customer?.name && <span className="gos-meta truncate">{row.deal.title}</span>}
+              {row.owner?.name && <span className="gos-meta truncate">{row.owner.name}</span>}
             </div>
           </div>
           {row.status === 'open' ? (

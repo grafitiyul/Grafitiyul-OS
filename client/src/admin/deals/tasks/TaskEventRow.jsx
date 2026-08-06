@@ -1,4 +1,5 @@
 import TaskIcon from './TaskIcon.jsx';
+import EventRowShell from '../../common/timeline/EventRowShell.jsx';
 
 // Compact history row for a terminal task event (TimelineEntry kind='task').
 // These are emitted by the backend when a task is completed/cancelled/sent/
@@ -15,23 +16,15 @@ const EVENT_STYLE = {
 export default function TaskEventRow({ entry }) {
   const data = entry.data || {};
   const style = EVENT_STYLE[data.event] || { label: 'משימה', cls: 'bg-gray-100 text-gray-600 ring-gray-200' };
-  const when = entry.createdAt ? new Date(entry.createdAt) : null;
-  const actor = entry.createdByName || entry.actorLabel || 'מערכת';
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <span className="shrink-0 text-[15px] leading-none">
-        <TaskIcon name={data.icon} channel={data.channel} size={16} />
-      </span>
-      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ${style.cls}`}>
-        {style.label}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{data.title || entry.body}</span>
-      <span className="shrink-0 text-[11px] text-gray-400">
-        {when ? when.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
-        {' · '}
-        {actor}
-      </span>
-    </div>
+    <EventRowShell
+      icon={<TaskIcon name={data.icon} channel={data.channel} size={16} />}
+      chip={{ label: style.label, tone: style.cls }}
+      when={entry.createdAt}
+      actor={entry.createdByName || entry.actorLabel || 'מערכת'}
+    >
+      {data.title || entry.body}
+    </EventRowShell>
   );
 }

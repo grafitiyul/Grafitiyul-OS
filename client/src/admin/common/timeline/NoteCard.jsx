@@ -11,26 +11,70 @@ import { useDirtyForm } from '../../../lib/dirtyForms.js';
 // Origin + absolute date & time stamp shown on every timeline object. The origin
 // is never anonymous: a human shows their name; an API/automation/system/import
 // shows its source label + a small typed badge.
-function fmtStamp(iso) {
+//
+// Reading hierarchy (index.css §GOS READING HIERARCHY): the AUTHOR is the
+// secondary level — .gos-meta-key, so the eye lands on "who" first — and the
+// date/time/source ride .gos-meta at a smaller size with tabular figures, so
+// stamps line up column-wise between stacked notes and become scannable
+// without being loud. Nothing was removed: badge, name, date, time and the
+// "נערך" flag all still render.
+function fmtDatePart(iso) {
   if (!iso) return '';
   try {
-    const d = new Date(iso);
-    return `${d.toLocaleDateString('he-IL')} ${d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
+    return new Date(iso).toLocaleDateString('he-IL');
   } catch {
     return '';
   }
 }
-function StampLine({ item, edited, className = 'text-[11px] text-gray-400' }) {
+function fmtTimePart(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+// WHO — the leading (right, in RTL) edge of the identity strip, because that is
+// where the eye starts. Badge first when the origin is not a human.
+function ActorTag({ item, compact = false }) {
   const { name, badge } = actorDisplay(item);
   return (
-    <span className={`inline-flex items-center gap-1 ${className}`}>
+    <span className="gos-meta-cluster min-w-0 shrink-0">
       {badge && (
-        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>{badge.label}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none ${badge.cls}`}>
+          {badge.label}
+        </span>
       )}
-      <span className="font-medium text-gray-500">{name}</span>
-      {' · '}
-      {fmtStamp(item.createdAt)}
-      {edited ? ' · נערך' : ''}
+      <span className={`truncate ${compact ? 'gos-meta' : 'gos-meta-key'}`}>{name}</span>
+    </span>
+  );
+}
+
+// WHEN — the trailing edge. Date and time are two tokens, not one string: at
+// tabular figures they align between stacked notes, so the operator finds the
+// stamp by position instead of reading it.
+function TimeTag({ item, edited }) {
+  return (
+    <span className="gos-meta-cluster shrink-0">
+      <span className="gos-meta whitespace-nowrap" dir="ltr">{fmtDatePart(item.createdAt)}</span>
+      <span className="gos-meta whitespace-nowrap" dir="ltr">{fmtTimePart(item.createdAt)}</span>
+      {edited && (
+        <>
+          <span className="gos-sep" aria-hidden>·</span>
+          <span className="gos-meta">נערך</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+// Comments are one line each — WHO and WHEN stay in a single trailing cluster.
+function StampLine({ item, edited }) {
+  return (
+    <span className="gos-meta-cluster shrink-0">
+      <ActorTag item={item} compact />
+      <span className="gos-sep" aria-hidden>·</span>
+      <TimeTag item={item} edited={edited} />
     </span>
   );
 }
@@ -117,12 +161,21 @@ export default function NoteCard({
 
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50 shadow-sm">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 pt-3">
+      {/* Identity strip — its OWN band, separated from the content by a hairline.
+          Reading order in RTL: who wrote it (leading edge) → what kind of note
+          it is (origin/source chips) → when (trailing edge) → actions. The
+          operator answers "who / when / source" before a single word of the
+          note is read, which is the whole point of giving it a band. */}
+      <div className="flex items-center gap-2 px-4 pt-2.5 pb-2">
         {dragHandle}
-        {originLabel && <span className="text-[11px] font-medium text-amber-700/80">{originLabel}</span>}
+        <ActorTag item={entry} />
+        {originLabel && (
+          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-800">
+            {originLabel}
+          </span>
+        )}
         {source && source.label && (
-          <span className="rounded bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100 px-1.5 py-0.5 text-[10px] font-medium truncate max-w-[12rem]">
+          <span className="rounded bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none truncate max-w-[12rem]">
             {SOURCE_PREFIX[source.type] || 'מקור'}: {source.label}
           </span>
         )}
@@ -130,8 +183,8 @@ export default function NoteCard({
           <span className="text-amber-500 text-[12px] leading-none" title="נעוץ ל-FOCUS" aria-hidden>📌</span>
         )}
         <div className="flex-1" />
-        {/* Metadata — pushed to the left (end), low-emphasis, out of the reading path. */}
-        <StampLine item={entry} edited={!!entry.editedAt} />
+        {/* Metadata — trailing edge, low-emphasis, out of the reading path. */}
+        <TimeTag item={entry} edited={!!entry.editedAt} />
         <IconBtn title={expanded ? 'כווץ' : 'הרחב'} onClick={onToggleExpand}>{expanded ? '▾' : '▸'}</IconBtn>
         {/* Actions live in a 3-dot menu so the card stays calm. Read-only
             (aggregated) items expose no actions at all. */}
@@ -179,8 +232,9 @@ export default function NoteCard({
         )}
       </div>
 
-      {/* Body */}
-      <div className="px-4 pb-3 pt-1">
+      {/* Body — the PRIMARY level. The hairline above it is what turns the
+          metadata into a header instead of a first line of content. */}
+      <div className="border-t border-amber-200/60 px-4 pb-3 pt-2.5">
         {editing ? (
           <div className="space-y-2">
             <RichEditor preset="note" value={draft} onChange={setDraft} minContentHeight={80} maxHeight="50vh" ariaLabel="עריכת פתק" />
@@ -196,8 +250,9 @@ export default function NoteCard({
         ) : expanded ? (
           <div className="gos-prose gos-prose-tight text-[15px]" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(entry.body || '', 'tight') }} />
         ) : (
-          // Collapsed → single preview line (click to expand).
-          <button type="button" onClick={onToggleExpand} className="block w-full text-right text-sm text-gray-600 truncate">
+          // Collapsed → single preview line (click to expand). Still the
+          // primary level: a collapsed note is content, not metadata.
+          <button type="button" onClick={onToggleExpand} className="gos-body block w-full truncate text-right">
             {titleToPlain(entry.body || '') || '(ריק)'}
           </button>
         )}
@@ -297,8 +352,8 @@ function CommentRow({ comment, onEdit, onDelete, readOnly = false }) {
         </div>
       ) : (
         <div className="flex items-start gap-2">
-          <div className="flex-1 text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</div>
-          <StampLine item={comment} className="text-[10px] text-gray-400 shrink-0" />
+          <div className="gos-subject flex-1 whitespace-pre-wrap">{comment.body}</div>
+          <StampLine item={comment} />
           {!readOnly && (
             <>
               <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>

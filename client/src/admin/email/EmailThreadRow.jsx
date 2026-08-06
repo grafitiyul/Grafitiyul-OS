@@ -50,7 +50,10 @@ export default function EmailThreadRow({ thread, onOpen, showDeal = false }) {
         aria-hidden="true"
         className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${unread ? 'bg-blue-600' : 'bg-transparent'}`}
       />
-      <span className="min-w-0 flex-1">
+      {/* Reading hierarchy (index.css §GOS READING HIERARCHY):
+          L1 subject → L2 counterparties → L3 snippet → L4 timestamp.
+          Unread keeps its own extra step (bold) ON TOP of the level. */}
+      <span className="gos-stack min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           {dir && (
             <span className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold ring-1 ${dir.tone}`}>
@@ -58,7 +61,7 @@ export default function EmailThreadRow({ thread, onOpen, showDeal = false }) {
             </span>
           )}
           <span
-            className={`min-w-0 flex-1 truncate text-[13.5px] ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}
+            className={`gos-title min-w-0 flex-1 truncate ${unread ? 'font-bold' : ''}`}
             dir="auto"
           >
             {thread.subject || '(ללא נושא)'}
@@ -79,23 +82,23 @@ export default function EmailThreadRow({ thread, onOpen, showDeal = false }) {
             <span className="shrink-0 text-[12px] text-gray-400" title="יש קבצים מצורפים">📎</span>
           )}
         </span>
-        <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-gray-500">
-          {people && <span className="truncate" dir="auto">{people}</span>}
-          {thread.messageCount > 1 && <span className="shrink-0 text-gray-400">· {thread.messageCount}</span>}
+        <span className="gos-meta-cluster">
+          {people && <span className="gos-subject truncate" dir="auto">{people}</span>}
+          {thread.messageCount > 1 && <span className="gos-meta shrink-0">· {thread.messageCount}</span>}
         </span>
         {thread.snippet && (
-          <span className="mt-0.5 block truncate text-[12px] text-gray-400" dir="auto">{thread.snippet}</span>
+          <span className="gos-detail block truncate" dir="auto">{thread.snippet}</span>
         )}
         {/* On the Contact surface a thread may belong to a deal — that context
             is the difference between "an email" and "the email about THIS job".
             Suppressed on the Deal surface, where it is already the answer. */}
         {showDeal && thread.linkedDeal && (
-          <span className="mt-1 inline-flex max-w-full items-center gap-1 truncate rounded-md bg-indigo-50 px-1.5 py-px text-[10.5px] font-medium text-indigo-700">
+          <span className="inline-flex max-w-full items-center gap-1 truncate rounded-md bg-indigo-50 px-1.5 py-px text-[10.5px] font-semibold text-indigo-700">
             דיל #{thread.linkedDeal.orderNo ?? ''} {thread.linkedDeal.stageName || ''}
           </span>
         )}
       </span>
-      <span className="shrink-0 pt-0.5 text-[11px] text-gray-400">{fmtWhen(thread.lastMessageAt)}</span>
+      <span className="gos-meta shrink-0 pt-1 whitespace-nowrap" dir="ltr">{fmtWhen(thread.lastMessageAt)}</span>
     </button>
   );
 }
