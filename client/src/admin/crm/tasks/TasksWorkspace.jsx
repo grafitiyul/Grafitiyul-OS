@@ -8,6 +8,8 @@ import { useRealtime } from '../../../lib/realtime.js';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
 import { anchorAt, reconcileAnchor, canStep, stepAnchor, drawerPosition } from '../../common/drawerNav.js';
+import { withDrawerParams, readDrawerParams, restoreAnchor } from '../../common/drawerRestore.js';
+import { clampDrawerStart, readStoredDrawerStart, writeStoredDrawerStart } from '../../common/drawerWidth.js';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import TaskCards from './TaskCards.jsx';
 // TaskIcon = the ONE task-icon renderer: whatsapp (by key OR channel) → the
@@ -43,6 +45,10 @@ import {
 // loads in one fetch, capped at the server's ceiling; scrolling is the only
 // navigation. If a filter ever exceeds the cap, the count shows 'מוצג חלק'.
 const FETCH_LIMIT = 2000;
+
+// Where this workstation remembers how wide the operator dragged the drawer.
+// Device-local by design — a 27" desk and a 13" laptop want different numbers.
+const DRAWER_WIDTH_KEY = 'gos.crmTasks.drawerStartPx';
 
 // Saved Views: TEMPORARILY HIDDEN (owner decision 2026-07-16) while the
 // workspace design stabilises. The full infrastructure — server model/routes,
@@ -134,6 +140,13 @@ export default function TasksWorkspace() {
   const [drawerDealId, setDrawerDealId] = useState(null);
   const drawerRef = useRef(null);
   drawerRef.current = drawer;
+  // What the URL remembered on THIS page load, consumed once the first page of
+  // rows arrives. Read from the initial params only: later URL writes are our
+  // own mirror, and re-reading them would fight the operator.
+  const pendingRestoreRef = useRef(readDrawerParams(searchParams));
+  // The restore must be resolved against REAL rows, never against the empty
+  // array the grid starts with — otherwise every restore would land detached.
+  const loadedOnceRef = useRef(false);
 
   const cols = useTableColumns(COLUMNS_KEY, TASK_COLUMNS);
   const gridRef = useRef(null);
@@ -181,13 +194,17 @@ export default function TasksWorkspace() {
   }, []);
 
   // ── URL + localStorage mirror ──
+  // The open drawer rides along (drawerRestore.js — ids only), so a refresh
+  // comes back with the same deal open and a shared link opens what the sender
+  // was actually looking at. It has to be merged HERE because this effect
+  // replaces the whole query string.
   useEffect(() => {
     if (!filters) return;
     saveFilters(filters);
-    const next = filtersToParams(filters, sort, 1);
+    const next = withDrawerParams(filtersToParams(filters, sort, 1), drawer);
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, sort]);
+  }, [filters, sort, drawer?.recordId, drawer?.rowId]);
 
   const query = useMemo(
     () => (filters ? filtersToQuery(filters, sort, 1, FETCH_LIMIT) : null),
@@ -227,6 +244,7 @@ export default function TasksWorkspace() {
       }
       prevIdsRef.current = ids;
       prevQueryRef.current = query;
+      loadedOnceRef.current = true;
       setData(list);
       if (cnt) setCounts(cnt);
       // Resetting the cursor is "you asked for a new list, start at the top".
@@ -272,6 +290,15 @@ export default function TasksWorkspace() {
   // the pinned deal is untouched by all of it, and Prev/Next keep walking from
   // the position it held. See common/drawerNav.js for the full rule.
   useEffect(() => {
+    // First rows after a page load: adopt whatever the URL remembered. If the
+    // task is gone (completed, or outside the restored filter) the DEAL stays
+    // open and says so — it never falls through to a different deal.
+    const restore = pendingRestoreRef.current;
+    if (restore && loadedOnceRef.current) {
+      pendingRestoreRef.current = null;
+      setDrawer(restoreAnchor(restore, rows));
+      return;
+    }
     setDrawer((d) => reconcileAnchor(d, rows));
   }, [rows]);
 
@@ -303,13 +330,28 @@ export default function TasksWorkspace() {
   //   mobile:        0 — full-screen detail is the intended card behaviour
   // Capped at 45% of the grid so the drawer itself stays usable. The drawer is
   // an absolute overlay, so opening/closing never re-lays-out the table.
+  //
+  // …and the operator can DRAG that boundary. Their number outranks the
+  // measurement and is remembered on this device (drawerWidth.js owns both the
+  // bounds and the storage); double-clicking the grip drops back to the
+  // measured default. Mobile stays 0 — full-screen detail, and DealDrawer then
+  // renders no grip at all.
   const [drawerStartPx, setDrawerStartPx] = useState(0);
+  const [drawerStartOverride, setDrawerStartOverride] = useState(() =>
+    readStoredDrawerStart(DRAWER_WIDTH_KEY),
+  );
   useEffect(() => {
     if (!drawer) return undefined;
     const measure = () => {
       const grid = gridRef.current;
       if (!grid || !window.matchMedia('(min-width: 768px)').matches) {
         setDrawerStartPx(0);
+        return;
+      }
+      if (drawerStartOverride != null) {
+        // Re-clamped against the CURRENT pane, so a width chosen on a wide
+        // monitor cannot swallow the queue on a laptop.
+        setDrawerStartPx(clampDrawerStart(drawerStartOverride, grid.clientWidth));
         return;
       }
       const keepData = window.matchMedia('(min-width: 1024px)').matches ? 2 : 1;
@@ -324,7 +366,21 @@ export default function TasksWorkspace() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [drawer, cols.widths, cols.visibleCols]);
+  }, [drawer, cols.widths, cols.visibleCols, drawerStartOverride]);
+
+  // px === null → the operator double-clicked the grip: forget the override.
+  const resizeDrawer = useCallback((px, paneWidth) => {
+    if (px == null) {
+      setDrawerStartOverride(null);
+      writeStoredDrawerStart(DRAWER_WIDTH_KEY, null);
+      return;
+    }
+    const next = clampDrawerStart(px, paneWidth || gridRef.current?.clientWidth || 0);
+    if (!next) return;
+    setDrawerStartOverride(next);
+    setDrawerStartPx(next);
+    writeStoredDrawerStart(DRAWER_WIDTH_KEY, next);
+  }, []);
 
   const stepDrawer = useCallback((delta) => {
     setDrawer((d) => {
@@ -1062,6 +1118,7 @@ export default function TasksWorkspace() {
           onNext={canStep(drawer, rows, 1) ? () => stepDrawer(1) : undefined}
           position={drawerPosition(drawer, rows)}
           startOffset={drawerStartPx}
+          onResize={resizeDrawer}
         />
       )}
       </div>

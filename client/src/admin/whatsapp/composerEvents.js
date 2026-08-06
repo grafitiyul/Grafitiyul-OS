@@ -24,3 +24,27 @@ export function openWhatsappComposer({ subjectId, chat, draftText }) {
     new CustomEvent(OPEN_WHATSAPP_COMPOSER_EVENT, { detail: { subjectId, chatId: chat?.id || null } }),
   );
 }
+
+// ── "a message just went out on this conversation" ───────────────────────────
+//
+// A chat can be composed from more than one place at once: the thread's own
+// composer, the floating dock, the WhatsApp inbox, and the Deal's "תבנית
+// ווטסאפ" modal — which mounts a SECOND real ChatComposer on the same chat.
+// Each composer used to tell only its own parent, so a template sent from the
+// modal simply did not appear in the thread already open behind it until the
+// Deal was refreshed or the conversation reopened.
+//
+// This is the ONE signal every send emits and every open thread listens to.
+// It carries the canonical WhatsAppMessage the send returned, so a listener
+// merges by message id — the same id the bridge sync later delivers, which is
+// why the message can never land twice.
+export const WHATSAPP_MESSAGE_SENT_EVENT = 'gos:whatsapp-message-sent';
+
+// chatId is the LIVE chat id (a draft chat has already materialized by the time
+// a message exists), so listeners can match without knowing about drafts.
+export function announceWhatsappMessageSent({ chatId, message }) {
+  if (typeof window === 'undefined' || !chatId) return;
+  window.dispatchEvent(
+    new CustomEvent(WHATSAPP_MESSAGE_SENT_EVENT, { detail: { chatId, message: message || null } }),
+  );
+}

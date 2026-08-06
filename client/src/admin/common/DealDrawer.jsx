@@ -39,12 +39,24 @@ import { formatDrawerPosition, navActionForKey } from './drawerNav.js';
 // visible — record-navigation UX: the queue stays in sight while the detail is
 // open. Logical property, so RTL/LTR both work; 0 (default) = the original
 // full-pane cover, which is what the inboxes keep.
+//
+// ONRESIZE (optional): makes that edge draggable. The caller owns the number
+// (clamping + persistence live in drawerWidth.js) and this component only turns
+// a pointer drag into it:
+//     onResize(offsetPx, paneWidthPx)  while dragging
+//     onResize(null)                   double-click = back to the default
+// The handle is not rendered when the caller does not pass onResize, and never
+// on a full-cover drawer (startOffset 0 = mobile / the inboxes), where a resize
+// grip would have nothing to reveal and nowhere to go.
 
-export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, startOffset = 0 }) {
+export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, startOffset = 0, onResize = null }) {
   const [entered, setEntered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState(null);
+  const [resizing, setResizing] = useState(false);
   const copyTimerRef = useRef(null);
+  const rootRef = useRef(null);
+  const resizable = !!onResize && startOffset > 0;
   // Latch the handlers so the key listener can never go stale and callers are
   // not forced to memoize (same approach as tourEvents' useTourChanged).
   const navRef = useRef(null);
@@ -75,6 +87,37 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, 
     };
   }, []);
 
+  // Dragging the START edge. The offset is measured from the CONTAINING PANE's
+  // inline-start edge, not from the pointer's delta, so a drag that overshoots
+  // the bounds and comes back tracks the pointer instead of drifting. Reading
+  // the direction from the computed style (rather than assuming RTL) keeps the
+  // grip pulling the way it is pushed in both directions.
+  function startResize(e) {
+    if (!resizable) return;
+    e.preventDefault();
+    const pane = rootRef.current?.parentElement;
+    if (!pane) return;
+    const rect = pane.getBoundingClientRect();
+    const rtl = getComputedStyle(pane).direction === 'rtl';
+    setResizing(true);
+    const move = (ev) => {
+      const x = ev.touches ? ev.touches[0]?.clientX : ev.clientX;
+      if (x == null) return;
+      onResize(rtl ? rect.right - x : x - rect.left, rect.width);
+    };
+    const up = () => {
+      setResizing(false);
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.removeEventListener('touchmove', move);
+      document.removeEventListener('touchend', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    document.addEventListener('touchmove', move, { passive: true });
+    document.addEventListener('touchend', up);
+  }
+
   async function copyDealUrl() {
     const url = `${window.location.origin}${dealPath({ id: dealId })}`;
     try {
@@ -93,13 +136,41 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, 
 
   return (
     <div
-      className={`absolute inset-0 z-[60] flex flex-col bg-gray-50 shadow-2xl transition-transform duration-300 ${
-        entered ? 'translate-x-0' : '-translate-x-full'
-      } ${startOffset > 0 ? 'border-s border-gray-300' : ''}`}
+      ref={rootRef}
+      className={`absolute inset-0 z-[60] flex flex-col bg-gray-50 shadow-2xl ${
+        // The slide-in animation must not fight a drag — during a resize the
+        // edge has to follow the pointer frame for frame.
+        resizing ? '' : 'transition-transform duration-300'
+      } ${entered ? 'translate-x-0' : '-translate-x-full'} ${
+        startOffset > 0 ? 'border-s border-gray-300' : ''
+      }`}
       // Inline style beats the class's `inset: 0` for this one edge; logical
       // property, so the preserved strip is on the correct side in RTL and LTR.
       style={startOffset > 0 ? { insetInlineStart: `${startOffset}px` } : undefined}
     >
+      {/* The resize grip — a thin strip ON the drawer's start edge, widened by
+          a transparent hit area so it is grabbable without being visually
+          heavy. It sits above the drawer content but below the floating layer. */}
+      {resizable && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="שינוי רוחב החלונית"
+          title="גררו לשינוי רוחב"
+          onMouseDown={startResize}
+          onTouchStart={startResize}
+          onDoubleClick={() => onResize(null)}
+          className="group absolute inset-y-0 z-[61] w-3 cursor-col-resize touch-none"
+          style={{ insetInlineStart: '-6px' }}
+        >
+          <div
+            className={`absolute inset-y-0 w-[3px] transition-colors ${
+              resizing ? 'bg-blue-500' : 'bg-transparent group-hover:bg-blue-300'
+            }`}
+            style={{ insetInlineStart: '5px' }}
+          />
+        </div>
+      )}
       <div className="flex shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 py-2">
         <button
           type="button"

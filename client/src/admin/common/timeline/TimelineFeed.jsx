@@ -108,7 +108,7 @@ function writeNoteDraft(key, html) {
 
 // `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
 // surfaces chat through the floating WhatsAppDock instead of the timeline.
-export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true, onSendDocument = null, readOnly = false }) {
+export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true, onSendDocument = null, readOnly = false, dealStatus = null }) {
   // History-only: no composer, no authoring actions — a pure read-only event
   // log. Forced ON for HISTORY_ONLY_SUBJECTS (e.g. tours) so a caller can never
   // accidentally surface Deal CRM authoring on an execution surface; an explicit
@@ -232,22 +232,52 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   // arrive as kind='task' timeline events in HISTORY.
   const [openTasks, setOpenTasks] = useState([]);
   const loadTasks = useCallback(async () => {
-    if (!isDeal) return;
+    if (!isDeal) return null;
     try {
       const list = await api.dealTasks.list(subjectId, 'open');
-      setOpenTasks(Array.isArray(list) ? list : []);
+      const next = Array.isArray(list) ? list : [];
+      setOpenTasks(next);
+      return next;
     } catch {
       /* non-fatal — the strip just stays empty */
+      return null;
     }
   }, [isDeal, subjectId]);
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
-  // A task change can both move it out of the open list AND drop a history event.
-  const onTaskChanged = useCallback(() => {
-    loadTasks();
-    refresh();
-  }, [loadTasks, refresh]);
+
+  // ── "what happens next?" ────────────────────────────────────────────────
+  //
+  // Completing the LAST open task on an OPEN deal leaves it with nothing
+  // scheduled — which is exactly how a live lead goes quiet. So the moment the
+  // canonical task state comes back empty, the composer opens on its EXISTING
+  // משימה tab, prefilled by that tab's own defaults. It is a PROMPT, not a
+  // write: nothing is created unless the operator presses save, and switching
+  // away or closing the deal creates nothing at all.
+  //
+  // Deliberately not a dialog and not a second composer — the canonical New
+  // Task flow is already one tab away, and the drawer stays exactly where it
+  // is (no navigation, no remount, no lost place in the queue).
+  const dealIsOpen = dealStatus === 'open';
+  // Fires only on an explicit completion by this operator, and only once per
+  // completion: a realtime refetch, a duplicate click or a poll tick that
+  // observes the same empty state must not re-open the composer underneath
+  // them. Keyed by the completed task so a genuine SECOND completion later
+  // still prompts.
+  const promptedForRef = useRef(null);
+  const onTaskChanged = useCallback(
+    async (cause) => {
+      const next = await loadTasks();
+      refresh();
+      if (cause?.reason !== 'completed' || !dealIsOpen) return;
+      if (!next || next.length > 0) return; // another open task already exists
+      if (promptedForRef.current === cause.taskId) return;
+      promptedForRef.current = cause.taskId;
+      setTab('task');
+    },
+    [loadTasks, refresh, dealIsOpen],
+  );
 
   // Immediate refresh when a task changes OUTSIDE this component (e.g. a WhatsApp
   // message scheduled from the floating dock creates a Task) — no page refresh.

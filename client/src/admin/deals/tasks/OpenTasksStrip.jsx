@@ -30,12 +30,15 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
 
   if (!tasks || tasks.length === 0) return null;
 
-  async function run(fn, id) {
+  // `cause` names WHY the tasks changed. Completing the last open task on an
+  // OPEN deal is the one case the timeline reacts to (it offers the next task),
+  // so a completion says so; everything else stays an ordinary refresh.
+  async function run(fn, id, cause = null) {
     setBusyId(id);
     setMenuId(null);
     try {
       await fn();
-      onChanged?.();
+      onChanged?.(cause);
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
@@ -93,7 +96,10 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
                 disabled={busyId === t.id}
                 onClick={(e) => {
                   e.stopPropagation();
-                  run(() => api.dealTasks.complete(dealId, t.id), t.id);
+                  run(() => api.dealTasks.complete(dealId, t.id), t.id, {
+                    reason: 'completed',
+                    taskId: t.id,
+                  });
                 }}
                 className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-300 text-transparent hover:border-green-500 hover:text-green-600 disabled:opacity-50"
               >

@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
 import { isDraftChat, materializeChat, START_ERRORS } from './chatTarget.js';
+import { announceWhatsappMessageSent } from './composerEvents.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 // Emoji DATA bundled locally (content-hashed static asset) — the picker's
 // default is a CDN fetch, which is both against the project's caching rules
@@ -237,6 +238,18 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     onMaterialized?.(created);
   }
 
+  // The ONE exit every successful send takes. Besides telling this composer's
+  // own parent, it broadcasts the sent message to the whole app — a chat can be
+  // open in the thread, the dock and the "תבנית ווטסאפ" modal at the same time,
+  // and only the composer that happened to send used to know about it. Merging
+  // is by message id, so the bridge's later sync of the same message replaces
+  // this row instead of adding a second one.
+  function announceSent(liveChat, message) {
+    announceMaterialized();
+    onSent?.(message);
+    announceWhatsappMessageSent({ chatId: liveChat?.id || null, message });
+  }
+
   // Draft persistence is opt-out (see the props note above).
   const saveDraft = useCallback(
     (value) => {
@@ -331,8 +344,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       setText('');
       saveDraft('');
       onCancelReply?.();
-      announceMaterialized();
-      onSent?.(lastMessage);
+      announceSent(live, lastMessage);
     } catch (e) {
       setError(
         e?.payload?.error === 'media_too_large'
@@ -523,8 +535,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       });
       URL.revokeObjectURL(rec.url);
       setRec(null);
-      announceMaterialized();
-      onSent?.(resp.message || null);
+      announceSent(live, resp.message || null);
     } catch (e) {
       setError(SEND_ERRORS[e?.payload?.error] || 'שליחת ההקלטה נכשלה — נסו שוב.');
     } finally {
@@ -554,8 +565,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       setText('');
       saveDraft('');
       onCancelReply?.();
-      announceMaterialized();
-      onSent?.(resp.message || null);
+      announceSent(live, resp.message || null);
     } catch (e) {
       setError(SEND_ERRORS[e?.payload?.error] || 'השליחה נכשלה — נסו שוב.');
     } finally {

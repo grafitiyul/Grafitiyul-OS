@@ -1463,7 +1463,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           Contacts live in the header relationship row now (no separate card).
           WhatsApp lives in the floating dock (below), NOT as a timeline tab —
           the chat must not permanently consume the deal workspace. */}
-      <TimelineFeed subjectType="deal" subjectId={deal.id} showWhatsApp={false} onSendDocument={setSendDocEntry} />
+      <TimelineFeed
+        subjectType="deal"
+        subjectId={deal.id}
+        showWhatsApp={false}
+        onSendDocument={setSendDocEntry}
+        // Lets the timeline offer the next task when the last open one is
+        // completed — an OPEN deal with nothing scheduled next is how a lead
+        // goes quiet. WON/LOST deals are finished and get no prompt.
+        dealStatus={deal.status}
+      />
     </WorkspaceLayout>
 
       {/* ── Dialogs & overlays ── rendered OUTSIDE the workspace layout: on

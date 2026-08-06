@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import MessageBubble from './MessageBubble.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ScheduledStrip from './ScheduledStrip.jsx';
+import { WHATSAPP_MESSAGE_SENT_EVENT } from './composerEvents.js';
 
 // Read view of one WhatsApp chat — the single thread component EVERY surface
 // mounts (inbox, Deal dock, Contact/Org panels): any feature added here is
@@ -188,6 +189,25 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       clearTimeout(timer);
     };
   }, [chat.id, isDraft, refreshNonce, mode]);
+
+  // A message sent from ANOTHER composer on this same conversation — the Deal's
+  // "תבנית ווטסאפ" modal, the floating dock, the inbox. Without this the thread
+  // only learned about its OWN composer's sends and a template stayed invisible
+  // until the Deal was refreshed. Merging is by message id, so this row is the
+  // same one the poll and the bridge sync converge on — never a duplicate.
+  useEffect(() => {
+    if (isDraft || mode !== 'live') return undefined;
+    function onSentElsewhere(e) {
+      if (e.detail?.chatId !== chat.id) return;
+      stickToBottomRef.current = true;
+      if (e.detail.message) setMessages((cur) => mergeMessages(cur || [], [e.detail.message]));
+      // Also re-poll: an attachment batch reports only its LAST message, and the
+      // send may have moved delivery state on rows already on screen.
+      setRefreshNonce((n) => n + 1);
+    }
+    window.addEventListener(WHATSAPP_MESSAGE_SENT_EVENT, onSentElsewhere);
+    return () => window.removeEventListener(WHATSAPP_MESSAGE_SENT_EVENT, onSentElsewhere);
+  }, [chat.id, isDraft, mode]);
 
   async function loadOlder() {
     if (loadingOlderRef.current || !hasMore || !messages?.length) return;
