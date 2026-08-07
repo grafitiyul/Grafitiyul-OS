@@ -75,9 +75,15 @@ export async function getStarredTemplate(db) {
 export async function setNewLeadDefault(db, templateId) {
   const target = await db.whatsAppTemplate.findUnique({
     where: { id: templateId },
-    select: { id: true, isActive: true, [ACCOUNT_FIELD]: true },
+    select: { id: true, isActive: true, audience: true, [ACCOUNT_FIELD]: true },
   });
   if (!target) throw new TemplateNotStarrableError('not_found');
+  // The star answers a new CUSTOMER lead. A guide-audience template resolves
+  // against a guide + a tour that a new lead does not have, so it can never
+  // hold it.
+  if ((target.audience || 'customer') !== 'customer') {
+    throw new TemplateNotStarrableError('wrong_audience');
+  }
   // An inactive template is not offered anywhere and must never be the thing
   // that answers a real customer. Rejected loudly rather than auto-activated:
   // silently turning a template back on is a decision only the operator makes.

@@ -19,6 +19,7 @@ import { effectiveActivityType } from '../../../shared/dealActivity.mjs';
 import {
   TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
 } from './format.js';
+import { naturalDateLabel } from './naturalDate.js';
 
 // category → Hebrew group label for the editor menu.
 export const VARIABLE_CATEGORIES = {
@@ -150,6 +151,12 @@ export const VARIABLES = [
     } },
   { key: 'tour_date', labelHe: 'תאריך הסיור', labelEn: 'Tour date', category: 'tour', contexts: ['deal', 'tour'],
     resolve: (ctx, lang) => formatDateHe(ctx.tour?.date || ctx.deal?.tourDate, lang) },
+  // The SAME date, phrased the way a person writing a message says it: היום /
+  // אתמול / יום שני / 3.7. One humanizer (communication/naturalDate.js) so a
+  // preview and the message that actually leaves can never render it
+  // differently. `ctx.nowMs` is honoured when a caller pins the clock.
+  { key: 'tour_date_natural', labelHe: 'תאריך הסיור (ניסוח טבעי)', labelEn: 'Tour date (natural)', category: 'tour', contexts: ['deal', 'tour'],
+    resolve: (ctx, lang) => naturalDateLabel(ctx.tour?.date || ctx.deal?.tourDate, lang, ctx.nowMs ?? Date.now()) },
   { key: 'tour_time', labelHe: 'שעת הסיור', labelEn: 'Tour time', category: 'tour', contexts: ['deal', 'tour'],
     resolve: (ctx) => ctx.tour?.startTime || ctx.deal?.tourTime || null },
   { key: 'tour_language', labelHe: 'שפת הסיור', labelEn: 'Tour language', category: 'tour', contexts: ['deal', 'tour'],

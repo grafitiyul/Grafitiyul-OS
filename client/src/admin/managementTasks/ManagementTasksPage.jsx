@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import DealDrawer from '../common/DealDrawer.jsx';
+import GuideMessageDialog from '../tours/guideMessage/GuideMessageDialog.jsx';
 
 // משימות הנהלה — the operational review inbox.
 //
@@ -37,6 +38,9 @@ export default function ManagementTasksPage() {
   // ONE deal at a time — a single state slot structurally prevents duplicate
   // drawers; clicking another customer while open just switches the deal.
   const [drawerDealId, setDrawerDealId] = useState(null);
+  // ONE guide-message composition at a time, for the same reason.
+  // { tourEventId, reviewItemId } — the card the operator was reading.
+  const [guideMsg, setGuideMsg] = useState(null);
 
   // ── drawer boundary (the CRM Tasks record-navigation rule) ──
   // Desktop: the drawer covers ~70% of the pane via DealDrawer's existing
@@ -177,6 +181,7 @@ export default function ManagementTasksPage() {
               focusId={focusId}
               onAct={act}
               onOpenDeal={setDrawerDealId}
+              onMessageGuide={setGuideMsg}
             />
           ))}
         </div>
@@ -208,6 +213,16 @@ export default function ManagementTasksPage() {
           startOffset={drawerStartPx}
         />
       )}
+
+      {/* "הודעה למדריך" — read the summary, answer the guide, without leaving
+          the inbox. The dialog resolves the recipient from the TOUR (canonical
+          assignment rule) and sends through the canonical WhatsApp queue. */}
+      <GuideMessageDialog
+        open={!!guideMsg}
+        tourEventId={guideMsg?.tourEventId || null}
+        reviewItemId={guideMsg?.reviewItemId || null}
+        onClose={() => setGuideMsg(null)}
+      />
     </div>
   );
 }
@@ -223,7 +238,7 @@ export default function ManagementTasksPage() {
  * They stay completely independent: separate rows, separate handle buttons,
  * separate dedupeKeys. The container is presentation only.
  */
-function TourGroup({ group, status, busy, focusId, onAct, onOpenDeal }) {
+function TourGroup({ group, status, busy, focusId, onAct, onOpenDeal, onMessageGuide }) {
   const cards = [...group.cards].sort((a, b) => {
     // Summary leads (right in RTL); the alert card sits beside it.
     if (a.kind === b.kind) return 0;
@@ -273,17 +288,29 @@ function TourGroup({ group, status, busy, focusId, onAct, onOpenDeal }) {
       {/* The independent tasks */}
       <div className="grid gap-3 p-3 lg:grid-cols-2">
         {cards.map((card) => (
-          <ReviewCard key={card.id} card={card} status={status} busy={busy} focused={card.id === focusId} onAct={onAct} />
+          <ReviewCard
+            key={card.id}
+            card={card}
+            status={status}
+            busy={busy}
+            focused={card.id === focusId}
+            onAct={onAct}
+            onMessageGuide={onMessageGuide}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function ReviewCard({ card, status, busy, focused, onAct }) {
+function ReviewCard({ card, status, busy, focused, onAct, onMessageGuide }) {
   const [open, setOpen] = useState(false);
   const alert = card.tone === 'alert';
   const d = card.data || {};
+  // Answering the guide is only offerable when the card actually names a tour —
+  // that is what the recipient is resolved from. The tour id is frozen on the
+  // card at creation, like every other piece of its context.
+  const tourEventId = d.tourEventId || null;
 
   return (
     <article
@@ -358,7 +385,20 @@ function ReviewCard({ card, status, busy, focused, onAct }) {
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-gray-100 px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 px-4 py-2.5">
+        {/* The whole point of reading a summary is often to answer the guide.
+            Prominent, beside the handle action, in WhatsApp green — the one
+            colour that means "this sends a message to a person". */}
+        {tourEventId && onMessageGuide ? (
+          <button
+            type="button"
+            onClick={() => onMessageGuide({ tourEventId, reviewItemId: card.id })}
+            className="order-first inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-semibold text-emerald-800 hover:bg-emerald-100"
+          >
+            <span aria-hidden>💬</span>
+            הודעה למדריך
+          </button>
+        ) : null}
         {status === 'open' ? (
           <button
             type="button"

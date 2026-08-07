@@ -8,9 +8,11 @@ import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.
 import {
   resolveTemplateBody,
   templateVariables,
+  templateVariableKeys,
+  templateAudience,
   unsupportedTokens,
   canonicalizeTemplateTokens,
-  TEMPLATE_VARIABLE_KEYS,
+  DEFAULT_TEMPLATE_AUDIENCE,
 } from '../whatsapp/templateResolve.js';
 import {
   setNewLeadDefault,
@@ -50,10 +52,15 @@ function cleanBody(raw) {
   return normalizeTokensToChips(canonical, (key) => variableByKey(key)?.labelHe || null).slice(0, MAX_BODY);
 }
 
-// A template must not store a token this feature cannot resolve — that is the
-// structural guarantee behind "the raw token can never reach the customer".
-function bodyTokenError(bodyHe, bodyEn) {
-  const bad = [...new Set([...unsupportedTokens(bodyHe || ''), ...unsupportedTokens(bodyEn || '')])];
+// A template must not store a token its AUDIENCE cannot resolve — that is the
+// structural guarantee behind "the raw token can never reach the recipient".
+// A customer key inside a guide template (or the reverse) is rejected here,
+// at save time, rather than resolving to nothing at send time.
+function bodyTokenError(bodyHe, bodyEn, audience) {
+  const bad = [...new Set([
+    ...unsupportedTokens(bodyHe || '', audience),
+    ...unsupportedTokens(bodyEn || '', audience),
+  ])];
   return bad.length ? { error: 'unsupported_variables', keys: bad } : null;
 }
 
@@ -61,6 +68,7 @@ function toClient(t) {
   return {
     id: t.id,
     nameHe: t.nameHe,
+    audience: t.audience || DEFAULT_TEMPLATE_AUDIENCE,
     bodyHeHtml: t.bodyHeHtml,
     bodyEnHtml: t.bodyEnHtml,
     hasHe: !!t.bodyHeHtml,
@@ -93,10 +101,16 @@ router.get(
     // surface shows. Labels are never hardcoded here: renaming a number in
     // admin must rename it in this dropdown too.
     const accounts = await listSelectableAccounts(prisma);
+    // The variable set is per AUDIENCE — the guide picker must not offer a
+    // customer-only key, and the customer picker must not offer a tour key.
+    const audience = templateAudience(req.query.audience);
     res.json({
-      variables: templateVariables(),
-      categories: { customer: 'לקוח' },
-      supportedKeys: TEMPLATE_VARIABLE_KEYS,
+      audience,
+      variables: templateVariables(audience),
+      categories: audience === 'guide'
+        ? { staff: 'המדריך', tour: 'הסיור', customer: 'לקוח', org: 'ארגון', deal: 'דיל' }
+        : { customer: 'לקוח' },
+      supportedKeys: templateVariableKeys(audience),
       sendAccounts: accounts.map((a) => ({
         id: a.id,
         label: a.label,
@@ -108,12 +122,17 @@ router.get(
   }),
 );
 
-// GET /?activeOnly=1 — the Deal selector passes activeOnly and additionally
-// filters to the language it needs; settings loads everything.
+// GET /?activeOnly=1&audience=guide — the Deal selector passes activeOnly and
+// additionally filters to the language it needs; settings loads everything.
+//
+// `audience` defaults to 'customer' rather than "all": every caller that
+// existed before guide templates did means customer wording, and a guide
+// template appearing in the Deal picker would be a real misdelivery risk.
 router.get(
   '/',
   handle(async (req, res) => {
-    const where = req.query.activeOnly === '1' ? { isActive: true } : {};
+    const where = { audience: templateAudience(req.query.audience) };
+    if (req.query.activeOnly === '1') where.isActive = true;
     const rows = await prisma.whatsAppTemplate.findMany({
       where,
       orderBy: [{ sortOrder: 'asc' }, { nameHe: 'asc' }],
@@ -142,16 +161,24 @@ router.post(
     const b = req.body || {};
     const nameHe = String(b.nameHe || '').trim().slice(0, MAX_NAME);
     if (!nameHe) return res.status(400).json({ error: 'name_required' });
+    const audience = templateAudience(b.audience);
     const bodyHeHtml = cleanBody(b.bodyHeHtml);
     const bodyEnHtml = cleanBody(b.bodyEnHtml);
     if (!bodyHeHtml && !bodyEnHtml) return res.status(400).json({ error: 'body_required' });
-    const tokenErr = bodyTokenError(bodyHeHtml, bodyEnHtml);
+    const tokenErr = bodyTokenError(bodyHeHtml, bodyEnHtml, audience);
     if (tokenErr) return res.status(400).json(tokenErr);
 
-    const last = await prisma.whatsAppTemplate.findFirst({ orderBy: { sortOrder: 'desc' }, select: { sortOrder: true } });
+    // Ordering is per audience — a new guide template goes to the end of the
+    // GUIDE list, not behind every customer template ever written.
+    const last = await prisma.whatsAppTemplate.findFirst({
+      where: { audience },
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
     const created = await prisma.whatsAppTemplate.create({
       data: {
         nameHe,
+        audience,
         bodyHeHtml,
         bodyEnHtml,
         isActive: b.isActive !== false,
@@ -189,7 +216,10 @@ router.put(
     const nextHe = data.bodyHeHtml !== undefined ? data.bodyHeHtml : existing.bodyHeHtml;
     const nextEn = data.bodyEnHtml !== undefined ? data.bodyEnHtml : existing.bodyEnHtml;
     if (!nextHe && !nextEn) return res.status(400).json({ error: 'body_required' });
-    const tokenErr = bodyTokenError(nextHe, nextEn);
+    // Audience is IMMUTABLE after creation: it decides which variables the
+    // stored body may reference, so flipping it would retroactively invalidate
+    // content that was validated against the other set.
+    const tokenErr = bodyTokenError(nextHe, nextEn, existing.audience);
     if (tokenErr) return res.status(400).json(tokenErr);
 
     const updated = await prisma.whatsAppTemplate.update({ where: { id: existing.id }, data });
@@ -289,6 +319,13 @@ router.get(
 
     const template = await prisma.whatsAppTemplate.findUnique({ where: { id: req.params.id } });
     if (!template) return res.status(404).json({ error: 'not_found' });
+    // Customer wording only. A guide template resolves against a RECIPIENT
+    // guide + a tour, which this endpoint has no way to name — it is served by
+    // POST /api/guide-message/resolve instead. Answering here would render a
+    // guide template with an empty staff branch and look like it worked.
+    if ((template.audience || 'customer') !== 'customer') {
+      return res.status(400).json({ error: 'wrong_audience' });
+    }
 
     const bodyHtml = lang === 'en' ? template.bodyEnHtml : template.bodyHeHtml;
     // An empty language version is NEVER silently replaced by the other one —

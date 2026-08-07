@@ -693,8 +693,12 @@ export const api = {
   // `resolved` returns plain WhatsApp markup for a deal — it does NOT send;
   // the Deal modal feeds it to the ordinary chat composer.
   whatsappTemplates: {
-    meta: () => request('/api/whatsapp-templates/meta'),
-    list: (activeOnly = false) => request(`/api/whatsapp-templates${activeOnly ? '?activeOnly=1' : ''}`),
+    // `audience` scopes the whole catalog: 'customer' (default — the Deal /
+    // inbox picker) or 'guide' (the "הודעה למדריך" dialog). Each audience has
+    // its own variable set, so meta() must be asked for the same one.
+    meta: (audience = 'customer') => request(`/api/whatsapp-templates/meta${qs({ audience })}`),
+    list: (activeOnly = false, audience = 'customer') =>
+      request(`/api/whatsapp-templates${qs({ activeOnly: activeOnly ? 1 : undefined, audience })}`),
     create: (data) => request('/api/whatsapp-templates', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/whatsapp-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/whatsapp-templates/${id}`, { method: 'DELETE' }),
@@ -721,6 +725,17 @@ export const api = {
           lang,
         })}`,
       ),
+  },
+  // "הודעה למדריך" — the office writes to the guide of ONE tour (opened from a
+  // tour-summary review card). Recipients come from the canonical guide
+  // assignment rule; `send` hands the message to the canonical WhatsApp queue
+  // and answers with that row's REAL state, never a blanket success.
+  guideMessage: {
+    subject: ({ tourEventId, reviewItemId } = {}) =>
+      request(`/api/guide-message/subject${qs({ tourEventId, reviewItemId })}`),
+    resolve: (body) =>
+      request('/api/guide-message/resolve', { method: 'POST', body: JSON.stringify(body) }),
+    send: (body) => request('/api/guide-message/send', { method: 'POST', body: JSON.stringify(body) }),
   },
   // ── Tours catalogs (Settings → Tours) ────────────────────────────
   activityComponents: {

@@ -150,3 +150,52 @@ test('resolveTemplateBody returns empty text for an empty body', () => {
   assert.equal(resolveTemplateBody('', {}, 'he').text, '');
   assert.equal(resolveTemplateBody('<p></p>', {}, 'he').text, '');
 });
+
+// ── Audience scoping (guide templates) ───────────────────────────────────────
+//
+// One table, two variable sets. The guarantee under test: a template can never
+// STORE a token its audience cannot resolve, so a raw {{token}} can never reach
+// a customer or a guide because the two sets were confused.
+
+test('each audience exposes its own variable set', async () => {
+  const { templateVariableKeys, templateAudience } = await import('./templateResolve.js');
+  assert.deepEqual(templateVariableKeys('customer'), ['customer_first_name']);
+  const guide = templateVariableKeys('guide');
+  assert.ok(guide.includes('staff_first_name'));
+  assert.ok(guide.includes('tour_date_natural'));
+  assert.ok(guide.includes('org_name'));
+  assert.ok(!guide.includes('customer_first_name'), 'a guide message greets the GUIDE, not the customer');
+  // Anything unrecognised falls back to the original audience, never to "all".
+  assert.equal(templateAudience('nonsense'), 'customer');
+  assert.equal(templateAudience(undefined), 'customer');
+});
+
+test('a customer-only variable is refused inside a guide template', () => {
+  assert.deepEqual(unsupportedTokens('שלום {{customer_first_name}}', 'guide'), ['customer_first_name']);
+  assert.deepEqual(unsupportedTokens('שלום {{customer_first_name}}', 'customer'), []);
+});
+
+test('a guide/tour variable is refused inside a customer template', () => {
+  assert.deepEqual(unsupportedTokens('הסיור היה {{tour_date_natural}}', 'customer'), ['tour_date_natural']);
+  assert.deepEqual(unsupportedTokens('הסיור היה {{tour_date_natural}}', 'guide'), []);
+});
+
+test('guide-flavoured spellings are accepted on input and fold onto canonical keys', () => {
+  assert.equal(canonicalTemplateKey('guide_first_name'), 'staff_first_name');
+  assert.equal(canonicalTemplateKey('organization_name'), 'org_name');
+  assert.equal(canonicalTemplateKey('customer_name'), 'customer_full_name');
+  assert.deepEqual(unsupportedTokens('היי {{guide_first_name}} מ-{{organization_name}}', 'guide'), []);
+  // …and are REWRITTEN before storage, so the database holds one spelling.
+  assert.equal(
+    canonicalizeTemplateTokens('היי {{guide_first_name}}'),
+    'היי {{staff_first_name}}',
+  );
+});
+
+test('the guide picker speaks about the guide, not about "איש צוות"', () => {
+  const vars = templateVariables('guide');
+  const first = vars.find((v) => v.key === 'staff_first_name');
+  assert.equal(first.labelHe, 'שם פרטי של המדריך');
+  const date = vars.find((v) => v.key === 'tour_date_natural');
+  assert.match(date.descriptionHe, /היום/);
+});

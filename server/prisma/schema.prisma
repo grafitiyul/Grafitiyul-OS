@@ -2237,6 +2237,21 @@ model WhatsAppTemplate {
   nameHe           String // internal display name — what the Deal selector shows
   bodyHeHtml       String? // editor HTML, Hebrew; null/empty = language unavailable
   bodyEnHtml       String? // editor HTML, English; null/empty = language unavailable
+  // WHO this wording library serves: 'customer' (the Deal / inbox template
+  // picker — the original and the default) | 'guide' (messages an office
+  // reviewer sends to the guide of a tour).
+  //
+  // Deliberately a column on THIS model rather than a second template table:
+  // the storage, the editor, the variable-chip convention, the resolver, the
+  // language pair, ordering and activation are identical; only the variable
+  // SET and which picker offers the row differ. A second table would have been
+  // a copy of all of it, plus a second place for a future feature to forget.
+  //
+  // Each audience has its own allowed variable keys (whatsapp/templateResolve
+  // templateVariableKeys) — save-time validation rejects a token the audience
+  // cannot resolve, so a guide template can never reference a customer-only
+  // variable (or the reverse) and reach a real person as a raw {{token}}.
+  audience         String   @default("customer")
   isActive         Boolean  @default(true)
   sortOrder        Int      @default(0)
   // The ONE template auto-sent to a genuinely new EXTERNAL lead ("הודעת ברירת
@@ -2270,6 +2285,7 @@ model WhatsAppTemplate {
 
   @@unique([sourceSystem, sourceRecordId])
   @@index([isActive, sortOrder])
+  @@index([audience, isActive, sortOrder])
 }
 
 // One attempted automatic reply to a genuinely new external lead — created for

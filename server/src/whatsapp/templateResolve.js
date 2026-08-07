@@ -21,18 +21,76 @@
 import { htmlToWhatsApp } from '../../../shared/waMarkup.mjs';
 import { extractTokens, resolveVariables, substituteTokens, variableByKey } from '../communication/variables.js';
 
-// Variables this feature actually supports. Deliberately narrow: the registry
-// can resolve far more, but a template may only reference what this slice has
-// specified and verified. Widening = add a key here (plus its registry entry if
-// it is genuinely new) — never an ad-hoc substitution somewhere else.
+// Variables this feature actually supports, PER AUDIENCE. Deliberately narrow:
+// the registry can resolve far more, but a template may only reference what
+// this slice has specified and verified. Widening = add a key here (plus its
+// registry entry if it is genuinely new) — never an ad-hoc substitution
+// somewhere else.
+//
+// The two audiences are separate sets on purpose, because they resolve from
+// different context branches:
+//   customer — ctx.contact (the deal's primary contact)
+//   guide    — ctx.staff (the RECIPIENT guide) + ctx.tour / ctx.deal (the tour
+//              being reviewed). A customer-only key inside a guide template
+//              would resolve to nothing, so it is rejected at save time rather
+//              than silently emptied at send time.
+export const TEMPLATE_AUDIENCES = ['customer', 'guide'];
+export const DEFAULT_TEMPLATE_AUDIENCE = 'customer';
+
 export const TEMPLATE_VARIABLE_KEYS = ['customer_first_name'];
 
+const GUIDE_TEMPLATE_VARIABLE_KEYS = [
+  // The recipient. ctx.staff is the guide this copy is being rendered for, so
+  // the canonical staff keys ARE the guide keys — no duplicate resolver.
+  'staff_first_name',
+  'staff_full_name',
+  // The tour. tour_date_natural leads because it is what a person writing a
+  // message actually says ("אתמול"); tour_date stays available for the rare
+  // template that wants the exact numeric date.
+  'tour_date_natural',
+  'tour_date',
+  'tour_time',
+  'tour_product',
+  'tour_city',
+  // The party the tour was for.
+  'customer_full_name',
+  'org_name',
+  'group_name',
+];
+
+const KEYS_BY_AUDIENCE = {
+  customer: TEMPLATE_VARIABLE_KEYS,
+  guide: GUIDE_TEMPLATE_VARIABLE_KEYS,
+};
+
+export function templateAudience(value) {
+  const a = String(value || '').trim();
+  return TEMPLATE_AUDIENCES.includes(a) ? a : DEFAULT_TEMPLATE_AUDIENCE;
+}
+
+/** The allowed variable keys for one audience. */
+export function templateVariableKeys(audience = DEFAULT_TEMPLATE_AUDIENCE) {
+  return KEYS_BY_AUDIENCE[templateAudience(audience)];
+}
+
 // Aliases accepted on INPUT only (never stored, never offered in the picker).
+//
 // 'first_name' is already taken in the client dynamic-field registry for the
 // EMPLOYEE first name (learning module), so the customer's first name stays
 // {{customer_first_name}} — but a hand-typed {{first_name}} inside a WhatsApp
 // template still resolves to the customer rather than leaking as raw text.
-const KEY_ALIASES = { first_name: 'customer_first_name' };
+//
+// The guide-flavoured spellings map onto the canonical keys for the same
+// reason: an operator (or an imported wording) writing {{guide_first_name}}
+// gets the guide's first name, and storage still holds exactly one spelling.
+const KEY_ALIASES = {
+  first_name: 'customer_first_name',
+  guide_first_name: 'staff_first_name',
+  guide_name: 'staff_full_name',
+  guide_full_name: 'staff_full_name',
+  customer_name: 'customer_full_name',
+  organization_name: 'org_name',
+};
 
 export function canonicalTemplateKey(key) {
   const k = String(key || '').toLowerCase();
@@ -61,27 +119,52 @@ const VARIABLE_HELP_HE = {
   customer_first_name: 'מתמלא אוטומטית בשם הפרטי של הלקוח בדיל',
 };
 
+// The guide audience says the same keys differently, because in that dialog the
+// "איש צוות" IS the guide and the tour is the subject. Display layer only — the
+// stored key and the resolver are the canonical ones.
+const GUIDE_LABELS_HE = {
+  staff_first_name: 'שם פרטי של המדריך',
+  staff_full_name: 'שם מלא של המדריך',
+  tour_date_natural: 'תאריך הסיור (ניסוח טבעי)',
+  tour_date: 'תאריך הסיור (מספרי)',
+  customer_full_name: 'שם הלקוח',
+};
+
+const GUIDE_HELP_HE = {
+  staff_first_name: 'השם הפרטי של המדריך שההודעה נשלחת אליו',
+  staff_full_name: 'השם המלא של המדריך שההודעה נשלחת אליו',
+  tour_date_natural: 'נכתב כמו שאומרים: היום, אתמול, יום שני — ותאריך קצר (3.7) לסיור ישן יותר',
+  tour_date: 'התאריך המלא של הסיור, בספרות',
+  tour_time: 'שעת תחילת הסיור',
+  tour_product: 'שם הפעילות',
+  tour_city: 'העיר שבה התקיים הסיור',
+  customer_full_name: 'שם הלקוח שהסיור בוצע עבורו',
+  org_name: 'הארגון שהסיור בוצע עבורו (אם יש)',
+  group_name: 'שם הקבוצה (אם אין — שם הפעילות)',
+};
+
 /** The picker/menu list for the settings editor (label comes from the registry). */
-export function templateVariables() {
-  return TEMPLATE_VARIABLE_KEYS.map((key) => {
+export function templateVariables(audience = DEFAULT_TEMPLATE_AUDIENCE) {
+  const kind = templateAudience(audience);
+  return templateVariableKeys(kind).map((key) => {
     const def = variableByKey(key);
     return {
       key,
-      labelHe: def?.labelHe || key,
+      labelHe: (kind === 'guide' ? GUIDE_LABELS_HE[key] : null) || def?.labelHe || key,
       labelEn: def?.labelEn || key,
       category: def?.category || 'customer',
-      descriptionHe: VARIABLE_HELP_HE[key] || null,
+      descriptionHe: (kind === 'guide' ? GUIDE_HELP_HE[key] : VARIABLE_HELP_HE[key]) || null,
     };
   });
 }
 
 /**
- * Tokens in `html` that this feature does not support — used to reject a body
- * at SAVE time so an unresolvable token can never reach a customer at all.
+ * Tokens in `html` that this audience does not support — used to reject a body
+ * at SAVE time so an unresolvable token can never reach a recipient at all.
  * Recognized aliases count as supported.
  */
-export function unsupportedTokens(html) {
-  const allowed = new Set(TEMPLATE_VARIABLE_KEYS);
+export function unsupportedTokens(html, audience = DEFAULT_TEMPLATE_AUDIENCE) {
+  const allowed = new Set(templateVariableKeys(audience));
   return [...new Set(extractTokens(html).map(canonicalTemplateKey))].filter((k) => !allowed.has(k));
 }
 

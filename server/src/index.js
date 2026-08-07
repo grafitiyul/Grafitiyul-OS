@@ -69,6 +69,7 @@ import dealConversionRouter from './routes/dealConversion.js';
 import icountDocsRouter from './routes/icountDocs.js';
 import taskTypesRouter from './routes/taskTypes.js';
 import whatsappTemplatesRouter from './routes/whatsappTemplates.js';
+import guideMessageRouter from './routes/guideMessage.js';
 import activityComponentsRouter from './routes/activityComponents.js';
 import workshopLocationsRouter from './routes/workshopLocations.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
@@ -445,6 +446,7 @@ app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
 // Internal reusable WhatsApp wording (CRM Settings) + the Deal template modal's
 // read-only resolve endpoint. Sends nothing — the existing chat send path does.
 app.use('/api/whatsapp-templates', requireAdminAuth, whatsappTemplatesRouter);
+app.use('/api/guide-message', requireAdminAuth, guideMessageRouter);
 app.use('/api/activity-components', requireAdminAuth, activityComponentsRouter);
 app.use('/api/workshop-locations', requireAdminAuth, workshopLocationsRouter);
 // Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
