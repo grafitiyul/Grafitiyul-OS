@@ -44,6 +44,7 @@ import {
   dealPath,
   DEAL_STATUS_LABELS,
   isTourDatePast,
+  ACTIVITY_OPTION_ON,
 } from './config.js';
 import { todayIL } from '../tours/calendar/dates.js';
 import RichEditor from '../../editor/RichEditor.jsx';
