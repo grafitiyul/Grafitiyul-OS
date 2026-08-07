@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import SearchResultRow from './SearchResultRow.jsx';
 import CreateDealModal from '../../admin/deals/CreateDealModal.jsx';
+import AnchoredMenu from '../../admin/common/AnchoredMenu.jsx';
 import { dealPath } from '../../admin/deals/config.js';
 import { useSessionUser } from '../sessionUser.jsx';
 import {
@@ -56,6 +57,7 @@ export default function GlobalSearch() {
   const boxRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  const panelRef = useRef(null);
   // Monotonic request id: only the newest response may render, so a slow
   // early keystroke can never overwrite a fast later one.
   const reqIdRef = useRef(0);
@@ -160,6 +162,10 @@ export default function GlobalSearch() {
   useEffect(() => {
     function onDown(e) {
       if (!boxRef.current || boxRef.current.contains(e.target)) return;
+      // The results panel is portaled onto <body>, so it is NOT inside boxRef —
+      // without this, mousedown on a result would read as an outside click and
+      // dismiss the panel before the row's own handler ever ran.
+      if (panelRef.current?.contains(e.target)) return;
       // React 18 flushes discrete-event updates synchronously, so a row we
       // just removed/re-rendered (recent click, ✕) can already be DETACHED by
       // the time this document-level listener sees the same mousedown. A
@@ -348,8 +354,21 @@ export default function GlobalSearch() {
         )}
       </div>
 
-      {showPanel && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden">
+      {/* Results render through the canonical anchored surface: a portal on
+          <body>, fixed-positioned and lifted into the floating band. As an
+          `absolute z-50` panel in flow it was painted BEHIND any open drawer
+          (z-[60]) — global search belongs to the application layer, not to
+          whatever pane happens to be on screen. */}
+      <AnchoredMenu
+        anchorRef={boxRef}
+        open={showPanel}
+        onClose={dismiss}
+        matchAnchorWidth
+        align="start"
+        overlay={false}
+        panelClassName="rounded-lg overflow-hidden"
+      >
+        <div ref={panelRef}>
           <div ref={listRef} className="max-h-[70vh] overflow-y-auto overscroll-contain">
             {recentsMode ? (
               <>
@@ -514,7 +533,7 @@ export default function GlobalSearch() {
             </div>
           )}
         </div>
-      )}
+      </AnchoredMenu>
 
       {/* The canonical Create Deal modal — the SAME dialog the deals list and
           contact page use. It self-loads its catalogs; nothing is created

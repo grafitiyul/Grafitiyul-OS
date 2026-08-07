@@ -40,12 +40,11 @@ export default function Dialog({
   dialogAriaFallback = 'דיאלוג',
 }) {
   const panelRef = useRef(null);
-  // Where this dialog sits in the shared floating stack. 0 (the overwhelming
-  // majority) = opened by a page → unchanged z-50, rendered in place. >0 =
-  // opened from INSIDE a floating surface (e.g. the assignment error raised by
-  // the guide picker inside the Deal → Tour Details popover): that host caps
-  // its height and scrolls, so an in-place overlay would be clipped by it and
-  // painted inside its stacking context. Those get portaled and lifted.
+  // Where this dialog sits in the shared floating stack. 0 = opened by a page
+  // → the modal layer (above drawers and workspace panes). >0 = opened from
+  // INSIDE a floating surface (e.g. the assignment error raised by the guide
+  // picker inside the Deal → Tour Details popover), which lifts it into the
+  // band so it paints above the surface that opened it.
   const depth = useFloatingDepth();
   // Stable per INSTANCE, and routed through a ref, so an ordinary re-render of
   // the dialog underneath (typing in it) cannot re-push it above the dialog on
@@ -167,9 +166,14 @@ export default function Dialog({
     </div>
   );
 
-  // Top-level dialogs render exactly where they always did — `fixed inset-0`
-  // already escapes ordinary layout, and moving hundreds of existing callers to
-  // a portal would risk inherited-style shifts for no benefit. Only the nested
-  // case, which is genuinely broken in place, is portaled out.
-  return depth > 0 ? createPortal(shell, document.body) : shell;
+  // EVERY dialog is portaled onto <body>.
+  //
+  // `fixed inset-0` only means "the viewport" while no ancestor is a containing
+  // block for fixed positioning — and a `transform` makes one. The Deal drawer
+  // slides in with `translate-x`, so a dialog opened from a Deal inside it was
+  // laid out against the DRAWER instead: the panel was sized to the narrowed
+  // workspace column and its footer buttons were clipped behind the WhatsApp
+  // pane. Rendering in place only ever worked by luck about ancestors, which is
+  // not a property a modal layer can be built on.
+  return createPortal(shell, document.body);
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CHAT_ROW_ACCENT,
   chatMatchesAccountFilter,
+  chatSwitchEffect,
   chatRowClass,
   chatRowStateClass,
   isChatSelected,
@@ -87,4 +88,68 @@ test('private and group conversations share one selection language', () => {
   assert.equal(isChatSelected(priv, grp), false);
   // The row state is computed from selection alone — never from the chat kind.
   assert.equal(chatRowStateClass({ active: true }), chatRowStateClass({ active: true }));
+});
+
+// ── Selecting another conversation closes the Deal drawer ──────────────────
+// Opening a Deal is a deliberate act. Clicking a conversation to READ it must
+// never drop the operator into a different customer's deal.
+
+const CHAT_A = { id: 'chat_a', accountId: 'acc1' };
+const CHAT_B = { id: 'chat_b', accountId: 'acc1' };
+
+test('switching conversations closes the Deal opened from the previous one', () => {
+  assert.deepEqual(chatSwitchEffect({ selected: CHAT_A, next: CHAT_B, drawerOpen: true }), {
+    select: true,
+    closeDrawer: true,
+    confirm: false,
+  });
+});
+
+test('and never opens the next conversation\'s Deal in its place', () => {
+  // The effect has no "open" outcome at all — the shape itself forbids it.
+  const effect = chatSwitchEffect({ selected: CHAT_A, next: CHAT_B, drawerOpen: true });
+  assert.deepEqual(Object.keys(effect).sort(), ['closeDrawer', 'confirm', 'select']);
+});
+
+test('re-clicking the SAME conversation leaves its open Deal alone', () => {
+  assert.deepEqual(chatSwitchEffect({ selected: CHAT_A, next: { ...CHAT_A }, drawerOpen: true }), {
+    select: true,
+    closeDrawer: false,
+    confirm: false,
+  });
+});
+
+test('with no drawer open, switching is just switching', () => {
+  assert.deepEqual(chatSwitchEffect({ selected: CHAT_A, next: CHAT_B, drawerOpen: false }), {
+    select: true,
+    closeDrawer: false,
+    confirm: false,
+  });
+});
+
+test('unsaved Deal edits stop everything until the operator answers', () => {
+  const asked = chatSwitchEffect({ selected: CHAT_A, next: CHAT_B, drawerOpen: true, dirty: true });
+  assert.deepEqual(asked, { select: false, closeDrawer: false, confirm: true });
+  // Nothing moved: the operator is still on chat A with their edits intact.
+  const answered = chatSwitchEffect({
+    selected: CHAT_A, next: CHAT_B, drawerOpen: true, dirty: true, confirmed: true,
+  });
+  assert.deepEqual(answered, { select: true, closeDrawer: true, confirm: false });
+});
+
+test('dirty edits with no drawer open never raise a prompt', () => {
+  assert.equal(chatSwitchEffect({ selected: CHAT_A, next: CHAT_B, drawerOpen: false, dirty: true }).confirm, false);
+});
+
+test('the same remote number under ANOTHER account is a different conversation', () => {
+  const other = { id: 'chat_a', accountId: 'acc2' };
+  assert.equal(chatSwitchEffect({ selected: CHAT_A, next: other, drawerOpen: true }).closeDrawer, true);
+});
+
+test('no target chat is a no-op', () => {
+  assert.deepEqual(chatSwitchEffect({ selected: CHAT_A, next: null, drawerOpen: true }), {
+    select: false,
+    closeDrawer: false,
+    confirm: false,
+  });
 });

@@ -238,14 +238,15 @@ before(async () => {
 });
 
 async function render(element) {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
+  const mountRoot = document.createElement('div');
+  document.body.appendChild(mountRoot);
+  const root = createRoot(mountRoot);
   await act(async () => {
     root.render(element);
   });
   await act(async () => {});
-  return { container, unmount: () => act(async () => root.unmount()) };
+  // Dialog portals onto <body> — assertions scope to the document.
+  return { container: document.body, unmount: () => act(async () => root.unmount()) };
 }
 
 test('settings card: no template selected → honest empty state + create button', async () => {

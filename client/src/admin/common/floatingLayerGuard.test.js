@@ -46,7 +46,6 @@ const NOT_YET_CONVERTED = new Set([
   'editor/Toolbar.jsx',
   'profile/BankDetailsFields.jsx',
   'quote/CustomerQuoteView.jsx',
-  'shell/search/GlobalSearch.jsx',
 ]);
 
 // `absolute` and `z-<n>`/`z-[..]` and a shadow, in any order, on one element.

@@ -102,18 +102,20 @@ before(async () => {
 });
 
 async function mount() {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
+  const mountRoot = document.createElement('div');
+  document.body.appendChild(mountRoot);
+  const root = createRoot(mountRoot);
   await act(async () =>
     root.render(React.createElement(PayrollActivityDrawer, { activityId: 'a1', onClose: () => {} })),
   );
   await act(async () => {});
   return {
-    container,
+    // Dialog portals onto <body>, so the assertion scope is the document —
+    // not the mount root the component was rendered into.
+    container: document.body,
     unmount: async () => {
       await act(async () => root.unmount());
-      container.remove();
+      mountRoot.remove();
     },
   };
 }

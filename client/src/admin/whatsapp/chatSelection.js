@@ -36,6 +36,31 @@ export function chatMatchesAccountFilter(chat, accountFilter) {
   return !!chat.accountId && chat.accountId === accountFilter;
 }
 
+// ── Selecting another conversation ─────────────────────────────────────────
+//
+// THE rule: the WhatsApp selected-chat state and the Deal-drawer state are
+// SEPARATE. Choosing another conversation closes a Deal that was opened from
+// the previous one, and opens nothing in its place — opening a Deal is always a
+// deliberate operator action.
+//
+// (What this replaced: the drawer "followed" the selection by resolving the
+// next chat's deal and swapping it in. Clicking a chat to READ it dropped the
+// operator into a different customer's deal.)
+//
+// Unsaved Deal edits are the one thing that may interrupt the switch: closing a
+// drawer must never silently discard typed work, so the caller confirms first
+// and nothing moves until it does.
+//
+// @returns { select, closeDrawer, confirm } — `confirm` means "ask, then call
+// again as confirmed"; when it is true the other two are false.
+export function chatSwitchEffect({ selected, next, drawerOpen = false, dirty = false, confirmed = false } = {}) {
+  if (!next) return { select: false, closeDrawer: false, confirm: false };
+  const switching = !isSameChat(selected, next);
+  if (!switching) return { select: true, closeDrawer: false, confirm: false };
+  if (drawerOpen && dirty && !confirmed) return { select: false, closeDrawer: false, confirm: true };
+  return { select: true, closeDrawer: drawerOpen, confirm: false };
+}
+
 // ── Visual state ───────────────────────────────────────────────────────────
 // SELECTED (the open conversation) is a soft, semi-transparent BLUE fill plus a
 // blue inset ring and a solid blue accent bar on the leading edge — obvious at a

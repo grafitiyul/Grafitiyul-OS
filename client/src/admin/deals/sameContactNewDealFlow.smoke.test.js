@@ -180,9 +180,9 @@ function Harness({ deal }) {
 }
 
 async function render(deal) {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
+  const mountRoot = document.createElement('div');
+  document.body.appendChild(mountRoot);
+  const root = createRoot(mountRoot);
   const el = React.createElement(
     MemoryRouter,
     { initialEntries: ['/host'] },
@@ -200,10 +200,12 @@ async function render(deal) {
   await act(async () => root.render(el));
   await act(async () => {}); // flush effects/fetches
   return {
-    container,
+    // Dialog portals onto <body>, so the assertion scope is the document —
+    // not the mount root the component was rendered into.
+    container: document.body,
     unmount: async () => {
       await act(async () => root.unmount());
-      container.remove();
+      mountRoot.remove();
     },
   };
 }

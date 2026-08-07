@@ -156,9 +156,9 @@ function seedRecents(items) {
 }
 
 async function render() {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
+  const mountRoot = document.createElement('div');
+  document.body.appendChild(mountRoot);
+  const root = createRoot(mountRoot);
   const el = React.createElement(
     MemoryRouter,
     { initialEntries: ['/admin'] },
@@ -167,11 +167,13 @@ async function render() {
   await act(async () => root.render(el));
   await act(async () => {});
   return {
-    container,
-    input: container.querySelector('input[type="text"]'),
+    // The results panel renders through AnchoredMenu — a portal on <body> —
+    // so the assertion scope is the document, not the mount root.
+    container: document.body,
+    input: mountRoot.querySelector('input[type="text"]'),
     unmount: async () => {
       await act(async () => root.unmount());
-      container.remove();
+      mountRoot.remove();
     },
   };
 }

@@ -11,7 +11,7 @@ import WhatsAppTemplateModal from '../deals/whatsapp/WhatsAppTemplateModal.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { useIsMobile } from '../../lib/useIsMobile.js';
-import { chatMatchesAccountFilter, isChatSelected } from './chatSelection.js';
+import { chatMatchesAccountFilter, chatSwitchEffect, isChatSelected } from './chatSelection.js';
 import {
   applyUnreadSnapshot,
   isUnreadChat,
@@ -493,45 +493,39 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     [statusFilter, filteredChats],
   );
 
-  // Open a conversation. WORK-QUEUE MODE: when the deal drawer is already
-  // open, switching conversations follows PASSIVELY — exactly-one matching
-  // deal swaps the drawer in place, several raise the choose dialog, and NO
-  // matching deal simply CLOSES the drawer and shows the conversation
-  // (creating/opening a deal stays a deliberate act via the panel button —
-  // browsing must never be interrupted by a create-deal popup). Unsaved
-  // Deal edits are guarded by the global dirty-forms registry; note +
-  // WhatsApp drafts persist on their own (localStorage).
-  function openChat(chat) {
-    const switching = selected?.id !== chat.id;
-    setSelected(chat);
-    setCursorId(chat.id);
-    setLinking(false);
-    if (!drawerDealId || !switching) return;
-    if (hasDirtyForms()) {
-      setFollowConfirm(chat); // ask before dropping the edits
-    } else {
-      followDrawer(chat);
-    }
-  }
-
-  // Passive drawer follow — never opens create/confirm flows on its own.
-  async function followDrawer(chat) {
-    // Groups have no CRM identity; STAFF chats are internal conversations —
-    // never resolve or suggest deals for either.
-    if (chat.type === 'group' || chat.staff) {
-      setDrawerDealId(null);
+  // Open a conversation.
+  //
+  // Selecting another conversation CLOSES any Deal that was opened from the
+  // previous one, and opens nothing in its place. The two states are separate:
+  // the WhatsApp list owns which conversation is selected, and opening a Deal
+  // is always a deliberate operator action (the panel button).
+  //
+  // This replaces the old "work-queue follow", which resolved the next chat's
+  // deal and swapped the drawer in place. In daily use that read as the app
+  // deciding what you were working on: you clicked a chat to READ it and found
+  // yourself inside someone else's deal.
+  //
+  // Unsaved Deal edits are still guarded by the global dirty-forms registry —
+  // closing a drawer must never silently discard typed work. Note and WhatsApp
+  // drafts persist on their own (localStorage).
+  function openChat(chat, { confirmed = false } = {}) {
+    const effect = chatSwitchEffect({
+      selected,
+      next: chat,
+      drawerOpen: !!drawerDealId,
+      dirty: hasDirtyForms(),
+      confirmed,
+    });
+    if (effect.confirm) {
+      setFollowConfirm(chat); // ask before dropping the edits; nothing moves yet
       return;
     }
-    try {
-      const r = await api.whatsapp.dealResolution(chat.id);
-      if (r.kind === 'open') setDrawerDealId(r.dealId);
-      else if (r.kind === 'choose') setDialog({ ...r, chat, follow: true });
-      else setDrawerDealId(null); // no matching deal — just show the conversation
-    } catch (e) {
-      // Never trap the reader in an unrelated deal because resolution failed.
-      setDrawerDealId(null);
-      setError(errText('איתור הדיל לשיחה נכשל', e));
+    if (effect.select) {
+      setSelected(chat);
+      setCursorId(chat.id);
+      setLinking(false);
     }
+    if (effect.closeDrawer) setDrawerDealId(null);
   }
 
   // Keyboard shortcuts. Typing in inputs is respected (only Ctrl+K / Esc
@@ -1038,29 +1032,24 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
             setDialog(null);
             setDrawerDealId(d.id);
           }}
-          onClose={() => {
-            // A drawer-follow choice that was dismissed: don't leave the
-            // PREVIOUS conversation's deal on screen — show the conversation.
-            if (dialog.follow) setDrawerDealId(null);
-            setDialog(null);
-          }}
+          onClose={() => setDialog(null)}
         />
       )}
 
-      {/* Switching conversations while the drawer holds unsaved Deal edits —
-          never replace them silently. Cancel keeps the current deal open
-          (the conversation still switches; nothing is lost either way).
-          Note + WhatsApp drafts auto-persist regardless. */}
+      {/* Switching conversations closes the open Deal — never discard unsaved
+          edits to do it. Cancel stays exactly where the operator was: same
+          conversation, same deal, edits intact. Note + WhatsApp drafts
+          auto-persist regardless. */}
       <ConfirmDialog
         open={!!followConfirm}
         title="שינויים שלא נשמרו בדיל"
-        body={'בדיל הפתוח יש שינויים שעדיין לא נשמרו.\nלהמשיך לשיחה החדשה? (טיוטות של פתקים והודעות נשמרות אוטומטית — אבל שינויים בשדות הדיל יאבדו.)'}
-        confirmLabel="המשך בלי לשמור"
+        body={'בדיל הפתוח יש שינויים שעדיין לא נשמרו.\nלעבור לשיחה החדשה ולסגור את הדיל? (טיוטות של פתקים והודעות נשמרות אוטומטית — אבל שינויים בשדות הדיל יאבדו.)'}
+        confirmLabel="עבור בלי לשמור"
         onCancel={() => setFollowConfirm(null)}
         onConfirm={() => {
           const chat = followConfirm;
           setFollowConfirm(null);
-          if (chat) followDrawer(chat);
+          if (chat) openChat(chat, { confirmed: true });
         }}
       />
 
