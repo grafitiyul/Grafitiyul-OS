@@ -239,21 +239,66 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     refresh();
   }, [refresh]);
 
-  // Open tasks (Deal focus area). Terminal tasks are NOT loaded here — they
-  // arrive as kind='task' timeline events in HISTORY.
-  const [openTasks, setOpenTasks] = useState([]);
+  // EVERY task on the deal, in one read.
+  //
+  // A task lives in exactly one section, and that section IS its status: OPEN
+  // in the Focus strip, TERMINAL in HISTORY. Loading only the open ones was
+  // enough while History rows were inert text; now a completed row carries the
+  // live reopen control, and a control must act on the real record — not on the
+  // snapshot frozen into the timeline event when it was written.
+  const [allTasks, setAllTasks] = useState([]);
   const loadTasks = useCallback(async () => {
     if (!isDeal) return null;
     try {
-      const list = await api.dealTasks.list(subjectId, 'open');
+      const list = await api.dealTasks.list(subjectId);
       const next = Array.isArray(list) ? list : [];
-      setOpenTasks(next);
-      return next;
+      setAllTasks(next);
+      return next.filter((t) => t.status === 'open');
     } catch {
       /* non-fatal — the strip just stays empty */
       return null;
     }
   }, [isDeal, subjectId]);
+  const openTasks = useMemo(() => allTasks.filter((t) => t.status === 'open'), [allTasks]);
+  const tasksById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks]);
+
+  // The newest task event per task id — the row that represents where that
+  // task stands right now. Entries arrive newest-first, so the first one wins.
+  const latestTaskEntryId = useMemo(() => {
+    const seen = new Map();
+    for (const e of entries || []) {
+      const id = e?.kind === 'task' ? e.data?.taskId : null;
+      if (id && !seen.has(id)) seen.set(id, e.id);
+    }
+    return seen;
+  }, [entries]);
+
+  // Owner names for the shared task editor, reached from a HISTORY row.
+  const [taskUserMap, setTaskUserMap] = useState({});
+  useEffect(() => {
+    if (!isDeal) return;
+    api.adminUsers
+      .list()
+      .then((res) => {
+        const arr = Array.isArray(res) ? res : res?.users || [];
+        setTaskUserMap(Object.fromEntries(arr.map((u) => [u.id, u.username])));
+      })
+      .catch(() => {});
+  }, [isDeal]);
+
+  // Reopen from a HISTORY row — the canonical terminal→open transition (the
+  // same /api/tasks/bulk path every other reopen uses, so there is one
+  // transition code path however a task gets reopened). On success the task
+  // reloads as OPEN and moves itself back to Focus; on failure nothing moved,
+  // and the row stays exactly where it was.
+  const reopenFromHistory = useCallback(
+    async (task) => {
+      await api.tasks.bulk({ action: 'reopen', ids: [task.id] });
+      await loadTasks();
+      refresh();
+    },
+    [loadTasks, refresh],
+  );
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
@@ -326,17 +371,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     if (!hasWhatsappTask) return undefined;
     const prevIds = openTasks.map((t) => t.id).join(',');
     const iv = setInterval(async () => {
-      try {
-        const list = await api.dealTasks.list(subjectId, 'open');
-        const next = Array.isArray(list) ? list : [];
-        setOpenTasks(next);
-        if (next.map((t) => t.id).join(',') !== prevIds) refresh();
-      } catch {
-        /* transient — try again next tick */
-      }
+      const next = await loadTasks();
+      if (next && next.map((t) => t.id).join(',') !== prevIds) refresh();
     }, 15000);
     return () => clearInterval(iv);
-  }, [isDeal, subjectId, openTasks, refresh]);
+  }, [isDeal, subjectId, openTasks, refresh, loadTasks]);
 
   // An item is "direct" when it's owned by THIS page's subject; otherwise it's an
   // aggregated item from a related deal/contact (read-only, source-badged).
@@ -658,11 +697,24 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             ) : (
               <ul className="space-y-3">
                 {history.map((entry) => {
-                  // Terminal task events render as compact rows (not editable notes).
+                  // Task events render as compact rows (not editable notes).
+                  // The NEWEST event for a task is the one that represents its
+                  // current state, so that is the only row that may carry the
+                  // live control — an older completion from a previous
+                  // complete → reopen → complete cycle stays an audit line.
                   if (entry.kind === 'task') {
+                    const taskId = entry.data?.taskId;
                     return (
                       <li key={entry.id}>
-                        <TaskEventRow entry={entry} />
+                        <TaskEventRow
+                          entry={entry}
+                          task={taskId ? tasksById.get(taskId) : null}
+                          live={!!taskId && latestTaskEntryId.get(taskId) === entry.id}
+                          dealId={subjectId}
+                          userMap={taskUserMap}
+                          onReopen={reopenFromHistory}
+                          onChanged={onTaskChanged}
+                        />
                       </li>
                     );
                   }
