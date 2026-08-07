@@ -1,5 +1,6 @@
 // Result rows for global search. One component per entity type, one shared
 import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
+import EntityPeek from './EntityPeek.jsx';
 // shell so keyboard highlighting and click behaviour are identical everywhere.
 //
 // READING HIERARCHY (index.css §GOS READING HIERARCHY) — the operator must
@@ -71,6 +72,24 @@ function Dot() {
   return <span className="gos-sep" aria-hidden>·</span>;
 }
 
+// A name on a row that IS another entity: hover peeks at it, click opens it
+// instead of the row. Falls back to plain text whenever the server sent no ref
+// (an entity that no longer resolves, or a row type that never had one), so a
+// missing ref degrades to exactly the previous rendering rather than to a
+// broken link.
+//
+// One component, used by EVERY row type — a contact named under a deal, a
+// contact named under a note and an organization named under a contact all
+// behave the same way.
+function EntityName({ entity, fallback, context, onOpenEntity, className = 'gos-subject truncate' }) {
+  if (!entity || !onOpenEntity) {
+    return fallback ? <span className={className}>{fallback}</span> : null;
+  }
+  return (
+    <EntityPeek entity={entity} context={context} onOpen={onOpenEntity} className={className} />
+  );
+}
+
 // L4 — one metadata line per row: technical identifier first, then the match
 // reasons. Always the LAST line, always the smallest thing on the row, so the
 // eye learns to skip it until it needs it.
@@ -78,10 +97,31 @@ function MetaLine({ children }) {
   return <div className="gos-meta-cluster">{children}</div>;
 }
 
-function DealRow({ r }) {
+function DealRow({ r, onOpenEntity }) {
   // L2 — who. Organisation leads (it is the coarser bucket), then unit, then
   // the person; that ordering makes stacked results align on the same axis.
-  const who = [r.organizationName, r.unitName, r.contactName].filter(Boolean);
+  //
+  // The organisation and the person are now TARGETS (EntityName); the unit is
+  // not — a unit has no page of its own, it qualifies the organisation, and it
+  // is shown as such on the organisation's hover card.
+  const who = [
+    r.organizationName
+      ? { key: 'org', node: (
+        <EntityName
+          entity={r.organizationRef}
+          fallback={r.organizationName}
+          context={{ unitName: r.unitName, subtypeLabel: r.organizationSubtypeLabel }}
+          onOpenEntity={onOpenEntity}
+        />
+      ) }
+      : null,
+    r.unitName ? { key: 'unit', node: <span className="gos-subject truncate">{r.unitName}</span> } : null,
+    r.contactName
+      ? { key: 'contact', node: (
+        <EntityName entity={r.contactRef} fallback={r.contactName} onOpenEntity={onOpenEntity} />
+      ) }
+      : null,
+  ].filter(Boolean);
   return (
     <div className="gos-stack min-w-0">
       <div className="flex items-center gap-2 min-w-0">
@@ -93,9 +133,9 @@ function DealRow({ r }) {
       {who.length > 0 && (
         <div className="gos-meta-cluster min-w-0">
           {who.map((m, i) => (
-            <span key={i} className="flex min-w-0 items-center gap-1.5">
+            <span key={m.key} className="flex min-w-0 items-center gap-1.5">
               {i > 0 && <Dot />}
-              <span className="gos-subject truncate">{m}</span>
+              {m.node}
             </span>
           ))}
         </div>
@@ -119,10 +159,25 @@ function DealRow({ r }) {
   );
 }
 
-function ContactRow({ r }) {
+function ContactRow({ r, onOpenEntity }) {
   const name = r.fullNameHe || r.fullNameEn;
   // L2 — where this person belongs; L3 — how to reach them.
-  const where = [r.organizationName, r.unitName].filter(Boolean);
+  // The organisation is a target here for the same reason it is on a deal row:
+  // the same entity must behave the same way wherever it is named. The person
+  // is NOT — the row already is that person, and clicking the row opens them.
+  const where = [
+    r.organizationName
+      ? { key: 'org', node: (
+        <EntityName
+          entity={r.organizationRef}
+          fallback={r.organizationName}
+          context={{ unitName: r.unitName }}
+          onOpenEntity={onOpenEntity}
+        />
+      ) }
+      : null,
+    r.unitName ? { key: 'unit', node: <span className="gos-subject truncate">{r.unitName}</span> } : null,
+  ].filter(Boolean);
   const reach = [r.phone, r.email].filter(Boolean);
   return (
     <div className="gos-stack min-w-0">
@@ -136,9 +191,9 @@ function ContactRow({ r }) {
       {where.length > 0 && (
         <div className="gos-meta-cluster min-w-0">
           {where.map((m, i) => (
-            <span key={i} className="flex min-w-0 items-center gap-1.5">
+            <span key={m.key} className="flex min-w-0 items-center gap-1.5">
               {i > 0 && <Dot />}
-              <span className="gos-subject truncate">{m}</span>
+              {m.node}
             </span>
           ))}
         </div>
@@ -226,7 +281,14 @@ function TaskRow({ r }) {
 
 const PARENT_LABEL = { deal: 'עסקה', contact: 'איש קשר', organization: 'ארגון' };
 
-function TimelineRow({ r }) {
+function TimelineRow({ r, onOpenEntity }) {
+  // A note written ON a contact or ON an organization names that entity — the
+  // same reference, so the same behaviour. A note on a DEAL names the deal,
+  // which is already what the row opens, so it stays plain text.
+  const peekableParent =
+    r.parent && (r.parent.type === 'contact' || r.parent.type === 'organization')
+      ? { type: r.parent.type, id: r.parent.id, name: r.parent.label, path: r.parent.path }
+      : null;
   return (
     <div className="gos-stack min-w-0">
       <div className="flex items-center gap-2 min-w-0">
@@ -236,8 +298,13 @@ function TimelineRow({ r }) {
         {r.isSystem && <CountChip>מערכת</CountChip>}
       </div>
       {r.parent?.label && (
-        <div className="gos-subject truncate">
-          {PARENT_LABEL[r.parent?.type] || ''} {r.parent.label}
+        <div className="gos-meta-cluster min-w-0">
+          <span className="gos-subject shrink-0">{PARENT_LABEL[r.parent?.type] || ''}</span>
+          <EntityName
+            entity={peekableParent}
+            fallback={r.parent.label}
+            onOpenEntity={onOpenEntity}
+          />
         </div>
       )}
       {r.authorName && <div className="gos-detail truncate">{r.authorName}</div>}
@@ -257,7 +324,7 @@ const ROWS = {
   timeline: TimelineRow,
 };
 
-export default function SearchResultRow({ result, active, onSelect, onHover, id }) {
+export default function SearchResultRow({ result, active, onSelect, onHover, onOpenEntity, id }) {
   const Row = ROWS[result.type];
   if (!Row) return null;
   return (
@@ -278,7 +345,7 @@ export default function SearchResultRow({ result, active, onSelect, onHover, id 
         active ? 'bg-blue-50 border-s-blue-500' : 'border-s-transparent hover:bg-gray-50'
       }`}
     >
-      <Row r={result} />
+      <Row r={result} onOpenEntity={onOpenEntity} />
     </li>
   );
 }

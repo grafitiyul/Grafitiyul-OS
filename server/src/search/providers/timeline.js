@@ -12,6 +12,10 @@
 import { lookupTimeline } from '../lookups.js';
 import { scoreOf, bestReason } from '../ranking.js';
 import { snippet, fullNameHe, fullNameEn } from '../text.js';
+import {
+  contactPath, organizationPath, dealPath,
+  CONTACT_REF_SELECT, ORGANIZATION_REF_SELECT,
+} from '../entityRefs.js';
 
 const SUBJECT_TYPES = ['deal', 'contact', 'organization'];
 
@@ -29,15 +33,18 @@ async function resolveParents(rows, db) {
         })
       : [],
     byType.get('contact').size
+      // contactNo / orgNo travel so the parent link is the CANONICAL one. This
+      // provider used to address a contact by cuid while the contacts provider
+      // used the public number — the same person, two different URLs.
       ? db.contact.findMany({
           where: { id: { in: [...byType.get('contact')] } },
-          select: { id: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
+          select: CONTACT_REF_SELECT,
         })
       : [],
     byType.get('organization').size
       ? db.organization.findMany({
           where: { id: { in: [...byType.get('organization')] } },
-          select: { id: true, name: true },
+          select: ORGANIZATION_REF_SELECT,
         })
       : [],
   ]);
@@ -49,7 +56,7 @@ async function resolveParents(rows, db) {
       id: d.id,
       orderNo: d.orderNo,
       label: d.title,
-      path: `/admin/crm/deals/${d.orderNo ?? d.id}`,
+      path: dealPath(d),
     });
   }
   for (const c of contacts) {
@@ -57,7 +64,7 @@ async function resolveParents(rows, db) {
       type: 'contact',
       id: c.id,
       label: fullNameHe(c) || fullNameEn(c),
-      path: `/admin/crm/contacts/${c.id}`,
+      path: contactPath(c),
     });
   }
   for (const o of orgs) {
@@ -65,7 +72,7 @@ async function resolveParents(rows, db) {
       type: 'organization',
       id: o.id,
       label: o.name,
-      path: `/admin/crm/organizations/${o.id}`,
+      path: organizationPath(o),
     });
   }
   return map;

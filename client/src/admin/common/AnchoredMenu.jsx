@@ -109,6 +109,12 @@ export default function AnchoredMenu({
       <div
         ref={menuRef}
         dir="rtl"
+        // Every panel in the floating layer is marked, so a surface with its
+        // own document-level outside-click handler can recognise "this click
+        // landed in a panel I opened" without holding a ref to each one. A
+        // portalled panel is not a DOM descendant of its trigger, so
+        // contains() alone always reads it as an outside click.
+        data-floating-panel=""
         style={{
           position: 'fixed',
           top: pos?.top ?? -9999,

@@ -18,13 +18,17 @@ import {
 import { dealGroupRank, scoreOf, bestReason } from '../ranking.js';
 import { contactNameOr } from '../nameWhere.js';
 import { contains, startsWith, equals, snippet, fullNameHe, fullNameEn } from '../text.js';
+import { contactRef, organizationRef, CONTACT_REF_SELECT } from '../entityRefs.js';
 
 const INT4_MAX = 2147483647;
 
 const INCLUDE = {
   dealStage: { select: { id: true, label: true } },
-  organization: { select: { id: true, name: true } },
+  organization: { select: { id: true, orgNo: true, name: true } },
   organizationUnit: { select: { id: true, name: true } },
+  // Subtype is a DEAL property (never the organization's) — it qualifies the
+  // organization reference on THIS row and nowhere else.
+  organizationSubtype: { select: { label: true } },
   product: { select: { id: true, nameHe: true, nameEn: true } },
   productVariant: {
     select: { id: true, location: { select: { nameHe: true, nameEn: true } } },
@@ -34,15 +38,7 @@ const INCLUDE = {
     select: {
       isPrimary: true,
       contactId: true,
-      contact: {
-        select: {
-          id: true,
-          firstNameHe: true,
-          lastNameHe: true,
-          firstNameEn: true,
-          lastNameEn: true,
-        },
-      },
+      contact: { select: CONTACT_REF_SELECT },
     },
   },
   // Deal↔TourEvent goes ONLY through Booking (schema forbids a direct
@@ -193,6 +189,14 @@ function toDto(deal, reasons, groupRank, todayIso) {
     contactName: c ? fullNameHe(c) || fullNameEn(c) : null,
     organizationName: deal.organization?.name || null,
     unitName: deal.organizationUnit?.name || null,
+    // The interactive halves of the two names above: hover peeks, click opens
+    // that entity instead of the deal. Null when the deal has no such link —
+    // the row then simply renders plain text, as it always did.
+    contactRef: contactRef(c),
+    organizationRef: organizationRef(deal.organization, deal.organizationUnit),
+    // Deal-owned classification, shown on the organization's hover card as a
+    // property of THIS deal rather than of the organization.
+    organizationSubtypeLabel: deal.organizationSubtype?.label || null,
     status: deal.status,
     stageLabel: deal.dealStage?.label || null,
     product,

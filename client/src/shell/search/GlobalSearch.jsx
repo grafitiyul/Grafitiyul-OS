@@ -166,6 +166,11 @@ export default function GlobalSearch() {
       // without this, mousedown on a result would read as an outside click and
       // dismiss the panel before the row's own handler ever ran.
       if (panelRef.current?.contains(e.target)) return;
+      // A peek card opened FROM a result row is portalled too, and is not a
+      // descendant of either ref above. Any panel in the floating layer counts
+      // as inside — hovering a contact name and clicking inside its card must
+      // not dismiss the search underneath it.
+      if (e.target instanceof Element && e.target.closest('[data-floating-panel]')) return;
       // React 18 flushes discrete-event updates synchronously, so a row we
       // just removed/re-rendered (recent click, ✕) can already be DETACHED by
       // the time this document-level listener sees the same mousedown. A
@@ -199,11 +204,21 @@ export default function GlobalSearch() {
 
   function select(result) {
     if (!result?.path) return;
+    openPath(result.path);
+  }
+
+  // Navigating away from the panel — whatever was chosen. Extracted so a nested
+  // entity reference inside a row (the contact / organization named on it) ends
+  // the search exactly the way choosing the row does: the query is committed to
+  // history, the panel closes, the box clears. Anything less would leave an
+  // open dropdown floating over the page it just navigated to.
+  function openPath(path) {
+    if (!path) return;
     commitRecent();
     setOpen(false);
     setQ('');
     inputRef.current?.blur();
-    navigate(result.path);
+    navigate(path);
   }
 
   // A recent-search row was chosen: rerun that query EXACTLY like a manually
@@ -489,6 +504,7 @@ export default function GlobalSearch() {
                                 active={i === activeIndex}
                                 onSelect={select}
                                 onHover={() => setActiveIndex(i)}
+                                onOpenEntity={openPath}
                               />
                             </div>
                           );

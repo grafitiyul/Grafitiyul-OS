@@ -16,15 +16,34 @@ import AnchoredMenu from './AnchoredMenu.jsx';
 //
 // align: 'start' anchors the card to the trigger's start edge (right in RTL);
 // AnchoredMenu flips to the other edge when that side has no room.
-export default function HoverCard({ trigger, children, width = 288, align = 'start' }) {
+//
+// openDelay: milliseconds of INTENTIONAL hover before the card appears. 0 (the
+// default) keeps every existing caller instant. A list whose rows each carry a
+// hoverable name needs a delay — otherwise dragging the pointer across the list
+// on the way to somewhere else flashes a card per row. `onOpen` fires when the
+// card actually opens, which is where a caller loads its content: nothing is
+// fetched for a name the operator merely passed over.
+export default function HoverCard({
+  trigger, children, width = 288, align = 'start', openDelay = 0, onOpen = null, className = 'inline-flex',
+}) {
   const anchorRef = useRef(null);
   const [open, setOpen] = useState(false);
   const timer = useRef(null);
+  const openRef = useRef(null);
+  openRef.current = onOpen;
 
   const show = useCallback(() => {
     clearTimeout(timer.current);
-    setOpen(true);
-  }, []);
+    if (!openDelay) {
+      setOpen(true);
+      openRef.current?.();
+      return;
+    }
+    timer.current = setTimeout(() => {
+      setOpen(true);
+      openRef.current?.();
+    }, openDelay);
+  }, [openDelay]);
   const hide = useCallback(() => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setOpen(false), 120);
@@ -36,7 +55,7 @@ export default function HoverCard({ trigger, children, width = 288, align = 'sta
     <>
       <span
         ref={anchorRef}
-        className="inline-flex"
+        className={className}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={show}

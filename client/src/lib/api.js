@@ -389,6 +389,9 @@ export const api = {
   // search surface calls this rather than growing its own query logic.
   search: {
     query: ({ q, category }) => request(`/api/search${qs({ q, category })}`),
+    // Hover payload for a Contact / Organization named INSIDE a result row.
+    // A pure read: looking at a name opens nothing and writes nothing.
+    peek: (type, id) => request(`/api/search/peek${qs({ type, id })}`),
   },
   contacts: {
     // list() = full array (pickers / cross-refs); list({ page, pageSize,

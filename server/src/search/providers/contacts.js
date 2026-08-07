@@ -4,6 +4,7 @@ import { legacyCardHit, CANDIDATE_CAP } from '../lookups.js';
 import { scoreOf, bestReason } from '../ranking.js';
 import { contactSearchWhere } from '../contactWhere.js';
 import { contains, startsWith, equals, fullNameHe, fullNameEn } from '../text.js';
+import { organizationRef, ORGANIZATION_REF_SELECT } from '../entityRefs.js';
 
 const INCLUDE = {
   phones: { select: { value: true, isPrimary: true, label: true }, orderBy: { sortOrder: 'asc' } },
@@ -12,7 +13,7 @@ const INCLUDE = {
     select: {
       isPrimary: true,
       role: true,
-      organization: { select: { id: true, name: true } },
+      organization: { select: ORGANIZATION_REF_SELECT },
       organizationUnit: { select: { id: true, name: true } },
     },
   },
@@ -91,6 +92,10 @@ function toDto(c, reasons) {
     email: primaryEmail?.value || null,
     organizationName: link?.organization?.name || null,
     unitName: link?.organizationUnit?.name || null,
+    // The interactive half of the organization name above — the SAME ref shape
+    // a deal row carries, so an organization behaves identically wherever it is
+    // named. A contact row needs no contactRef: the row IS the contact.
+    organizationRef: organizationRef(link?.organization, link?.organizationUnit),
     dealCount: c._count?.dealContacts ?? 0,
     recentDeals: (c.dealContacts || [])
       .map((dc) => dc.deal)
