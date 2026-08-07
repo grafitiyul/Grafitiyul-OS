@@ -107,12 +107,46 @@ export function openableLanguage(template, preferred) {
 }
 
 export default function GuideMessageDialog({ open, tourEventId = null, reviewItemId = null, onClose, onSent }) {
-  const [subject, setSubject] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  // Declared up here because the card-change reset effect below clears it, and
+  // that effect must be able to run before the language effect that reads it.
+  const langTouched = useRef(false);
   const [templates, setTemplates] = useState(null);
 
-  const [personRefId, setPersonRefId] = useState('');
-  const [accountId, setAccountId] = useState('');
+  // ── WHICH CARD this composer is currently about ──────────────────────────
+  //
+  // Every piece of per-card state is stored WITH the identity it belongs to and
+  // read back only when that identity still matches. This is not defensive
+  // decoration — it is the fix for a real production defect:
+  //
+  // The dialog stays mounted and is reused for every card. On reopening, the
+  // load effect called setSubject(null) first, but a React state setter inside
+  // an effect only QUEUES a re-render — the auto-load effect running later in
+  // the SAME flush still closed over the PREVIOUS card's subject and guide. So
+  // it fired the template resolve for the previous card's guide and marked
+  // itself done, and the correct subject arriving a moment later never
+  // re-triggered it. Card N asked for card N−1's guide; the server correctly
+  // answered recipient_not_on_tour, and the operator saw a failed load.
+  //
+  // Deriving the values from the identity makes the stale read impossible
+  // rather than merely unlikely: there is no ordering in which `subject` or
+  // `personRefId` can describe a different card than the one on screen.
+  const subjectKey = `${tourEventId || ''}|${reviewItemId || ''}`;
+  const [loaded, setLoaded] = useState(null); // { key, subject }
+  const subject = loaded && loaded.key === subjectKey ? loaded.subject : null;
+
+  const [sel, setSel] = useState({ key: '', personRefId: '', accountId: '' });
+  const personRefId = sel.key === subjectKey ? sel.personRefId : '';
+  const accountId = sel.key === subjectKey ? sel.accountId : '';
+  const setPersonRefId = useCallback(
+    (v) => setSel((s) => ({ ...s, key: subjectKey, personRefId: v })),
+    [subjectKey],
+  );
+  const setAccountId = useCallback(
+    (v) => setSel((s) => ({ ...s, key: subjectKey, accountId: v })),
+    [subjectKey],
+  );
+
   const [lang, setLang] = useState('he');
   const [templateId, setTemplateId] = useState('');
 
@@ -133,7 +167,14 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   // template suggested it", so switching template re-suggests but a deliberate
   // pick is never silently replaced. Nothing here ever writes the template.
   const accountTouched = useRef(false);
-  const [autoLoaded, setAutoLoaded] = useState(false);
+  // Keyed for the same reason as the state above: "already auto-loaded" must
+  // mean "for THIS card", never "for whichever card was open before".
+  const [autoLoadedKey, setAutoLoadedKey] = useState(null);
+  const autoLoaded = autoLoadedKey === subjectKey;
+  // The live card identity, readable from inside an in-flight async callback
+  // (state closures there are frozen at call time).
+  const keyRef = useRef(subjectKey);
+  keyRef.current = subjectKey;
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [outcome, setOutcome] = useState(null);
@@ -156,26 +197,29 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     if (!open) return undefined;
     let cancelled = false;
     setLoadError(null);
-    setSubject(null);
+    // NOT setLoaded(null): the derived `subject` above is already null for this
+    // key, so there is nothing stale to clear and nothing that depends on this
+    // setter having taken effect.
     opIdRef.current = `guide-msg-${(crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`)}`;
+    const key = subjectKey;
     api.guideMessage
       .subject({ tourEventId, reviewItemId })
       .then((s) => {
         if (cancelled) return;
-        setSubject(s);
-        setPersonRefId(s.defaultPersonRefId || '');
-        setAccountId(s.defaultAccountId || '');
+        setLoaded({ key, subject: s });
+        setSel({ key, personRefId: s.defaultPersonRefId || '', accountId: s.defaultAccountId || '' });
         setLang(s.defaultLanguage || 'he');
       })
       .catch((e) => !cancelled && setLoadError(e?.payload?.error || e.message));
     loadTemplates();
     return () => { cancelled = true; };
-  }, [open, tourEventId, reviewItemId, loadTemplates]);
+  }, [open, tourEventId, reviewItemId, subjectKey, loadTemplates]);
 
-  // A composition is one-shot: reopening starts clean rather than resuming a
-  // draft addressed to a guide the operator may no longer be looking at.
+  // A composition is one-shot and belongs to ONE card: switching card (or
+  // reopening) starts clean rather than resuming a draft addressed to a guide
+  // the operator is no longer looking at. Keyed on the card identity, so it
+  // holds even if the dialog is reused without ever being closed.
   useEffect(() => {
-    if (open) return;
     setTemplateId('');
     setText('');
     setSeedText('');
@@ -186,9 +230,9 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     setPendingSwitch(null);
     setLangSwitched(null);
     setEmojiOpen(false);
-    setAutoLoaded(false);
+    langTouched.current = false;
     accountTouched.current = false;
-  }, [open]);
+  }, [subjectKey]);
 
   const recipient = useMemo(
     () => (subject?.recipients || []).find((r) => r.personRefId === personRefId) || null,
@@ -197,7 +241,6 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
 
   // Switching guide changes who the variables resolve for, so the language
   // follows their own recorded preference — unless the operator already chose.
-  const langTouched = useRef(false);
   useEffect(() => {
     if (!recipient || langTouched.current) return;
     setLang(recipient.language || 'he');
@@ -215,15 +258,17 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   // as before.
   useEffect(() => {
     if (!open || autoLoaded) return;
+    // `subject` and `personRefId` are DERIVED from subjectKey, so reaching this
+    // line already means they describe the card on screen — the stale-guide
+    // resolve is impossible here, not merely guarded against.
     if (!templates || !subject || !personRefId) return;
-    setAutoLoaded(true);
+    setAutoLoadedKey(subjectKey);
     const fallback = templates.find((t) => t.isAudienceDefault);
     if (!fallback) return;
     applyChoice(fallback.id, recipient?.language || subject.defaultLanguage || 'he');
-    // applyChoice is stable enough for this one-shot: it reads the very state
-    // this effect just verified is present.
+    // applyChoice reads the very state this effect just verified is present.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, autoLoaded, templates, subject, personRefId]);
+  }, [open, autoLoaded, templates, subject, personRefId, subjectKey]);
 
   const searchTemplates = useCallback(
     async (q) => {
@@ -247,6 +292,11 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   const resolve = useCallback(
     async (id, language, person) => {
       if (!id) return;
+      // A resolve is only ever for the card that started it. A slow response
+      // landing after the operator moved on must not overwrite the new card's
+      // draft (or its error) with the previous card's wording.
+      const key = subjectKey;
+      const stale = () => keyRef.current !== key;
       setResolving(true);
       setResolveError(null);
       setMissingVars([]);
@@ -254,20 +304,22 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
         const r = await api.guideMessage.resolve({
           tourEventId, reviewItemId, personRefId: person, templateId: id, lang: language,
         });
+        if (stale()) return;
         setText(r.text || '');
         setSeedText(r.text || '');
         setMissingVars(r.missingVariables || []);
       } catch (e) {
+        if (stale()) return;
         // The operator must be told WHAT went wrong, not that something did.
         // A generic "טעינת הנוסח נכשלה" sent a real reviewer to us with no way
         // to act on it — every code the endpoint can return now says its own
         // sentence, and anything unrecognised at least reports its status.
         setResolveError(resolveErrorText(e));
       } finally {
-        setResolving(false);
+        if (!stale()) setResolving(false);
       }
     },
-    [tourEventId, reviewItemId],
+    [tourEventId, reviewItemId, subjectKey],
   );
 
   // Applying a template/language choice throws away edits, so it asks first.

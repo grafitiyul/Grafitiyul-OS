@@ -139,6 +139,11 @@ beforeEach(() => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const editor = () => document.querySelector('textarea');
+async function setValue(el, value) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  await act(async () => { setter.call(el, value); el.dispatchEvent(new window.Event('input', { bubbles: true })); });
+  await act(async () => { await sleep(60); });
+}
 const text = () => document.body.textContent;
 const resolves = () => calls.filter((c) => c.url.includes('/guide-message/resolve'));
 
@@ -245,5 +250,107 @@ test('an unexpected server failure names its status instead of hiding', async ()
   const ui = await render();
   assert.match(text(), /boom/);
   assert.match(text(), /אפשר לכתוב הודעה חופשית/, 'and points at the way forward');
+  await ui.unmount();
+});
+
+// ── THE production defect: card N asked for card N−1's guide ────────────────
+//
+// The dialog stays mounted and is reused for every card. Reopening it queued
+// setSubject(null), but a state setter inside an effect only schedules a
+// re-render — the auto-load effect later in the SAME flush still closed over
+// the PREVIOUS card's subject and guide, fired the resolve for that guide, and
+// marked itself done. The server answered recipient_not_on_tour and the
+// operator saw a failed load.
+//
+// Reproduced by doing what an operator does: open one card, close it, open
+// another. A single-card test cannot see this at all, which is exactly why it
+// shipped.
+
+const CARD_A = { tourEventId: 'teA', reviewItemId: 'riA', personRefId: 'guideA', name: 'מדריך א', language: 'he' };
+const CARD_B = { tourEventId: 'teB', reviewItemId: 'riB', personRefId: 'guideB', name: 'Rafael Villela', language: 'en' };
+
+function subjectFor(card) {
+  return {
+    tour: { id: card.tourEventId, date: '2026-08-03', startTime: '18:30', productName: 'סיור', cityName: 'תל אביב' },
+    dealId: 'd1',
+    reviewItemId: card.reviewItemId,
+    recipients: [{
+      personRefId: card.personRefId, name: card.name, role: 'guide', isLead: false,
+      submittedSummary: true, phone: '0521234567', language: card.language, state: 'ok', canSend: true,
+    }],
+    defaultPersonRefId: card.personRefId,
+    defaultLanguage: card.language,
+    accounts: ACCOUNTS,
+    defaultAccountId: 'main',
+  };
+}
+
+async function renderCards(cards) {
+  const mountRoot = document.createElement('div');
+  document.body.appendChild(mountRoot);
+  const root = createRoot(mountRoot);
+  const el = (card, open) => React.createElement(GuideMessageDialog, {
+    open,
+    tourEventId: card?.tourEventId || null,
+    reviewItemId: card?.reviewItemId || null,
+    onClose: () => {}, onSent: () => {},
+  });
+  await act(async () => root.render(el(cards[0], true)));
+  await act(async () => { await sleep(200); });
+  return {
+    // Exactly what ManagementTasksPage does: the SAME mounted dialog, closed
+    // (props go null) and reopened with the next card.
+    switchTo: async (card) => {
+      await act(async () => root.render(el(null, false)));
+      await act(async () => { await sleep(60); });
+      await act(async () => root.render(el(card, true)));
+      await act(async () => { await sleep(250); });
+    },
+    unmount: async () => { await act(async () => root.unmount()); mountRoot.remove(); },
+  };
+}
+
+test('REGRESSION: the second card resolves for ITS OWN guide, not the previous card’s', async () => {
+  templates = [BOTH];
+  subject = subjectFor(CARD_A);
+  const ui = await renderCards([CARD_A]);
+  const first = resolves().at(-1).body;
+  assert.equal(first.personRefId, 'guideA', 'card A used guide A');
+  assert.equal(first.reviewItemId, 'riA');
+
+  subject = subjectFor(CARD_B);
+  await ui.switchTo(CARD_B);
+
+  const second = resolves().at(-1).body;
+  assert.equal(second.reviewItemId, 'riB', 'the card identity moved on');
+  assert.equal(second.personRefId, 'guideB', 'AND SO DID THE GUIDE — this is the bug');
+  assert.notEqual(second.personRefId, 'guideA');
+  assert.equal(second.lang, 'en', "and the new guide's own language");
+  assert.ok(!text().includes('טעינת הנוסח נכשלה'));
+  await ui.unmount();
+});
+
+test('REGRESSION: no resolve is ever fired against a subject from another card', async () => {
+  templates = [BOTH];
+  subject = subjectFor(CARD_A);
+  const ui = await renderCards([CARD_A]);
+  subject = subjectFor(CARD_B);
+  await ui.switchTo(CARD_B);
+  // Every request the composer made must pair its own review item with its own
+  // guide — no crossed pair at any point in the sequence.
+  const pairs = resolves().map((c) => `${c.body.reviewItemId}:${c.body.personRefId}`);
+  assert.deepEqual([...new Set(pairs)].sort(), ['riA:guideA', 'riB:guideB']);
+  await ui.unmount();
+});
+
+test('REGRESSION: the previous card’s draft never survives into the next card', async () => {
+  templates = [BOTH];
+  subject = subjectFor(CARD_A);
+  const ui = await renderCards([CARD_A]);
+  await setValue(editor(), 'טיוטה של הכרטיס הקודם');
+  subject = subjectFor(CARD_B);
+  await ui.switchTo(CARD_B);
+  assert.ok(!editor().value.includes('הכרטיס הקודם'), 'a stale draft cannot be sent to the wrong guide');
+  assert.equal(editor().value, '[en] נוסח', 'the new card loaded its own wording');
   await ui.unmount();
 });
