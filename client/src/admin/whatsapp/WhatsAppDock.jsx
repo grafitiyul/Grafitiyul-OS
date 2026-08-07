@@ -7,6 +7,7 @@ import { useSubjectChats } from './useSubjectChats.js';
 import { chatTargetKey } from './chatTarget.js';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
 import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
+import { useViewMode, VIEW_MODE } from '../deals/workspaceViewMode.js';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
 // `seamLeft` slot, so the closed bubble sits in the empty gap between the deal
@@ -56,7 +57,10 @@ function unreadForClosedBubble(chats, readIds) {
 }
 
 export default function WhatsAppDock({ subjectType, subjectId }) {
-  const [open, setOpen] = useState(false);
+  // Open/closed is UI MODE, not a fact about this deal, so it outlives the
+  // workspace remount that record navigation causes. Working a task queue with
+  // the panel open used to mean reopening it on every single Next.
+  const [open, setOpen] = useViewMode(VIEW_MODE.whatsappDock, false);
   // Chats this dock has already marked read but whose server count may not have
   // been re-read yet. Scoped PER CHAT, never a blanket "unread = 0": with
   // several conversations open on a deal, clearing the whole badge because ONE

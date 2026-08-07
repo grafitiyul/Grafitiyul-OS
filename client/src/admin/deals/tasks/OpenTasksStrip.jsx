@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { PRIORITY_TONE, PRIORITY_OPTIONS, formatDue, toDateInput } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
+import TaskCheckbox from './TaskCheckbox.jsx';
 import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 
@@ -90,21 +91,22 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
               }}
               className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
             >
-              <button
-                type="button"
-                title="סמן כבוצע"
-                disabled={busyId === t.id}
-                onClick={(e) => {
-                  e.stopPropagation();
+              <TaskCheckbox
+                status={t.status || 'open'}
+                busy={busyId === t.id}
+                onComplete={() =>
                   run(() => api.dealTasks.complete(dealId, t.id), t.id, {
                     reason: 'completed',
                     taskId: t.id,
-                  });
-                }}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-300 text-transparent hover:border-green-500 hover:text-green-600 disabled:opacity-50"
-              >
-                ✓
-              </button>
+                  })
+                }
+                onReopen={() =>
+                  run(() => api.tasks.bulk({ action: 'reopen', ids: [t.id] }), t.id, {
+                    reason: 'task_reopened',
+                    taskId: t.id,
+                  })
+                }
+              />
               <span className="shrink-0 text-[15px] leading-none">
                 <TaskIcon name={t.icon} channel={t.channel} size={16} />
               </span>

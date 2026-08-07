@@ -162,7 +162,9 @@ test('the done checkbox completes the task and does NOT open the editor', async 
   const { container, unmount } = await render(
     React.createElement(OpenTasksStrip, { dealId: 'd1', tasks: [TASK], onChanged: () => {} }),
   );
-  const done = container.querySelector('button[title="סמן כבוצע"]');
+  // The shared TaskCheckbox (one control across the Deal strip, the Tasks
+  // table and the cards) — found by its stable hook, not by a label string.
+  const done = container.querySelector('[data-task-check="open"]');
   assert.ok(done, 'the complete control exists');
   await act(async () => done.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
   await act(async () => {});

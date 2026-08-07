@@ -1,6 +1,7 @@
 // TaskIcon = the ONE task-icon renderer (canonical WhatsApp mark included).
 import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
 import { fmtDate, priorityLabel, PRIORITY_TONE, rowTone, dueDateOf } from './columns.jsx';
+import TaskCheckbox from '../../deals/tasks/TaskCheckbox.jsx';
 
 // Mobile card renderer for the Tasks workspace — PRESENTATION ONLY.
 //
@@ -79,33 +80,17 @@ export default function TaskCards({
               {row.owner?.name && <span className="gos-meta truncate">{row.owner.name}</span>}
             </div>
           </div>
-          {row.status === 'open' ? (
-            <button
-              type="button"
-              title="סמן כהושלמה"
-              disabled={savingId === row.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                onComplete(row);
-              }}
-              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-emerald-200 text-emerald-600 active:bg-emerald-50 disabled:opacity-40"
-            >
-              ✓
-            </button>
-          ) : row.status !== 'sent' && onReopen ? (
-            <button
-              type="button"
-              title="פתיחה מחדש"
-              disabled={savingId === row.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                onReopen(row);
-              }}
-              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-gray-500 no-underline active:bg-blue-50 disabled:opacity-40"
-            >
-              ↩
-            </button>
-          ) : null}
+          {/* Same control as the table and the Deal strip. Touch gets a bigger
+              hit area around the identical 20×20 box — the behaviour is one
+              component, the target size is a layout concern. */}
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center">
+            <TaskCheckbox
+              status={row.status}
+              busy={savingId === row.id}
+              onComplete={() => onComplete(row)}
+              onReopen={onReopen ? () => onReopen(row) : null}
+            />
+          </span>
         </li>
       ))}
     </ul>

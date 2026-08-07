@@ -23,6 +23,7 @@ import GroupRegistrationModal from './GroupRegistrationModal.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
+import { useViewMode, VIEW_MODE } from './workspaceViewMode.js';
 import DealWhatsAppTab from '../whatsapp/DealWhatsAppTab.jsx';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import { minorToInput, formatMinor } from '../../lib/money.js';
@@ -158,7 +159,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Mobile (<lg): the workspace is FOUR bottom tabs (WorkspaceLayout
   // mobileTabs) — controlled here so the WhatsApp tab can be activated
   // programmatically ("שלח ללקוח → WhatsApp"). Desktop ignores both.
-  const [mobileTab, setMobileTab] = useState('workspace');
+  // Which tab is showing is UI MODE, so it carries across record navigation
+  // exactly like the desktop WhatsApp panel — pressing Next on mobile must not
+  // silently throw the operator back to the overview tab.
+  const [mobileTab, setMobileTab] = useViewMode(VIEW_MODE.dealMobileTab, 'workspace');
   const [waUnread, setWaUnread] = useState(0);
   // Header editing surfaces.
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);

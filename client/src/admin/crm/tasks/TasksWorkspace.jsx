@@ -16,6 +16,7 @@ import TaskCards from './TaskCards.jsx';
 // shared SVG brand mark; everything else → its emoji. Same component the Deal
 // task UI uses — one WhatsApp icon source across GOS.
 import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
+import TaskCheckbox from '../../deals/tasks/TaskCheckbox.jsx';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -1028,27 +1029,12 @@ export default function TasksWorkspace() {
                     (the only terminal→open transition; a sent WhatsApp task is
                     final and gets no action here). */}
                 <td className={`px-1 ${COL_SEP}`} onClick={(e) => e.stopPropagation()}>
-                  {row.status === 'open' ? (
-                    <button
-                      type="button"
-                      title="סמן כהושלמה (Ctrl+Enter)"
-                      disabled={savingId === row.id}
-                      onClick={() => completeRow(row)}
-                      className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 text-[12px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-                    >
-                      ✓
-                    </button>
-                  ) : row.status !== 'sent' ? (
-                    <button
-                      type="button"
-                      title="פתיחה מחדש — המשימה חוזרת לסטטוס פתוחה; ההיסטוריה נשמרת"
-                      disabled={savingId === row.id}
-                      onClick={() => transitionRow(row, 'reopen')}
-                      className="flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-[12px] text-gray-500 no-underline hover:bg-blue-50 hover:text-blue-700 disabled:opacity-40"
-                    >
-                      ↩
-                    </button>
-                  ) : null}
+                  <TaskCheckbox
+                    status={row.status}
+                    busy={savingId === row.id}
+                    onComplete={() => completeRow(row)}
+                    onReopen={() => transitionRow(row, 'reopen')}
+                  />
                 </td>
                 {cols.visibleCols.map((col) => (
                   <TableCell
