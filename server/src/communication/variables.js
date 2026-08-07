@@ -20,6 +20,7 @@ import {
   TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
 } from './format.js';
 import { naturalDateLabel } from './naturalDate.js';
+import { staffFirstName, staffName } from '../../../shared/staffName.mjs';
 
 // category → Hebrew group label for the editor menu.
 export const VARIABLE_CATEGORIES = {
@@ -41,7 +42,16 @@ const STAFF_TYPE_LABELS = {
   former: 'עזב/ה',
 };
 
-const staffNameParts = (person) => String(person?.displayName || '').trim().split(/\s+/).filter(Boolean);
+// Staff names go through THE canonical staff-name resolver, not a local split
+// of displayName: PersonProfile owns the structured he/en name fields, and the
+// language rule ("each language uses its own name, the other beats nothing")
+// already lives there. Splitting displayName here was a weaker second copy that
+// could not answer an English message at all.
+const staffLastName = (person, lang) => {
+  const full = staffName(person, lang);
+  const first = staffFirstName(person, lang);
+  return full && first && full.startsWith(first) ? full.slice(first.length).trim() : '';
+};
 
 // contexts: which trigger contexts provide the value (triggers.js `contexts`).
 export const VARIABLES = [
@@ -215,11 +225,11 @@ export const VARIABLES = [
   //    trigger provides this context, so these never appear in the customer-
   //    facing editor menus). ctx.staff = { person: PersonRef(+team), portalUrl }.
   { key: 'staff_first_name', labelHe: 'שם פרטי של איש הצוות', labelEn: 'Staff first name', category: 'staff', contexts: ['staff'],
-    resolve: (ctx) => staffNameParts(ctx.staff?.person)[0] || null },
+    resolve: (ctx, lang) => staffFirstName(ctx.staff?.person, lang) || null },
   { key: 'staff_last_name', labelHe: 'שם משפחה של איש הצוות', labelEn: 'Staff last name', category: 'staff', contexts: ['staff'],
-    resolve: (ctx) => staffNameParts(ctx.staff?.person).slice(1).join(' ') || null },
+    resolve: (ctx, lang) => staffLastName(ctx.staff?.person, lang) || null },
   { key: 'staff_full_name', labelHe: 'שם מלא של איש הצוות', labelEn: 'Staff full name', category: 'staff', contexts: ['staff'],
-    resolve: (ctx) => String(ctx.staff?.person?.displayName || '').trim() || null },
+    resolve: (ctx, lang) => staffName(ctx.staff?.person, lang) || null },
   { key: 'staff_phone', labelHe: 'טלפון איש הצוות', labelEn: 'Staff phone', category: 'staff', contexts: ['staff'],
     resolve: (ctx) => String(ctx.staff?.person?.phone || '').trim() || null },
   { key: 'staff_email', labelHe: 'אימייל איש הצוות', labelEn: 'Staff email', category: 'staff', contexts: ['staff'],

@@ -25,6 +25,7 @@ import { extractTokens, resolveVariables, substituteTokens } from '../communicat
 import { guidePortalUrl } from './guidePortal/links.js';
 import { GUIDE_ROLES, notifiableGuides } from './guides.js';
 import { resolveStaffDisplayName } from '../../../shared/staffAssignmentDisplay.mjs';
+import { staffLanguage } from '../../../shared/staffName.mjs';
 import {
   resolveTemplateBody,
   canonicalTemplateKey,
@@ -72,10 +73,10 @@ function recipientState(person) {
 }
 
 /**
- * The guide's own communication language, from the canonical staff profile.
- * Hebrew whenever nothing was recorded — never guessed from a name or a phone.
+ * The guide's own communication language — THE canonical staff resolver.
+ * Hebrew whenever nothing was recorded; never guessed from a name or a phone.
  */
-export const guideLanguage = (person) => (person?.profile?.preferredLanguage === 'en' ? 'en' : 'he');
+export const guideLanguage = (person) => staffLanguage(person);
 
 /**
  * WHO this tour's message may address.

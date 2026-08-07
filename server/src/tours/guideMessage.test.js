@@ -144,3 +144,34 @@ test('a supported variable with no value empties cleanly instead of shipping mou
   assert.ok(!out.text.includes('{{'), 'no raw token survives');
   assert.ok(out.missing.includes('tour_time'));
 });
+
+// ── Staff names are LANGUAGE-AWARE (canonical shared/staffName.mjs) ──────────
+//
+// The registry used to split PersonRef.displayName, which cannot answer an
+// English message at all: a guide with an English name on file still got
+// greeted in Hebrew. These pin the canonical rule — each language uses its own
+// name, the other language beats nothing, displayName is the legacy fallback.
+
+const withProfile = (profile) => ({
+  ...ctx,
+  staff: { person: { displayName: 'רפאל ויללה', profile }, portalUrl: null },
+});
+
+test('an English message uses the English name when one is recorded', () => {
+  const c = withProfile({ firstNameHe: 'רפאל', lastNameHe: 'ויללה', firstNameEn: 'Rafael', lastNameEn: 'Villela' });
+  assert.equal(fillRemainingTokens('Hi {{staff_first_name}}', c, 'en').text, 'Hi Rafael');
+  assert.equal(fillRemainingTokens('היי {{staff_first_name}}', c, 'he').text, 'היי רפאל');
+  assert.equal(fillRemainingTokens('{{staff_full_name}}', c, 'en').text, 'Rafael Villela');
+  assert.equal(fillRemainingTokens('{{staff_full_name}}', c, 'he').text, 'רפאל ויללה');
+});
+
+test('a colleague with only a Hebrew name keeps it in English — a name beats a blank', () => {
+  const c = withProfile({ firstNameHe: 'דנה', lastNameHe: 'כהן' });
+  assert.equal(fillRemainingTokens('Hi {{staff_first_name}}', c, 'en').text, 'Hi דנה');
+});
+
+test('no profile at all falls back to the legacy display name, never to empty', () => {
+  const c = withProfile(null);
+  assert.equal(fillRemainingTokens('היי {{staff_first_name}}', c, 'he').text, 'היי רפאל');
+  assert.equal(fillRemainingTokens('{{staff_full_name}}', c, 'he').text, 'רפאל ויללה');
+});

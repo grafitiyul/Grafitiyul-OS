@@ -61,7 +61,10 @@ async function resolveStaffRecipients({ mode, personRefIds }) {
     : { id: { in: personRefIds } };
   const people = await prisma.personRef.findMany({
     where,
-    include: { team: { select: { displayName: true } } },
+    // The profile travels with the person because the canonical staff-name
+    // resolver reads its structured he/en name fields. Without it every
+    // {{staff_first_name}} silently degrades to the legacy displayName split.
+    include: { team: { select: { displayName: true } }, profile: true },
   });
   const byId = new Map(people.map((p) => [p.id, p]));
   const missingIds = mode === 'selected'
@@ -197,7 +200,9 @@ router.post(
     if (!personRefId) return res.status(400).json({ error: 'person_required' });
     const person = await prisma.personRef.findUnique({
       where: { id: personRefId },
-      include: { team: { select: { displayName: true } } },
+      // Same include as the recipient resolver above — the preview must render
+      // from exactly the shape the batch will render from.
+      include: { team: { select: { displayName: true } }, profile: true },
     });
     if (!person) return res.status(404).json({ error: 'not_found' });
     const templateText = htmlToWhatsApp(bodyHtml);
