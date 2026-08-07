@@ -1160,40 +1160,6 @@ model Deal {
   // answer "already done?" instead of the application guessing. Null = the
   // deal has never been converted.
   conversionOpId               String?                    @unique
-  // ── Deal MERGE lineage ("איחוד דילים", deals/dealMerge.js) ──────────────
-  // Two deals turned out to be ONE real transaction. One survives; the other is
-  // RETIRED — never deleted. Deletion is not an option and never will be: every
-  // financial table (IcountDocument, DealCollectionEvidence, PaymentRequest,
-  // QuoteVersion, QuoteDocument) cascades from Deal, so dropping the row would
-  // silently destroy issued tax documents. deleteGuard.js already refuses that
-  // for exactly this reason; merge honours the same invariant.
-  //
-  //   mergedIntoDealId — set on the RETIRED deal, pointing at its survivor. Its
-  //                      presence is THE definition of "retired": every active
-  //                      surface filters on it (deals/mergeLineage.js
-  //                      activeDealWhere) and the write guard refuses ordinary
-  //                      mutations on it.
-  //   mergedAt         — when the merge committed.
-  //   mergeOpId        — the idempotency identity of the merge that RETIRED this
-  //                      deal, a client-supplied UUID unique across all deals. A
-  //                      merge re-parents bookings, seats, contacts and quote
-  //                      lines; a double click, refresh, retry or duplicate
-  //                      request must never run that twice, and the UNIQUE index
-  //                      is what lets the DATABASE answer "already done?"
-  //                      instead of the application guessing.
-  //
-  // The retired deal keeps its orderNo forever (numbers are never reused), stays
-  // searchable, and serves a tombstone at its own URL pointing at the survivor.
-  mergedInto                   Deal?                      @relation("DealMergeLineage", fields: [mergedIntoDealId], references: [id], onDelete: Restrict)
-  mergedIntoDealId             String?
-  mergedAt                     DateTime?
-  mergeOpId                    String?                    @unique
-  // Back-relation: the deals retired INTO this one. Read-time history,
-  // collection and search aggregation walk this (never a stored copy).
-  mergedFrom                   Deal[]                     @relation("DealMergeLineage")
-  // The audit records of merges this deal took part in, on either side.
-  mergesAsSurvivor             DealMerge[]                @relation("DealMergeSurvivor")
-  mergeAsRetired               DealMerge?                 @relation("DealMergeRetired")
   lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free
@@ -1363,56 +1329,6 @@ model Deal {
   @@index([status, collectionReviewStatus])
   // Serves the payment-review filter (deposit-vs-full audit).
   @@index([status, paymentReviewStatus])
-  // Serves BOTH halves of the merge lineage read: "is this deal retired?"
-  // (every active-surface filter) and "what was retired into it?" (history,
-  // collection and search aggregation).
-  @@index([mergedIntoDealId])
-}
-
-// ── Deal MERGE audit ("איחוד דילים") ────────────────────────────────────────
-// ONE immutable record per merge: which deal survived, which was retired, who
-// decided, and EXACTLY what they decided. It is the evidence that makes a merge
-// reconstructable years later — the retired deal's own row only says "merged
-// into X", it cannot say why the price of A won, or that the participant count
-// was combined rather than chosen.
-//
-// Deliberately a separate model rather than a timeline entry: a timeline entry
-// is prose for a human to read, while this is queried structurally (the
-// integrity detector walks it, the tombstone renders from it, and lineage
-// aggregation resolves history through it).
-model DealMerge {
-  id              String   @id @default(cuid())
-  survivorDeal    Deal     @relation("DealMergeSurvivor", fields: [survivorDealId], references: [id], onDelete: Restrict)
-  survivorDealId  String
-  // Frozen COPIES of both order numbers. The FKs above already identify the
-  // deals, but a merge record must stay readable as a business fact ("#27100
-  // was merged into #27042") without a join, and the numbers are what the
-  // operator actually recognises.
-  survivorOrderNo Int
-  retiredDeal     Deal     @relation("DealMergeRetired", fields: [retiredDealId], references: [id], onDelete: Restrict)
-  // UNIQUE: a deal is retired at most ONCE. A survivor may absorb many deals
-  // (chained merges), but a retired deal can never be retired again — the
-  // database enforces it, not a code path.
-  retiredDealId   String   @unique
-  retiredOrderNo  Int
-  // The idempotency identity of this merge, shared with Deal.mergeOpId.
-  opId            String   @unique
-  actorUserId     String?
-  actorName       String?
-  mergedAt        DateTime @default(now())
-  // The operator's decision snapshot, frozen: which deal survived and why each
-  // conflict resolved the way it did (commercial, participants, status,
-  // organization, operational, contacts, tasks). Shape is owned by
-  // deals/dealMerge.js.
-  decisions       Json
-  // What the merge ACTUALLY did — counts and ids of everything that moved:
-  // contacts linked, quote lines composed, booking/registrations re-parented or
-  // cancelled, tasks moved/closed, review cards raised. The honest record of
-  // effects, written inside the same transaction.
-  outcome         Json
-
-  @@index([survivorDealId])
-  @@index([mergedAt])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────
