@@ -14,6 +14,7 @@
 // normalizer, not on anything WhatsApp-specific.
 
 import { normalizePhoneIntl } from '../whatsapp/phone.js';
+import { toSendableAddress } from '../../../shared/emailAddress.mjs';
 import { resolveAttribution } from './attribution.js';
 
 const clean = (v) => {
@@ -26,13 +27,11 @@ const clean = (v) => {
 // two addresses that differ are treated as different people, which is the safe
 // direction for a CRM.
 export function normalizeEmail(raw) {
-  const s = clean(raw);
-  if (!s) return null;
-  const lower = s.toLowerCase();
-  // Minimal shape check — anything without a single @ and a dotted domain is
-  // not usable for matching or contact creation.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lower)) return null;
-  return lower;
+  // THE canonical sanitizer: strips invisible bidi/zero-width characters (a
+  // lead form pasted from an RTL context carries them routinely), then applies
+  // the shape + printable-ASCII rule. An address that only "looks" valid used
+  // to be created here and rejected months later by Gmail — #27099/#27100.
+  return toSendableAddress(raw);
 }
 
 // Israeli-first display form for a stored ContactPhone: local 0-prefixed when

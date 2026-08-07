@@ -13,8 +13,8 @@
 
 import { classifyNameScript } from '../../../../shared/nameLanguage.mjs';
 import { normalizePhoneIntl } from '../../../../shared/phone.mjs';
+import { isEmailShaped, normalizeEmailAddress } from '../../lib/emailAddress.js';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Phone-shaped: optional leading '+', then only digits and common separators.
 const PHONEISH_RE = /^\+?[\d\s\-().]+$/;
 
@@ -25,7 +25,10 @@ export function classifySearchInput(raw) {
   const text = String(raw || '').trim();
   if (text.length < 2) return { kind: 'invalid', text };
 
-  if (EMAIL_RE.test(text)) return { kind: 'email', text, email: text.toLowerCase() };
+  // THE canonical sanitizer: an address pasted out of an RTL context carries an
+  // invisible bidi mark, which used to make it classify as 'invalid' and hide a
+  // contact the operator was looking straight at.
+  if (isEmailShaped(text)) return { kind: 'email', text, email: normalizeEmailAddress(text) };
   // Contains '@' but is not a valid email → malformed, never a name. Don't
   // offer creation from it.
   if (text.includes('@')) return { kind: 'invalid', text };

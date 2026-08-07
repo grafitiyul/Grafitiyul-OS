@@ -11,6 +11,12 @@ import ReorderableList from '../../common/ReorderableList.jsx';
 // / onReorder(ids) each return a promise; onChange() refreshes the parent after
 // any successful mutation. onEditValue and onReorder are optional (a caller that
 // omits them simply doesn't expose those affordances).
+//
+// `sanitizeValue` is the channel's canonical cleaner, applied to BOTH the add
+// form and the inline edit before anything is sent to the server (emails pass
+// the shared email sanitizer, so an invisible bidi character is repaired at the
+// input instead of being stored and failing at send time — #27099/#27100).
+// `renderHint` draws the operator-facing note under the field.
 export default function ChannelSection({
   title,
   items,
@@ -23,13 +29,15 @@ export default function ChannelSection({
   onReorder,
   onChange,
   formatValue = (v) => v, // optional display formatter (e.g. phone formatting)
+  sanitizeValue = (v) => String(v ?? '').trim(),
+  renderHint = null, // (rawValue) => ReactNode | null
 }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function add(e) {
     e.preventDefault();
-    const clean = value.trim();
+    const clean = sanitizeValue(value);
     if (!clean) return;
     setBusy(true);
     try {
@@ -52,7 +60,7 @@ export default function ChannelSection({
     }
   }
 
-  const rowProps = { ltr, formatValue, onSetPrimary, onEditValue, onRemove, act };
+  const rowProps = { ltr, formatValue, onSetPrimary, onEditValue, onRemove, act, sanitizeValue, renderHint };
 
   return (
     <section className="bg-white border border-gray-200 rounded-lg p-4">
@@ -78,33 +86,36 @@ export default function ChannelSection({
       ) : (
         <div className="text-sm text-gray-400 mb-3">אין עדיין.</div>
       )}
-      <form onSubmit={add} className="flex items-center gap-2">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder={placeholder}
-          dir={ltr ? 'ltr' : 'rtl'}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-64"
-        />
-        <button
-          type="submit"
-          disabled={busy || !value.trim()}
-          className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-        >
-          הוסף
-        </button>
+      <form onSubmit={add}>
+        <div className="flex items-center gap-2">
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={placeholder}
+            dir={ltr ? 'ltr' : 'rtl'}
+            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-64"
+          />
+          <button
+            type="submit"
+            disabled={busy || !sanitizeValue(value)}
+            className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
+          >
+            הוסף
+          </button>
+        </div>
+        {renderHint?.(value)}
       </form>
     </section>
   );
 }
 
-function ChannelRow({ item, ltr, formatValue, onSetPrimary, onEditValue, onRemove, act, handle }) {
+function ChannelRow({ item, ltr, formatValue, onSetPrimary, onEditValue, onRemove, act, handle, sanitizeValue = (v) => String(v ?? '').trim(), renderHint = null }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.value);
   const [busy, setBusy] = useState(false);
 
   async function saveEdit() {
-    const v = draft.trim();
+    const v = sanitizeValue(draft);
     if (!v || busy) return;
     setBusy(true);
     try {
@@ -115,11 +126,11 @@ function ChannelRow({ item, ltr, formatValue, onSetPrimary, onEditValue, onRemov
     }
   }
 
-  return (
-    <div className="py-2 flex items-center gap-2 text-sm">
-      {handle}
-      {editing ? (
-        <>
+  if (editing) {
+    return (
+      <div className="py-2">
+        <div className="flex items-center gap-2 text-sm">
+          {handle}
           <input
             autoFocus
             value={draft}
@@ -131,41 +142,45 @@ function ChannelRow({ item, ltr, formatValue, onSetPrimary, onEditValue, onRemov
             }}
             className="flex-1 min-w-0 border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
           />
-          <button onClick={saveEdit} disabled={busy || !draft.trim()} className="text-[12px] text-blue-700 shrink-0 disabled:opacity-50">שמור</button>
+          <button onClick={saveEdit} disabled={busy || !sanitizeValue(draft)} className="text-[12px] text-blue-700 shrink-0 disabled:opacity-50">שמור</button>
           <button onClick={() => { setEditing(false); setDraft(item.value); }} className="text-[12px] text-gray-500 shrink-0">ביטול</button>
-        </>
+        </div>
+        {renderHint?.(draft)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="py-2 flex items-center gap-2 text-sm">
+      {handle}
+      <span dir={ltr ? 'ltr' : 'rtl'}>{formatValue(item.value)}</span>
+      {item.isPrimary ? (
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+          ראשי
+        </span>
       ) : (
-        <>
-          <span dir={ltr ? 'ltr' : 'rtl'}>{formatValue(item.value)}</span>
-          {item.isPrimary ? (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-              ראשי
-            </span>
-          ) : (
-            <button
-              onClick={() => act(() => onSetPrimary(item.id))}
-              className="text-[11px] text-gray-500 hover:text-gray-800 underline"
-            >
-              הפוך לראשי
-            </button>
-          )}
-          <div className="flex-1" />
-          {onEditValue && (
-            <button
-              onClick={() => { setDraft(item.value); setEditing(true); }}
-              className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
-            >
-              ערוך
-            </button>
-          )}
-          <button
-            onClick={() => act(() => onRemove(item.id))}
-            className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1"
-          >
-            מחק
-          </button>
-        </>
+        <button
+          onClick={() => act(() => onSetPrimary(item.id))}
+          className="text-[11px] text-gray-500 hover:text-gray-800 underline"
+        >
+          הפוך לראשי
+        </button>
       )}
+      <div className="flex-1" />
+      {onEditValue && (
+        <button
+          onClick={() => { setDraft(item.value); setEditing(true); }}
+          className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
+        >
+          ערוך
+        </button>
+      )}
+      <button
+        onClick={() => act(() => onRemove(item.id))}
+        className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1"
+      >
+        מחק
+      </button>
     </div>
   );
 }

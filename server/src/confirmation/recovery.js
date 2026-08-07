@@ -20,6 +20,7 @@ import { countRealSends } from './sendHistory.js';
 import { hasActiveFillers } from './fillers.js';
 import { autoSendFailureReasonHe } from './failureReason.js';
 import { resolveConfirmationReview } from './wonHook.js';
+import { resolveDelivery } from '../email/deliveryState.js';
 import { CONFIRMATION_EMAIL_REVIEW_KIND } from '../reviewItems/kinds/confirmationEmailReview.js';
 import { emitTimelineEvent, userOrigin, systemOrigin } from '../timeline/events.js';
 
@@ -67,7 +68,16 @@ export async function retryConfirmationAfterTourSetup(
         actorUserId ? { userId: actorUserId } : null,
         { db },
       );
-      return { action: 'sent', sendId: out.sendId, subject: out.subject, sendKind: out.sendKind };
+      // Canonical delivery state travels with the result — 'sent' here means
+      // "handed to the queue", and the toast must say exactly that.
+      return {
+        action: 'sent',
+        sendId: out.sendId,
+        subject: out.subject,
+        sendKind: out.sendKind,
+        delivery: await resolveDelivery(out.scheduledEmailId, { db }),
+        windowHold: out.windowHold || null,
+      };
     }
 
     const reasonHe = autoSendFailureReasonHe(out.error, out.warnings);

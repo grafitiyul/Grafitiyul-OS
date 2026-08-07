@@ -56,6 +56,7 @@ import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import DealCollectionCard from './DealCollectionCard.jsx';
 import DealFillersCard from './confirmation/DealFillersCard.jsx';
 import ConfirmationEmailModal from './confirmation/ConfirmationEmailModal.jsx';
+import { confirmationQueuedToast } from './confirmation/sendToast.js';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
@@ -248,17 +249,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         return;
       }
       const sent = await api.confirmationEmail.send(id, {});
-      // Honest queue expectation: distinguish "sends within the next worker
-      // tick" from "held for the customer sending window until X".
-      if (sent?.windowHold) {
-        const at = sent.windowHold.nextAt ? new Date(sent.windowHold.nextAt) : null;
-        showToast(
-          'מייל האישור נכנס לתור — מחוץ לחלון השליחה',
-          at ? `יישלח בפתיחת החלון: ${at.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : 'יישלח בפתיחת חלון השליחה',
-        );
-      } else {
-        showToast('מייל האישור נכנס לתור השליחה', 'יישלח תוך כדקה');
-      }
+      // The toast states the CANONICAL delivery state and nothing more. It used
+      // to promise "יישלח תוך כדקה" — a prediction, printed as fact, that
+      // nothing ever retracted when Gmail rejected the message (#27099/#27100).
+      const t = confirmationQueuedToast(sent);
+      showToast(t.title, t.detail);
       refresh();
     } catch (e) {
       const code = e.payload?.error;
@@ -732,7 +727,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   function handleRecoveryEmailResult(ce) {
     if (!ce) return;
     if (ce.action === 'preview') setConfirmEmailOpen(true);
-    else if (ce.action === 'sent') showToast('הסיור נוצר ומייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
+    else if (ce.action === 'sent') {
+      const t = confirmationQueuedToast(ce, 'הסיור נוצר');
+      showToast(t.title, t.detail);
+    }
     else if (ce.action === 'failed') {
       alert('הסיור נוצר, אך מייל האישור לא נשלח: ' + (ce.reasonHe || ce.error || '') + '\nאפשר לטפל ולשלוח מהתצוגה המקדימה.');
     }
@@ -781,7 +779,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       // Special terms → the operator reviews before the customer gets it.
       const ce = res?.confirmationEmail;
       if (ce?.action === 'preview') setConfirmEmailOpen(true);
-      else if (ce?.action === 'sent') showToast('הסיור עודכן ומייל מעודכן נכנס לתור השליחה', 'המייל יישלח בקרוב');
+      else if (ce?.action === 'sent') {
+        const t = confirmationQueuedToast(ce, 'הסיור עודכן');
+        showToast(t.title, t.detail);
+      }
       else if (ce?.action === 'failed') {
         alert('הסיור עודכן, אך מייל האישור לא נשלח: ' + (ce.error || '') + '\nאפשר לשלוח מהתפריט.');
       }
@@ -1236,8 +1237,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           <ConfirmationEmailModal
             deal={deal}
             onClose={() => setConfirmEmailOpen(false)}
-            onSent={() => {
-              showToast('מייל האישור נכנס לתור השליחה', 'המייל יישלח בקרוב');
+            onSent={(res) => {
+              const t = confirmationQueuedToast(res);
+              showToast(t.title, t.detail);
               refresh();
             }}
           />

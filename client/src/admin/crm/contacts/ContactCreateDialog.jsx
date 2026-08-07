@@ -4,6 +4,8 @@ import PhoneInput from '../../common/PhoneInput.jsx';
 import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
 import { api } from '../../../lib/api.js';
 import { contactNamesFromParts } from '../../../lib/nameSplit.js';
+import EmailInputHint from '../../common/EmailInputHint.jsx';
+import { sanitizeEmailAddress } from '../../../lib/emailAddress.js';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 // Empty baseline — the dialog is "dirty" only once a field diverges from this.
@@ -60,8 +62,8 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
         notes: composedNotes || undefined,
       });
       await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
-      if (email.trim()) {
-        await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
+      if (sanitizeEmailAddress(email)) {
+        await api.contacts.addEmail(contact.id, { value: sanitizeEmailAddress(email), isPrimary: true });
       }
 
       // Optional organization — same resolver as Create Deal (existing | new).
@@ -125,6 +127,7 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
           </Field>
           <Field label="אימייל">
             <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" className={FIELD} />
+            <EmailInputHint value={email} />
           </Field>
         </div>
         <Field label="תפקיד (אופציונלי)">

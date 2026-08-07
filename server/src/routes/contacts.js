@@ -7,6 +7,7 @@ import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
 import { sendReservationDocument } from '../reservations/document.js';
 import { classifyNameScript } from '../../../shared/nameLanguage.mjs';
+import { sanitizeEmailAddress, isEmailShaped } from '../../../shared/emailAddress.mjs';
 import { dealsForContact, contactDealsPanel } from '../crm/dealResolution.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
@@ -337,8 +338,12 @@ router.put(
 router.post(
   '/:id/emails',
   handle(async (req, res) => {
-    const value = String(req.body?.value || '').trim();
+    // THE canonical sanitizer — an address pasted from an RTL context carries
+    // invisible bidi characters that later make Gmail reject every send
+    // (#27099/#27100). Repaired here so the stored value is always sendable.
+    const value = sanitizeEmailAddress(req.body?.value);
     if (!value) return res.status(400).json({ error: 'value_required' });
+    if (!isEmailShaped(value)) return res.status(400).json({ error: 'invalid_email' });
     const existing = await prisma.contactEmail.count({
       where: { contactId: req.params.id },
     });
@@ -373,8 +378,9 @@ router.put(
     if (!email) return res.status(404).json({ error: 'not_found' });
     const data = {};
     if (req.body?.value !== undefined) {
-      const v = String(req.body.value).trim();
+      const v = sanitizeEmailAddress(req.body.value);
       if (!v) return res.status(400).json({ error: 'value_required' });
+      if (!isEmailShaped(v)) return res.status(400).json({ error: 'invalid_email' });
       data.value = v;
     }
     if (req.body?.label !== undefined)

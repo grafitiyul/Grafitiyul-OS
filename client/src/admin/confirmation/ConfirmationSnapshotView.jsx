@@ -2,19 +2,16 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import RichText from '../../editor/RichText.jsx';
+import { DELIVERY_LABEL_HE, DELIVERY_TONE, deliverySummaryHe } from '../../lib/emailDelivery.js';
 
 // Internal archive view of a SENT confirmation email — the frozen snapshot
 // (ConfirmationEmailSend), exactly what was handed to the queue. The
 // QuoteSnapshotView convention: amber banner, read-only, customers never see
 // this screen. Template edits after the send can never change what is shown.
 
-const STATUS_HE = {
-  pending: 'בתור השליחה',
-  sending: 'נשלח כעת…',
-  sent: 'נשלח',
-  failed: 'נכשל',
-  cancelled: 'בוטל',
-};
+// Delivery wording comes from THE canonical module — this screen no longer
+// keeps its own status map (which spoke the DB's 'pending' vocabulary and
+// could drift from every other surface).
 
 export default function ConfirmationSnapshotView() {
   const { sendId } = useParams();
@@ -46,7 +43,7 @@ export default function ConfirmationSnapshotView() {
   return (
     <div className="min-h-screen bg-gray-100 pb-16" dir="rtl">
       <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-[13px] text-amber-800">
-        תצוגת ארכיון פנימית — צילום קפוא של מייל האישור כפי שנשלח ללקוח. לקוחות אינם רואים מסך זה.
+        תצוגת ארכיון פנימית — צילום קפוא של מייל האישור כפי שנוצר עבור הלקוח. מצב השליחה בפועל מופיע למטה. לקוחות אינם רואים מסך זה.
       </div>
       <div className="mx-auto max-w-3xl px-4 pt-8">
         <div className="mb-4 rounded-xl border border-gray-200 bg-white px-5 py-4 text-[13px] text-gray-700 space-y-1">
@@ -63,22 +60,29 @@ export default function ConfirmationSnapshotView() {
             <span className="text-gray-400">תבנית:</span> {snap.templateName}
           </div>
           <div>
-            <span className="text-gray-400">נשלח:</span>{' '}
+            {/* The snapshot was CREATED at this moment — that is not the same
+                as delivered, so it is labelled honestly and the delivery state
+                is stated separately. */}
+            <span className="text-gray-400">נוצר:</span>{' '}
             {new Date(snap.createdAt).toLocaleString('he-IL')}
             {d && (
               <>
                 {' · '}
                 <span className="text-gray-400">סטטוס:</span>{' '}
-                <span className={d.status === 'sent' ? 'text-emerald-700 font-medium' : d.status === 'failed' ? 'text-red-600 font-medium' : 'text-gray-700'}>
-                  {STATUS_HE[d.status] || d.status}
+                <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ring-1 ${DELIVERY_TONE[d.state]}`}>
+                  {DELIVERY_LABEL_HE[d.state]}
                 </span>
                 {d.sentAt && ` (${new Date(d.sentAt).toLocaleString('he-IL')})`}
-                {d.status !== 'sent' && (d.failureReason || d.waitReason) && (
-                  <span className="text-gray-500"> — {d.failureReason || d.waitReason}</span>
-                )}
               </>
             )}
           </div>
+          {/* The ONE truthful sentence — never a bare code, and never silence
+              when the customer did not get the email. */}
+          {d && !d.delivered && (
+            <div className={`rounded-lg px-3 py-2 text-[12.5px] ${d.state === 'failed' ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-800'}`}>
+              {deliverySummaryHe(d)}
+            </div>
+          )}
           {(snap.fillersSnapshot || []).length > 0 && (
             <div>
               <span className="text-gray-400">פילרים:</span>{' '}

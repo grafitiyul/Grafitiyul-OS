@@ -20,6 +20,7 @@ import {
 } from '../confirmation/composer.js';
 import { normalizeOverrideState } from '../confirmation/overrides.js';
 import { sendConfirmationEmail } from '../confirmation/sendService.js';
+import { resolveDelivery } from '../email/deliveryState.js';
 import { resolveConfirmationReview } from '../confirmation/wonHook.js';
 import {
   FILLER_KINDS,
@@ -412,7 +413,19 @@ router.post(
     }
     // A real send closes any open "review this confirmation email" card.
     if (!req.body?.test) await resolveConfirmationReview(out.sendId, req.params.dealId, req.adminAuth);
-    res.json({ ok: true, sendId: out.sendId, scheduledEmailId: out.scheduledEmailId, queued: true, subject: out.subject, sendKind: out.sendKind, windowHold: out.windowHold || null });
+    // The response carries the CANONICAL delivery state, not a `queued:true`
+    // flag the client has to interpret. At this instant it is 'queued' — the
+    // toast says exactly that and nothing more (#27099/#27100).
+    const delivery = await resolveDelivery(out.scheduledEmailId);
+    res.json({
+      ok: true,
+      sendId: out.sendId,
+      scheduledEmailId: out.scheduledEmailId,
+      delivery,
+      subject: out.subject,
+      sendKind: out.sendKind,
+      windowHold: out.windowHold || null,
+    });
   }),
 );
 
@@ -532,12 +545,9 @@ router.get(
   handle(async (req, res) => {
     const snap = await prisma.confirmationEmailSend.findUnique({ where: { id: req.params.id } });
     if (!snap) return res.status(404).json({ error: 'send_not_found' });
-    const delivery = snap.scheduledEmailId
-      ? await prisma.scheduledEmail.findUnique({
-        where: { id: snap.scheduledEmailId },
-        select: { status: true, sentAt: true, failureReason: true, waitReason: true, attemptCount: true },
-      })
-      : null;
+    // Delivery comes from THE canonical reader — the archive must never invent
+    // its own reading of the queue row.
+    const delivery = await resolveDelivery(snap.scheduledEmailId);
     res.json({ ...snap, delivery });
   }),
 );

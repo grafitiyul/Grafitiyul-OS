@@ -27,6 +27,7 @@
 // executeIdentityPlan() materializes the plan in chunked createMany writes.
 import crypto from 'node:crypto';
 import { isNewContactName } from '../phoneCompare.js';
+import { sanitizeEmailAddress } from '../../../../shared/emailAddress.mjs';
 import { applyIdentityEdit } from '../review/contactIdentity.js';
 import { defaultFields, validateContactNames, legacyIdFromNameKey } from '../review/nameCleanup.js';
 import { isResolved } from '../review/queues.js';
@@ -338,7 +339,11 @@ export function planIdentityImport({
     const uniquePhones = [];
     for (const row of phoneRows) if (row.value && !uniquePhones.some((x) => x.value === row.value)) uniquePhones.push(row);
     uniquePhones.forEach((row, i) => plan.phones.push({ contactId, value: row.value, isPrimary: row.isPrimary && !uniquePhones.slice(0, i).some((x) => x.isPrimary), sortOrder: i }));
-    [...new Set(emails)].forEach((v, i) => plan.emails.push({ contactId, value: v, isPrimary: i === 0, sortOrder: i }));
+    // THE canonical sanitizer — the legacy CRMs stored addresses with invisible
+    // bidi marks (25 such rows reached production); repaired at import so no
+    // migrated contact carries an address Gmail will refuse.
+    [...new Set(emails.map(sanitizeEmailAddress).filter(Boolean))]
+      .forEach((v, i) => plan.emails.push({ contactId, value: v, isPrimary: i === 0, sortOrder: i }));
 
     const link = orgLinkFor(p.orgId ?? null);
     if (link) plan.orgLinks.push({ contactId, orgRef: link.ref, unitRef: link.unitRef, isPrimary: true });

@@ -4,6 +4,7 @@ import RichText from '../../editor/RichText.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ScheduleSendDialog from './ScheduleSendDialog.jsx';
 import EmailComposer from './EmailComposer.jsx';
+import { canonicalDeliveryState, DELIVERY_LABEL_HE, DELIVERY_TONE } from '../../lib/emailDelivery.js';
 
 // THE canonical management surface for scheduled emails. Used as the Email
 // module's "מתוזמנים" view and, scoped by dealId/contactId, inside the Deal and
@@ -15,11 +16,12 @@ import EmailComposer from './EmailComposer.jsx';
 //   היסטוריה — everything, so a CANCELLED item stays visible with its final
 //             state for audit instead of vanishing.
 
-const STATUS = {
-  pending: { label: 'ממתין לשליחה', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
-  sent: { label: 'נשלח', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
-  failed: { label: 'נכשל', cls: 'bg-red-50 text-red-700 ring-red-200' },
+// State + wording come from THE canonical delivery module, so this list, the
+// deal timeline, the send archive and the בקרה cards can never disagree about
+// whether a message went out.
+const statusOf = (row) => {
+  const state = canonicalDeliveryState(row.status, { claimedAt: row.claimedAt });
+  return { state, label: DELIVERY_LABEL_HE[state], cls: DELIVERY_TONE[state] };
 };
 
 const DT = { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
@@ -232,16 +234,18 @@ export default function ScheduledEmailsView({ dealId = null, contactId = null, c
             </thead>
             <tbody className="divide-y divide-gray-100">
               {list.map((row) => {
-                const st = STATUS[row.status] || STATUS.pending;
-                const editable = row.status === 'pending';
+                const st = statusOf(row);
+                // Only a genuinely unclaimed queue row may still be edited —
+                // a row a worker is mid-send on is no longer the operator's.
+                const editable = st.state === 'queued';
                 return (
                   <tr key={row.id} className="text-[13px] hover:bg-gray-50/60">
                     <td className="px-3 py-2 align-top">
                       <div className="font-medium text-gray-900">{fmt(row.scheduledAt)}</div>
-                      {row.status === 'pending' && (
+                      {st.state === 'queued' && (
                         <div className="text-[11.5px] text-gray-400">{untilLabel(row.scheduledAt)}</div>
                       )}
-                      {row.status === 'sent' && (
+                      {st.state === 'sent' && (
                         <div className="text-[11.5px] text-emerald-600">נשלח ב־{fmt(row.sentAt)}</div>
                       )}
                     </td>

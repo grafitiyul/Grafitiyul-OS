@@ -22,6 +22,7 @@ import { defaultFields, validateContactNames } from '../migration/review/nameCle
 import { tourStatusOf } from '../migration/import/tourImport.js';
 import { normalizeCoordRow } from '../migration/import/tourNormalize.js';
 import { CHILD_TABLES } from './sources/airtableTourChildren.js';
+import { sanitizeEmailAddress } from '../../../shared/emailAddress.mjs';
 import { fireNewLeadReport } from '../adminReports/newLeadEvent.js';
 import { ensureInitialCallTask } from '../tasks/autoTasks.js';
 
@@ -143,7 +144,11 @@ export async function createContact(db, normalized, row) {
     return { reason: 'invalid_name', detail: `person ${row.externalId} has no usable first name ("${full}") — deferred, not silently dropped` };
   }
   const phones = [...new Set((c.phone || []).map((p) => t(p?.value ?? p)).filter(Boolean))];
-  const emails = [...new Set((c.email || []).map((e) => t(e?.value ?? e)).filter(Boolean))];
+  // THE canonical sanitizer — mirrored source data carries invisible bidi
+  // characters routinely (RTL-authored CRMs); repair on the way in.
+  const emails = [...new Set(
+    (c.email || []).map((e) => sanitizeEmailAddress(t(e?.value ?? e))).filter(Boolean),
+  )];
   const orgLink = await xwalkOne(db, 'organization', pid(c.org_id));
 
   return atomicCreate(db, {

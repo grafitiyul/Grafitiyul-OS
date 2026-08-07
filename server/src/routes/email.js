@@ -1017,6 +1017,14 @@ const SCHEDULE_SAFE_SELECT = {
   failureReason: true,
   attemptCount: true,
   connectionDeferredCount: true,
+  // The claim is what separates 'queued' from 'sending' in the canonical
+  // delivery vocabulary (shared/emailDelivery.mjs) — the list needs it to
+  // stop offering edit/cancel on a row a worker already holds.
+  claimedAt: true,
+  waitReason: true,
+  effectiveAt: true,
+  nextRetryAt: true,
+  gmailMessageId: true,
   dealId: true,
   contactId: true,
   threadId: true,

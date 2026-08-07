@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { contactNamesFromParts } from '../../../lib/nameSplit.js';
+import EmailInputHint from '../../common/EmailInputHint.jsx';
+import { sanitizeEmailAddress } from '../../../lib/emailAddress.js';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 // Manage an organization's linked contacts (the ContactOrganization membership).
@@ -185,7 +187,7 @@ function CreateAndLink({ org, onCancel, onDone }) {
     try {
       const contact = await api.contacts.create(contactNamesFromParts(first, last));
       await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
-      if (email.trim()) await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
+      if (sanitizeEmailAddress(email)) await api.contacts.addEmail(contact.id, { value: sanitizeEmailAddress(email), isPrimary: true });
       await api.contacts.addOrganization(contact.id, {
         organizationId: org.id,
         organizationUnitId: unitId || null,
@@ -208,6 +210,7 @@ function CreateAndLink({ org, onCancel, onDone }) {
         <input value={last} onChange={(e) => setLast(e.target.value)} placeholder="שם משפחה" className={IN} />
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="טלפון *" dir="ltr" className={IN} />
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="אימייל" dir="ltr" className={IN} />
+            <EmailInputHint value={email} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <select value={unitId} onChange={(e) => setUnitId(e.target.value)} disabled={!org.units?.length} className={`${IN} bg-white disabled:bg-gray-100`}>

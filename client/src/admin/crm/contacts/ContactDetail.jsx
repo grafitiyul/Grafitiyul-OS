@@ -6,6 +6,7 @@ import UnitPicker from '../common/UnitPicker.jsx';
 import BackButton from '../../common/BackButton.jsx';
 import { useListReturn } from '../../common/useListState.js';
 import ChannelSection from '../common/ChannelSection.jsx';
+import { EMAIL_CHANNEL_PROPS } from '../common/emailChannel.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
@@ -164,6 +165,7 @@ export default function ContactDetail() {
         items={contact.emails}
         placeholder="אימייל"
         ltr
+        {...EMAIL_CHANNEL_PROPS}
         onAdd={(value) => api.contacts.addEmail(id, { value })}
         onSetPrimary={(itemId) => api.contacts.updateEmail(itemId, { isPrimary: true })}
         onEditValue={(itemId, value) => api.contacts.updateEmail(itemId, { value })}

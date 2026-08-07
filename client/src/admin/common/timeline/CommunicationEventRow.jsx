@@ -2,8 +2,15 @@
 // kind='communication'). data = { event: 'communication_sent', deliveryId,
 // messageNumber, channel, language, recipientName, eventName, messageName,
 // subject }.
+//
+// DELIVERY TRUTH: outgoing-email rows carry `data.delivery`, attached at READ
+// time by server/src/email/deliveryState.js from the canonical queue row. This
+// row renders THAT state and never its own guess. It used to print
+// "נשלח מייל" for anything queued — so deals #27099/#27100 read as sent in the
+// feed for a full day while Gmail had rejected every attempt.
 
 import EventRowShell from './EventRowShell.jsx';
+import { DELIVERY_LABEL_HE, DELIVERY_TONE, deliverySummaryHe } from '../../../lib/emailDelivery.js';
 
 export default function CommunicationEventRow({ entry }) {
   const d = entry.data || {};
@@ -13,6 +20,7 @@ export default function CommunicationEventRow({ entry }) {
   const manual = d.event === 'confirmation_email_queued';
   // The WON hook's auto-send stopped — visible in the feed, never invisible.
   const autoFailed = d.event === 'confirmation_email_auto_failed';
+  const delivery = d.delivery || null;
 
   if (autoFailed) {
     return (
@@ -29,8 +37,20 @@ export default function CommunicationEventRow({ entry }) {
     );
   }
 
+  // The lead sentence follows the DELIVERY, not the intent. WhatsApp keeps its
+  // existing wording (its own queue owns that state).
+  let lead = wa ? 'נשלחה הודעת WhatsApp' : 'נשלח מייל';
+  let rowTone;
+  if (!wa && delivery) {
+    if (delivery.state === 'sent') lead = 'נשלח מייל';
+    else if (delivery.state === 'failed') { lead = 'המייל לא נשלח'; rowTone = 'warning'; }
+    else if (delivery.state === 'cancelled') lead = 'השליחה בוטלה';
+    else lead = 'המייל בתור השליחה'; // queued | sending
+  }
+
   return (
     <EventRowShell
+      tone={rowTone}
       icon={<span className="text-[14px]" aria-hidden>{wa ? '💬' : '✉️'}</span>}
       chip={{
         label: manual ? 'מייל אישור' : 'תקשורת אוטומטית',
@@ -50,12 +70,26 @@ export default function CommunicationEventRow({ entry }) {
         ) : null
       }
     >
-      {wa ? 'נשלחה הודעת WhatsApp' : 'נשלח מייל'}
+      {lead}
       {d.recipientName ? ` אל ${d.recipientName}` : ''}
+      {/* The canonical delivery chip — one look tells the operator whether the
+          customer actually has this email. Only 'sent' reads as success. */}
+      {!wa && delivery && delivery.state !== 'sent' && (
+        <span
+          className={`mx-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ${DELIVERY_TONE[delivery.state]}`}
+          title={deliverySummaryHe(delivery)}
+        >
+          {DELIVERY_LABEL_HE[delivery.state]}
+        </span>
+      )}
       {d.subject && <span className="gos-detail"> · {d.subject}</span>}
       <span className="gos-detail"> · {d.eventName}{d.messageName ? ` — ${d.messageName}` : ''}</span>
       {manual && d.language && <span className="gos-detail"> · {d.language === 'en' ? 'English' : 'עברית'}</span>}
       {d.messageNumber != null && <span className="gos-meta font-mono"> · #{d.messageNumber}</span>}
+      {/* A failure names its reason inline — never make the operator dig. */}
+      {!wa && delivery?.state === 'failed' && delivery.failureReason && (
+        <span className="gos-detail text-red-700"> · {delivery.failureReason}</span>
+      )}
     </EventRowShell>
   );
 }

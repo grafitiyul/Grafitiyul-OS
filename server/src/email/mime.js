@@ -1,4 +1,5 @@
 import { stampBlockDirections } from '../../../shared/textDirection.mjs';
+import { normalizeEmailAddress } from '../../../shared/emailAddress.mjs';
 
 // MIME utilities for the Gmail mirror: parse the API's `full` payload tree
 // into { bodyText, bodyHtml, attachments } and build RFC 2822 messages for
@@ -90,8 +91,13 @@ export function parseAddressList(value) {
   return out;
 }
 
+// Delegates to THE canonical sanitizer (shared/emailAddress.mjs). It used to be
+// trim+lowercase, which let invisible bidi characters (U+200F & friends) reach
+// the To: header and get every message rejected by Gmail — deals
+// #27099/#27100. Kept as a named re-export so the many existing importers
+// (ingest, matching, routes/email) inherit the fix without a rename.
 export function normalizeEmail(v) {
-  return String(v || '').trim().toLowerCase();
+  return normalizeEmailAddress(v) || '';
 }
 
 // Re:/Fwd:/FW:/השב:/הועבר: prefixes (repeatedly) → bare subject for grouping.

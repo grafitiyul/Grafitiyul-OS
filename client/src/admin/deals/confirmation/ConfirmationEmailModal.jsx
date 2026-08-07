@@ -160,7 +160,7 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
 
   async function doSendRequest({ contactLanguageUpdated = false } = {}) {
     try {
-      await api.confirmationEmail.send(deal.id, {
+      const result = await api.confirmationEmail.send(deal.id, {
         overrideOverlay: temps || null,
         subject: subject.trim(),
         to: toEmail.trim(),
@@ -169,7 +169,9 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
         languageOverridden,
         contactLanguageUpdated: contactLanguageUpdated || contactLangUpdated,
       });
-      return { ok: true };
+      // The response carries the canonical delivery state — handed back so the
+      // caller's toast never claims more than actually happened.
+      return { ok: true, result };
     } catch (e) {
       const code = e.payload?.error;
       return {
@@ -198,7 +200,7 @@ export default function ConfirmationEmailModal({ deal, onClose, onSent }) {
         send: () => doSendRequest({ contactLanguageUpdated }),
       });
       if (out.sent) {
-        onSent?.();
+        onSent?.(out.result);
         onClose();
         return;
       }

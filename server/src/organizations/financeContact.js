@@ -25,6 +25,7 @@
 
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { normalizePhoneIntl } from '../whatsapp/phone.js';
+import { sanitizeEmailAddress, isEmailShaped } from '../../../shared/emailAddress.mjs';
 
 export const FINANCE_ORG_ROLE = 'איש כספים';
 
@@ -52,7 +53,13 @@ async function lockOrganization(tx, organizationId) {
 }
 
 // Match an existing Contact by the canonical identity rules, else create one.
-export async function resolveFinanceContact(tx, { name, email, phone }) {
+export async function resolveFinanceContact(tx, { name, email: rawEmail, phone }) {
+  // THE canonical sanitizer, applied before BOTH the match and the create — an
+  // invisible bidi character otherwise splits one person into two contacts and
+  // stores an address Gmail will reject (#27099/#27100).
+  const email = sanitizeEmailAddress(rawEmail) && isEmailShaped(rawEmail)
+    ? sanitizeEmailAddress(rawEmail)
+    : null;
   const wanted = normalizePhoneIntl(phone);
   if (wanted) {
     // Candidates narrowed by the last 7 digits, then canonical equality.

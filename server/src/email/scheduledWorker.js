@@ -42,6 +42,26 @@ function backoffMs(attempts) {
   return BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length) - 1] * 60_000;
 }
 
+// The failure reason an operator will actually read, on the בקרה card and in
+// the send archive. composedSend wraps every provider error as code
+// 'send_failed' and attaches the provider's own message as `detail` — storing
+// only the code sent the office hunting a phantom ("סיבת הכשל: send_failed"
+// told them nothing while Gmail was plainly saying the To: header was invalid).
+// Same rule as confirmation/failureReason.js: never report a failure with a
+// generic label when the real one is in hand.
+export function describeSendFailure(e) {
+  const code = e?.code || null;
+  const detail = String(e?.detail || '').trim();
+  const message = String(e?.message || '').trim();
+  // The provider's own words first; the message is the fallback (an uncoded
+  // throw still has to say something an operator can read).
+  const text = detail || message;
+  const joined = code
+    ? (text && text !== code ? `${code}: ${text}` : code)
+    : text || String(e);
+  return joined.slice(0, 300);
+}
+
 function publicOrigin() {
   return String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || 'https://app.grafitiyul.co.il';
 }
@@ -141,7 +161,7 @@ export async function deliverScheduledEmail(db, row, deps = {}) {
         attemptCount: attempts,
         lastAttemptAt: new Date(),
         nextRetryAt: exhausted ? null : new Date(Date.now() + backoffMs(attempts)),
-        failureReason: String(e?.code || e?.message || e).slice(0, 300),
+        failureReason: describeSendFailure(e),
         claimedAt: null,
         claimedBy: null,
       },

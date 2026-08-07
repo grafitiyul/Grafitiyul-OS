@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { emailFeedItemsForDeal, emailFeedItemsForContact } from '../email/timelineMerge.js';
+import { attachDeliveryToTimeline } from '../email/deliveryState.js';
 import { touchDealActivity } from '../timeline/events.js';
 
 // Reusable Timeline / Activity-Feed API. Every item is a TimelineEntry scoped to
@@ -73,6 +74,11 @@ router.get(
       orderBy: { createdAt: 'desc' },
       include: ENTRY_INCLUDE,
     });
+    // Outgoing-email entries carry the INTENT frozen at queue time. The truth
+    // lives on the queue row, so delivery state is resolved at READ time —
+    // same philosophy as the email merge below. Without this a queued-then-
+    // failed confirmation reads as "נשלח מייל" forever (#27099/#27100).
+    const withDelivery = await attachDeliveryToTimeline(entries);
     // Emails merge in at READ time (kind='email' pseudo-entries) — EmailMessage
     // stays the single source of truth, so linking/unlinking a thread is
     // reflected instantly with no copied rows. Chronology uses the mail's
@@ -80,13 +86,13 @@ router.get(
     if (subjectType === 'deal') {
       const emailItems = await emailFeedItemsForDeal(subjectId);
       if (emailItems.length) {
-        const merged = [...entries, ...emailItems].sort(
+        const merged = [...withDelivery, ...emailItems].sort(
           (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
         );
         return res.json(merged);
       }
     }
-    res.json(entries);
+    res.json(withDelivery);
   }),
 );
 
@@ -161,8 +167,11 @@ router.get(
       include: ENTRY_INCLUDE,
     });
 
+    // Same read-time delivery truth as the deal feed — a Contact/Organization
+    // page must never show a failed email as sent either.
+    const enriched = await attachDeliveryToTimeline(entries);
     // Tag each entry with its source relative to THIS page (direct vs related).
-    const tagged = entries.map((e) => {
+    const tagged = enriched.map((e) => {
       const direct = e.subjectType === subjectType && e.subjectId === subjectId;
       return {
         ...e,

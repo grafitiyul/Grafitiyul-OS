@@ -1,4 +1,5 @@
 import { isAirtableRecordId, isEmailLike } from '../../../shared/staffAssignmentDisplay.mjs';
+import { normalizeEmailAddress } from '../../../shared/emailAddress.mjs';
 
 // Generic historical-identity resolution. Old imported tours stored a guide's
 // EMAIL in `externalPersonId` (before any GOS PersonRef existed) and left
@@ -17,8 +18,10 @@ import { isAirtableRecordId, isEmailLike } from '../../../shared/staffAssignment
 //   * idempotent: re-running links nothing new and repairs nothing new
 //   * no row is created or deleted, ever
 
+// THE canonical sanitizer — historical staff links match on email equality, so
+// an invisible bidi character silently split one person into two.
 export function normalizeEmail(value) {
-  return String(value || '').trim().toLowerCase();
+  return normalizeEmailAddress(value) || '';
 }
 
 // Link every unlinked historical TourAssignment + PayrollEntry whose email-shaped

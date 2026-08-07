@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import ChannelSection from '../crm/common/ChannelSection.jsx';
+import { EMAIL_CHANNEL_PROPS } from '../crm/common/emailChannel.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 import { api } from '../../lib/api.js';
 import { COMM_LANGS } from './config.js';
@@ -206,6 +207,7 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
             items={contact.emails}
             placeholder="אימייל"
             ltr
+            {...EMAIL_CHANNEL_PROPS}
             onAdd={(value) => api.contacts.addEmail(contactId, { value })}
             onSetPrimary={(itemId) => api.contacts.updateEmail(itemId, { isPrimary: true })}
             onEditValue={(itemId, value) => api.contacts.updateEmail(itemId, { value })}

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { emailIntegrationConfigured, gmail } from './googleClient.js';
-import { buildRawMessage, htmlToText, normalizeEmail, normalizeSubject } from './mime.js';
+import { buildRawMessage, htmlToText, normalizeSubject } from './mime.js';
+import { toSendableAddress } from '../../../shared/emailAddress.mjs';
 import { sanitizeEmailHtml } from './sanitize.js';
 import { ingestGmailMessage } from './ingest.js';
 
@@ -23,11 +24,17 @@ function coded(code, extra = {}) {
   return err;
 }
 
+// Recipient addresses go through THE canonical sanitizer: invisible formatting
+// characters are REPAIRED (they carry no addressing meaning), and anything that
+// is still not a printable-ASCII addr-spec is DROPPED here rather than handed
+// to the queue. Dropping is what makes the caller's `no_recipient_email` fire
+// in front of the operator — the alternative is six silent Gmail 400s, which is
+// exactly how deals #27099/#27100 went unsent for a day.
 export function cleanRecipientList(input) {
   const out = [];
   for (const item of Array.isArray(input) ? input : []) {
-    const email = normalizeEmail(typeof item === 'string' ? item : item?.email);
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+    const email = toSendableAddress(typeof item === 'string' ? item : item?.email);
+    if (!email) continue;
     out.push({ email, name: (typeof item === 'object' && item?.name) || null });
   }
   return out;

@@ -34,7 +34,7 @@ test('not-won: transition runs exactly ONCE and before the send', async () => {
   });
   assert.deepEqual(calls, ['transition', 'send'], 'WON first, then send — never the reverse');
   assert.equal(calls.filter((c) => c === 'transition').length, 1);
-  assert.deepEqual(out, { transitioned: true, sent: true, error: null });
+  assert.deepEqual(out, { transitioned: true, sent: true, error: null, result: null });
 });
 
 test('already won: the transition is never called', async () => {

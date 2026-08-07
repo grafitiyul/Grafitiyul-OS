@@ -3,6 +3,8 @@ import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
+import EmailInputHint from '../common/EmailInputHint.jsx';
+import { sanitizeEmailAddress } from '../../lib/emailAddress.js';
 import { QUICK_CONTACT_ROLES, ROLE_LABELS } from './config.js';
 
 const EMPTY = { first: '', last: '', phone: '', email: '', role: '' };
@@ -45,8 +47,8 @@ export default function QuickAddContactDialog({ dealId, open, onClose, onAdded, 
       const contact = await api.contacts.create(contactNamesFromParts(f.first, f.last));
       // 2) Channels — primary phone (required) + optional email.
       await api.contacts.addPhone(contact.id, { value: f.phone.trim(), isPrimary: true });
-      if (f.email.trim()) {
-        await api.contacts.addEmail(contact.id, { value: f.email.trim(), isPrimary: true });
+      if (sanitizeEmailAddress(f.email)) {
+        await api.contacts.addEmail(contact.id, { value: sanitizeEmailAddress(f.email), isPrimary: true });
       }
       // 3) Link to the deal with the chosen operational role.
       await api.deals.addContact(dealId, {
@@ -105,6 +107,7 @@ export default function QuickAddContactDialog({ dealId, open, onClose, onAdded, 
           </Field>
           <Field label="אימייל">
             <input value={f.email} onChange={(e) => set('email', e.target.value)} dir="ltr" className={FIELD} />
+            <EmailInputHint value={f.email} />
           </Field>
         </div>
         <Field label="תפקיד">

@@ -64,6 +64,7 @@ import {
   silentWonPlan,
 } from '../deals/silentWon.js';
 import { sendConfirmationEmail } from '../confirmation/sendService.js';
+import { resolveDelivery } from '../email/deliveryState.js';
 import { hasActiveFillers } from '../confirmation/fillers.js';
 import { retryConfirmationAfterTourSetup } from '../confirmation/recovery.js';
 import { wonRecoveryState } from '../deals/wonRecovery.js';
@@ -1243,7 +1244,15 @@ router.post(
           actorUserId: req.adminAuth?.userId || null,
         });
         confirmationEmail = out.ok
-          ? { action: 'sent', sendId: out.sendId, subject: out.subject, sendKind: out.sendKind }
+          ? {
+            action: 'sent',
+            sendId: out.sendId,
+            subject: out.subject,
+            sendKind: out.sendKind,
+            // Canonical delivery state — the toast reports it verbatim.
+            delivery: await resolveDelivery(out.scheduledEmailId),
+            windowHold: out.windowHold || null,
+          }
           : { action: 'failed', error: out.error, warnings: out.warnings || null };
       }
     }

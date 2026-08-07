@@ -39,5 +39,12 @@ export async function runPrimaryAction({ dealStatus, transition, send }) {
     if (!t?.ok) return { transitioned: false, sent: false, error: t?.error || 'won_transition_failed' };
   }
   const s = await send();
-  return { transitioned: needsWon, sent: !!s?.ok, error: s?.ok ? null : s?.error || null };
+  return {
+    transitioned: needsWon,
+    sent: !!s?.ok,
+    error: s?.ok ? null : s?.error || null,
+    // The send response travels back so the caller's toast can state the
+    // CANONICAL delivery state instead of assuming success.
+    result: s?.result || null,
+  };
 }

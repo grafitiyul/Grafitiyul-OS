@@ -3,6 +3,8 @@ import { api } from '../../lib/api.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
+import EmailInputHint from '../common/EmailInputHint.jsx';
+import { sanitizeEmailAddress } from '../../lib/emailAddress.js';
 import { contactDisplayName, presetOrgForContact } from './createDealPreset.js';
 
 const MODAL_INPUT =
@@ -122,8 +124,8 @@ export default function CreateDealModal({
       } else {
         const contact = await api.contacts.create(contactNamesFromFull(fullName));
         await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
-        if (email.trim()) {
-          await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
+        if (sanitizeEmailAddress(email)) {
+          await api.contacts.addEmail(contact.id, { value: sanitizeEmailAddress(email), isPrimary: true });
         }
         contactId = contact.id;
       }
@@ -226,6 +228,7 @@ export default function CreateDealModal({
                 </Field>
                 <Field label="אימייל">
                   <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" className={MODAL_INPUT} />
+            <EmailInputHint value={email} />
                 </Field>
               </div>
             </>

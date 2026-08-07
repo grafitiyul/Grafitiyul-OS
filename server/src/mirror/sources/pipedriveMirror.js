@@ -13,6 +13,7 @@
 import { PD_FIELD_KEYS } from '../../migration/import/marketingImport.js';
 import { reconcileAppendOnly } from '../merge.js';
 import { normalizePhoneIntl } from '../../whatsapp/phone.js';
+import { sanitizeEmailAddress, normalizeEmailAddress } from '../../../../shared/emailAddress.mjs';
 import { ACTIVITY_TYPE_MAP, DEAL_FIELDS, ORG_FIELDS, ORG_TYPE_LABELS, PERSON_FIELDS, stageKeyForPipedriveStage } from './pipedriveFields.js';
 
 const str = (v) => {
@@ -285,8 +286,10 @@ export function contactAdapter() {
       const existingEmails = await db.contactEmail.findMany({ where: { contactId: id }, select: { value: true, sortOrder: true } });
       const emailPlan = reconcileAppendOnly({
         current: existingEmails.map((e) => e.value),
-        incoming: channels.emails || [],
-        isSame: (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(),
+        // Sanitized on the way in — otherwise an invisible bidi character makes
+        // an address that already exists look NEW and appends a duplicate.
+        incoming: (channels.emails || []).map(sanitizeEmailAddress).filter(Boolean),
+        isSame: (a, b) => normalizeEmailAddress(a) === normalizeEmailAddress(b),
       });
       let emailOrder = existingEmails.reduce((m, e) => Math.max(m, e.sortOrder ?? 0), 0);
       for (const value of emailPlan.add) {
