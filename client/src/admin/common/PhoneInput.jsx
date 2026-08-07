@@ -20,7 +20,7 @@ export default function PhoneInput({ value, onChange, placeholder, autoFocus, id
         dir="ltr"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder || '+972 50-000-0000'}
+        placeholder={placeholder || '050-000-0000'}
         autoFocus={autoFocus}
         className="h-10 w-full rounded-lg border border-gray-300 pl-8 pr-3 text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
       />
