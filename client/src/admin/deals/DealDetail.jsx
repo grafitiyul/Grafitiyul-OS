@@ -67,6 +67,7 @@ import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import WonRecoveryBar from './WonRecoveryBar.jsx';
 import PostPaymentCompletionModal from './PostPaymentCompletionModal.jsx';
+import { deleteBlockedMessage } from './deleteBlocked.js';
 import { fmtTourDate } from '../tours/config.js';
 
 const INPUT =
@@ -813,7 +814,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       await api.deals.remove(id);
       navigate('/admin/crm/deals');
     } catch (e) {
-      alert('שגיאה במחיקה: ' + e.message);
+      alert(deleteBlockedMessage(e));
     }
   }
 

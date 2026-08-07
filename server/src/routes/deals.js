@@ -52,6 +52,7 @@ import {
 } from '../deals/resolveActivityType.js';
 import { stampSettledRegistration } from '../tours/registrations.js';
 import { clearPostPaymentCompletion } from '../deals/postPaymentReview.js';
+import { dealDeletionBlockers, clearDeletableDealRefs } from '../deals/deleteGuard.js';
 import { duplicateDeal } from '../deals/duplicateDeal.js';
 import { transitionDealToWon, emitWonTransitionEffects } from '../deals/wonTransition.js';
 import {
@@ -1838,15 +1839,25 @@ router.post(
 router.delete(
   '/:id',
   handle(async (req, res) => {
-    // Tour bookings (any status — history included) block deletion by product
-    // rule + DB Restrict: operational work is never silently destroyed. The
-    // deal must be disconnected from its tour first.
-    const bookingCount = await prisma.booking.count({ where: { dealId: req.params.id } });
-    if (bookingCount > 0) {
-      return res.status(409).json({ error: 'deal_has_tour_bookings' });
+    // Deletion is blocked by LIVE dependencies only — an active/orphaned
+    // booking, held seats, or accounting records (deals/deleteGuard.js). A
+    // CANCELLED booking is history: it holds no seat, no tour and no money, and
+    // refusing over it made a correctly-reopened deal permanently undeletable.
+    const blockers = await dealDeletionBlockers(prisma, req.params.id);
+    if (blockers.length) {
+      return res.status(409).json({ error: 'deal_not_deletable', blockers });
     }
-    // DealContacts cascade. Organizations/contacts/stages are not deleted.
-    await prisma.deal.delete({ where: { id: req.params.id } });
+    // Cancelled bookings cannot be orphaned (non-null dealId + ON DELETE
+    // RESTRICT), so they are cleared through the canonical path in the SAME
+    // transaction as the delete. The tour's timeline and the cancelled
+    // registration keep the audit trail. Everything else cascades or nulls out.
+    await prisma.$transaction(async (tx) => {
+      await clearDeletableDealRefs(tx, req.params.id, {
+        actorUserId: req.adminAuth?.userId || null,
+        actorName: req.adminAuth?.userName || null,
+      });
+      await tx.deal.delete({ where: { id: req.params.id } });
+    });
     res.status(204).end();
   }),
 );

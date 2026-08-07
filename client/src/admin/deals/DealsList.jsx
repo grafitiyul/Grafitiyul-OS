@@ -11,6 +11,7 @@ import Pager from '../common/Pager.jsx';
 import { useListState, useListScrollRestore, useListOrigin } from '../common/useListState.js';
 import useDebouncedValue from '../../shell/search/useDebouncedValue.js';
 import CreateDealModal from './CreateDealModal.jsx';
+import { deleteBlockedMessage } from './deleteBlocked.js';
 
 // Deals — the CRM hub's primary tab. Operational list: compact summary +
 // dominant search + a roomy, user-configurable table. OPEN deals come first
@@ -416,7 +417,7 @@ export default function DealsList() {
                       onDelete={async () => {
                         if (!confirm(`למחוק את הדיל "${d.title}"?`)) return;
                         try { await api.deals.remove(d.id); setRefreshKey((k) => k + 1); }
-                        catch (e) { alert('שגיאה: ' + e.message); }
+                        catch (e) { alert(deleteBlockedMessage(e)); }
                       }}
                     />
                   ))}
