@@ -55,6 +55,57 @@ const SEND_ERROR = {
 
 const roleLabel = (r) => (r.isLead ? 'מדריך ראשי' : r.role === 'guide' ? 'מדריך' : null);
 
+// Every failure the resolve endpoint can return, in the operator's language.
+//
+// This replaced a single catch-all sentence. "טעינת הנוסח נכשלה — נסו שוב"
+// told a reviewer nothing they could act on: retrying does not add an English
+// body, does not re-assign a guide and does not undo a deleted template. An
+// unmapped failure now still reports its HTTP status, so the next report names
+// something specific instead of the same dead end.
+const RESOLVE_ERROR_HE = {
+  language_unavailable:
+    'לתבנית הזו אין נוסח בשפה הזו. אפשר להחליף שפה, לבחור תבנית אחרת, או פשוט לכתוב הודעה חופשית.',
+  not_found: 'התבנית הזו כבר לא קיימת (ייתכן שנמחקה או כובתה). בחרו תבנית אחרת או כתבו חופשי.',
+  template_required: 'לא נבחרה תבנית.',
+  recipient_required: 'לא נבחר מדריך — בחרו למי ההודעה נשלחת.',
+  recipient_not_on_tour: 'המדריך שנבחר כבר לא משויך לסיור הזה. בחרו מדריך אחר.',
+  review_item_not_found: 'כרטיס המשימה לא נמצא. רעננו את הדף ונסו שוב.',
+  tour_not_found: 'הסיור לא נמצא. רעננו את הדף ונסו שוב.',
+  tour_required: 'הכרטיס הזה לא מקושר לסיור, ולכן אי אפשר להרכיב נוסח אוטומטי. אפשר לכתוב הודעה חופשית.',
+};
+
+export function resolveErrorText(e) {
+  const code = e?.payload?.error;
+  if (code && RESOLVE_ERROR_HE[code]) return RESOLVE_ERROR_HE[code];
+  if (code) return `טעינת הנוסח נכשלה (${code}). אפשר לכתוב הודעה חופשית.`;
+  if (e?.status) return `טעינת הנוסח נכשלה (שגיאה ${e.status}). אפשר לכתוב הודעה חופשית.`;
+  return 'טעינת הנוסח נכשלה — ככל הנראה תקלת רשת. אפשר לנסות שוב או לכתוב הודעה חופשית.';
+}
+
+/**
+ * The language a template can ACTUALLY be opened in.
+ *
+ * The guide's own preference leads — that is who is reading it. But a template
+ * with no body in that language cannot be rendered in it, and asking the server
+ * for it produces a failed load instead of a usable composer. So a template
+ * that has only the other language opens in the other language, and the caller
+ * says so out loud rather than silently substituting.
+ *
+ * Returns { lang, switched } — `switched` is true when the preference could not
+ * be honoured, which the UI must state.
+ */
+export function openableLanguage(template, preferred) {
+  const want = preferred === 'en' ? 'en' : 'he';
+  if (!template) return { lang: want, switched: false };
+  const has = { he: !!template.hasHe, en: !!template.hasEn };
+  if (has[want]) return { lang: want, switched: false };
+  const other = want === 'he' ? 'en' : 'he';
+  // Neither language exists (a template that should not be selectable at all):
+  // keep the preference and let the server's honest 409 explain it.
+  if (!has[other]) return { lang: want, switched: false };
+  return { lang: other, switched: true };
+}
+
 export default function GuideMessageDialog({ open, tourEventId = null, reviewItemId = null, onClose, onSent }) {
   const [subject, setSubject] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -71,6 +122,9 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   const [resolveError, setResolveError] = useState(null);
   const [missingVars, setMissingVars] = useState([]);
   const [pendingSwitch, setPendingSwitch] = useState(null);
+  // { from, to } when the guide's preferred language had no body on this
+  // template and the composer opened in the other one. Stated, never silent.
+  const [langSwitched, setLangSwitched] = useState(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
@@ -130,6 +184,7 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     setSendError(null);
     setOutcome(null);
     setPendingSwitch(null);
+    setLangSwitched(null);
     setEmojiOpen(false);
     setAutoLoaded(false);
     accountTouched.current = false;
@@ -203,11 +258,11 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
         setSeedText(r.text || '');
         setMissingVars(r.missingVariables || []);
       } catch (e) {
-        setResolveError(
-          e?.payload?.error === 'language_unavailable'
-            ? 'לנוסח הזה אין תוכן בשפה שנבחרה. אפשר לבחור נוסח אחר, להחליף שפה, או פשוט לכתוב הודעה חופשית.'
-            : 'טעינת הנוסח נכשלה — נסו שוב.',
-        );
+        // The operator must be told WHAT went wrong, not that something did.
+        // A generic "טעינת הנוסח נכשלה" sent a real reviewer to us with no way
+        // to act on it — every code the endpoint can return now says its own
+        // sentence, and anything unrecognised at least reports its status.
+        setResolveError(resolveErrorText(e));
       } finally {
         setResolving(false);
       }
@@ -238,12 +293,21 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   }
 
   function applyChoice(nextTemplateId, nextLang) {
+    const t = (templates || []).find((x) => x.id === nextTemplateId) || null;
+    // NEVER ask for a language this template does not have. The guide's own
+    // preference leads, but a Hebrew-only template opened for an
+    // English-preferring guide used to produce a failed load instead of a
+    // usable composer — the operator got an error where a working draft was
+    // one language-switch away. It opens in the language that exists, and says
+    // that it did.
+    const { lang: openLang, switched } = openableLanguage(t, nextLang);
     setTemplateId(nextTemplateId);
-    setLang(nextLang);
+    setLang(openLang);
+    setLangSwitched(switched ? { from: nextLang, to: openLang } : null);
     setOutcome(null);
     setSendError(null);
-    applyTemplateAccount((templates || []).find((t) => t.id === nextTemplateId) || null);
-    if (nextTemplateId) resolve(nextTemplateId, nextLang, personRefId);
+    applyTemplateAccount(t);
+    if (nextTemplateId) resolve(nextTemplateId, openLang, personRefId);
     else {
       // "no template" is a legitimate choice: an empty editor to write in.
       setText('');
@@ -508,6 +572,19 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
                   אין עדיין תבניות למדריכים. אפשר לכתוב הודעה חופשית, או להוסיף תבנית ב״עריכת תבניות״.
                 </p>
               ) : null}
+              {/* The preference could not be honoured — said out loud, with
+                  what was wanted and what opened instead. Never a silent
+                  substitution of the wrong language. */}
+              {langSwitched ? (
+                <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[12.5px] text-blue-900">
+                  {recipient?.name || 'המדריך'} מוגדר ל
+                  {langSwitched.from === 'en' ? 'אנגלית' : 'עברית'}, אבל לתבנית הזו יש נוסח רק ב
+                  {langSwitched.to === 'en' ? 'אנגלית' : 'עברית'} — היא נפתחה בשפה הקיימת.
+                  אפשר להשלים את השפה החסרה ב״עריכת תבניות״, לבחור תבנית אחרת, או לכתוב חופשי.
+                </p>
+              ) : null}
+              {/* A failed load is never a dead end: the editor below stays
+                  open and writable, and the message says so. */}
               {resolveError ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
                   {resolveError}

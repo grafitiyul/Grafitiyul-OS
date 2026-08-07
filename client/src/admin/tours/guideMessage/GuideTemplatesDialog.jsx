@@ -143,15 +143,23 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
           <p className="mt-1 text-[11.5px] text-gray-400">השם מופיע בבורר התבניות בלבד. המדריך לא רואה אותו.</p>
         </div>
 
-        {/* "שליחה דרך" — the number this template is normally sent from. The
-            options are the CANONICAL account list (same rows, same labels,
+        {/* "שליחה דרך" — the number this template is normally sent from.
+            Framed as its own SECTION rather than a bare label: it shipped as a
+            plain field between the name input and the language tabs, and the
+            operator it was built for could not find it. A control nobody sees
+            is a control that does not exist.
+            The options are the CANONICAL account list (same rows, same labels,
             same order as every other sending surface); the stored value is the
             account id. It is a PRESELECTION, not a lock: the composer lets the
-            operator send this one message from another number without touching
-            the template. */}
-        <div>
-          <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">שליחה דרך</label>
+            operator send one message from another number without touching the
+            template. */}
+        <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3.5">
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+            <h3 className="text-[13px] font-semibold text-gray-900">שליחה דרך</h3>
+            <span className="text-[11.5px] text-gray-500">מאיזה מספר תישלח ההודעה כשבוחרים את התבנית</span>
+          </div>
           <select
+            aria-label="מספר הוואטסאפ שממנו נשלחת התבנית"
             value={draft.sendAccountId || ''}
             onChange={(e) => setDraft((d) => ({ ...d, sendAccountId: e.target.value }))}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none"
@@ -167,15 +175,19 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
               </option>
             ))}
           </select>
-          <p className="mt-1 text-[11.5px] text-gray-400">
-            המספר שממנו תישלח ההודעה כשבוחרים את התבנית. אפשר לשנות לשליחה בודדת בלי לשנות את התבנית.
+          {/* The effective answer, stated in words — an operator should never
+              have to work out what "inherit" resolves to. */}
+          <p className="mt-2 text-[12px] text-gray-600">
+            תישלח מ־<b className="text-gray-900">{chosenAccount?.label || '—'}</b>
+            {draft.sendAccountId ? '' : ' (ברירת מחדל)'}
+            <span className="text-gray-400"> · אפשר לשנות לשליחה בודדת בלי לשנות את התבנית</span>
           </p>
           {chosenAccount && !chosenAccount.connected && (
             <p className="mt-1 text-[11.5px] font-medium text-amber-700">
               ⚠ המספר הזה מנותק כרגע. הודעה שתישלח דרכו תמתין בתור עד שיתחבר — המערכת לא תשלח מהמספר השני.
             </p>
           )}
-        </div>
+        </section>
 
         <div className="flex items-center gap-1 border-b border-gray-200">
           {LANG_TABS.map((t) => {
