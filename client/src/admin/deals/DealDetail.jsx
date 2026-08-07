@@ -70,6 +70,7 @@ import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import WonRecoveryBar from './WonRecoveryBar.jsx';
 import ActivityConversionDialog from './ActivityConversionDialog.jsx';
 import PostPaymentCompletionModal from './PostPaymentCompletionModal.jsx';
+import WonCompletionDialog from './WonCompletionDialog.jsx';
 import { deleteBlockedMessage } from './deleteBlocked.js';
 import { fmtTourDate } from '../tours/config.js';
 
@@ -196,7 +197,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [historicalPricingOpen, setHistoricalPricingOpen] = useState(false);
   // Tours lifecycle dialogs. WON is gated server-side (declarative required
   // fields, no draft tours) — these render the server's answers:
-  //   • wonMissing: the 422 checklist ("להשלים לפני WON")
+  //   • wonCompletion: the WON completion FORM. It opens on the server's 422
+  //     and the operator finishes the missing fields inside it — the checklist
+  //     is still the server's, but it is now editable instead of read-only, and
+  //     saving continues straight into the same WON transition.
+  //     'recovery' = the deal is already WON and the tour is what is missing;
+  //     the same form serves it (no second dialog for the same question).
+  //   • wonMissing: the read-only 422 checklist — kept ONLY for the surfaces
+  //     that have no completion form (WON recovery outside the deal page).
   //   • slotPickerFor: 'won' (first WON of a group deal) | 'assign' (שבץ/החלף)
   //   • reopenConfirmTour: REOPEN always cancels the tour (product decision) —
   //     this is the explicit confirmation before it happens. The server keeps
@@ -204,7 +212,13 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   //     cancel for now.
   //   • lostPending: LOST needs explicit tour-cancel confirmation
   const [wonMissing, setWonMissing] = useState(null);
+  const [wonCompletionOpen, setWonCompletionOpen] = useState(false);
   const [slotPickerFor, setSlotPickerFor] = useState(null);
+  // Fields the completion form filled but could not save yet, because the deal
+  // turned out to be a GROUP deal that still needs a slot. They ride along with
+  // the slot into the ONE canonical write, so nothing the operator typed is
+  // lost between the two dialogs.
+  const [wonPendingPatch, setWonPendingPatch] = useState(null);
   // "אחר כך" on the post-payment completion modal — per deal, per session only.
   const [ppcDismissed, setPpcDismissed] = useState(null);
   // Group registration progressive modal: null | { section }
@@ -605,8 +619,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     } catch (e) {
       const code = e.payload?.error;
       // Tours lifecycle answers (product decisions — see server tourFromDeal.js).
+      // Missing fields are no longer a dead end: the completion form opens on
+      // the SAME server verdict, the operator finishes them there, and WON
+      // continues from inside it. No second click on WON.
       if (status === 'won' && code === 'won_requirements_missing') {
-        setWonMissing(e.payload.missing || []);
+        setWonCompletionOpen(true);
         return;
       }
       if (status === 'won' && code === 'tour_slot_required') {
@@ -629,7 +646,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     try {
       let res = null;
       if (slotPickerFor === 'won') {
-        await api.deals.update(id, { status: 'won', tourEventId, allowOverbook });
+        // The completion form's fields (if it opened) travel in the SAME
+        // request as the status change — one transaction, one gate check.
+        await api.deals.update(id, { ...(wonPendingPatch || {}), status: 'won', tourEventId, allowOverbook });
+        setWonPendingPatch(null);
       } else if (slotPickerFor === 'recovery') {
         res = await api.deals.completeTourSetup(id, { tourEventId, allowOverbook });
       } else {
@@ -1581,7 +1601,27 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       )}
 
       {/* ── Tours lifecycle dialogs ── */}
-      {/* WON refused: the server's declarative checklist of missing fields. */}
+      {/* WON refused for missing fields: the SAME server verdict, as a form.
+          The operator completes what is missing and the deal closes from here —
+          no closing this, editing elsewhere, and pressing WON again. */}
+      <WonCompletionDialog
+        open={wonCompletionOpen}
+        deal={deal}
+        onClose={() => { setWonCompletionOpen(false); setWonPendingPatch(null); }}
+        onWon={refresh}
+        onNeedSlot={(patch) => {
+          // A group deal: the slot is a real choice with real capacity and is
+          // never guessed. Hand off to the canonical picker, carrying the
+          // fields the operator just filled.
+          setWonPendingPatch(patch);
+          setWonCompletionOpen(false);
+          setSlotPickerFor('won');
+        }}
+      />
+
+      {/* WON recovery (deal already WON, tour missing): the read-only checklist
+          — that flow has its own bar and its own actions, and completing the
+          fields there happens on the tour card behind it. */}
       <Dialog
         open={!!wonMissing}
         onClose={() => setWonMissing(null)}

@@ -62,6 +62,18 @@ export const WON_REQUIRED_FIELDS = {
   group: ['activityType', 'participants'],
 };
 
+// Every deal field ANY WON list gates on — derived from the lists above rather
+// than typed out again, so a field added to a list is automatically completable
+// in the WON completion form and cannot be forgotten there.
+//
+// It doubles as the allow-list for the readiness preflight: a draft may propose
+// values for exactly these, and nothing else. `activityType` is included on
+// purpose — it is the one the operator most often has to answer, even though
+// the transition resolves it rather than demanding it.
+export const WON_DRAFT_FIELDS = [
+  ...new Set(Object.values(WON_REQUIRED_FIELDS).flat()),
+];
+
 // Group Tour Slot creation (Tours screen / inline at WON). Product decision:
 // workshop location and participants are NOT required for a slot — the slot's
 // city derives from the chosen variant.

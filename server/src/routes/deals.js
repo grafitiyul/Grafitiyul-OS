@@ -30,6 +30,7 @@ import {
   copyTourStateToPlan,
   GROUP_LOCKED_FIELDS,
 } from '../tours/tourFromDeal.js';
+import { WON_DRAFT_FIELDS } from '../tours/requiredFields.js';
 import {
   holdRegistrationForDeal,
   recordPaymentLinkOutcome,
@@ -1538,6 +1539,65 @@ router.get(
       // dialog needs, computed from live state rather than assumed.
       hasActiveBooking: !!activeBooking,
       alreadyHistoricallyCorrected: !!deal.historicalWonAt,
+    });
+  }),
+);
+
+// ── "What would WON require, if I saved these values?" ───────────────────────
+//
+// READ-ONLY preflight for the WON completion form. It writes nothing; it just
+// answers the question the operator is about to ask, against a DRAFT merged
+// over the stored deal.
+//
+// It exists because the completion form has to react LIVE: choosing "קבוצתי"
+// changes the requirement set, and a form that showed a stale checklist would
+// be a second, quietly-wrong copy of the gate. So this runs the SAME two calls
+// the PUT does, in the same order, on the same merged shape:
+//
+//   resolveActivityType({ ...deal, ...draft })   → the type WON will use
+//   wonGate({ ...deal, ...draft, activityType }) → what still blocks it
+//
+// The verdict is therefore what the transition will actually decide, not a
+// prediction of it. The PUT still re-runs both against fresh server state —
+// this never substitutes for that.
+router.post(
+  '/:id/won-readiness',
+  handle(async (req, res) => {
+    const existing = await prisma.deal.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+
+    const b = req.body || {};
+    const draft = b.draft && typeof b.draft === 'object' ? b.draft : {};
+    const tourEventId = b.tourEventId ? String(b.tourEventId) : null;
+
+    // Only fields the gate actually reads may be drafted here — a readiness
+    // probe is not a back door for arbitrary deal state.
+    const merged = { ...existing };
+    for (const f of WON_DRAFT_FIELDS) {
+      if (draft[f] === undefined) continue;
+      merged[f] = f === 'participants'
+        ? (draft[f] === '' || draft[f] === null ? null : Number(draft[f]))
+        : (draft[f] || null);
+    }
+
+    const slot = tourEventId
+      ? await prisma.tourEvent.findUnique({ where: { id: tourEventId }, select: { kind: true } })
+      : null;
+    const resolved = resolveActivityType(merged, { groupSlotSelected: slot?.kind === 'group_slot' });
+    const gate = wonGate({ ...merged, activityType: resolved.activityType }, tourEventId);
+
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      status: existing.status,
+      activityType: resolved.activityType,
+      // True when NOBODY chose this type — the system resolved one so the sale
+      // is never blocked. The form shows it as an assumption to confirm, and
+      // never as a decision a person made.
+      activityTypeAssumed: resolved.assumed,
+      activityTypeReason: resolved.reason,
+      missing: gate.missing,
+      needsSlot: gate.needsSlot,
+      ready: gate.missing.length === 0 && !gate.needsSlot,
     });
   }),
 );

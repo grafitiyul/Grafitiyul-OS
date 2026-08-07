@@ -497,6 +497,12 @@ export const api = {
     list: (filters) => request(`/api/deals${qs(filters)}`),
     summary: (filters) => request(`/api/deals/summary${qs(filters)}`),
     get: (id) => request(`/api/deals/${id}`),
+    // READ-ONLY preflight: "if I saved this draft, what would WON still
+    // require?" — the server runs the same resolveActivityType + wonGate pair
+    // the transition runs. Writes nothing; never a substitute for the gate the
+    // PUT re-runs against fresh state.
+    wonReadiness: (id, body) =>
+      request(`/api/deals/${id}/won-readiness`, { method: 'POST', body: JSON.stringify(body || {}) }),
     create: (data) =>
       request('/api/deals', { method: 'POST', body: JSON.stringify(data) }),
     // Server-side commercial-template copy (contacts, Builder, plan included;
