@@ -1,4 +1,4 @@
-import { money, fmtWhen, STATUS_HE, TOUR_KIND_HE } from './mergeFormat.js';
+import { money, fmtWhen, STATUS_HE, TOUR_KIND_HE, BLOCKER_HE } from './mergeFormat.js';
 
 // The decisions step.
 //
@@ -20,11 +20,33 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
     commercial.needsChoice || participants.needsChoice || operational.needsChoice
     || status.needsChoice || fieldConflicts.length > 0;
 
+  const openBlockers = preview.blockers || [];
+
   return (
     <div className={`space-y-5 ${loading ? 'opacity-60' : ''}`}>
-      {!anyQuestion && (
+      {!anyQuestion && !openBlockers.length && (
         <div className="rounded-lg bg-emerald-50 px-3 py-2 text-[12.5px] text-emerald-800">
           אין התנגשויות שדורשות הכרעה. אפשר לעבור לסקירה הסופית.
+        </div>
+      )}
+
+      {/* WHAT is still open, at the top of the step where the decisions are.
+          Without it the operator meets a disabled "המשך" and has to hunt the
+          screen for the reason — the blockers were only listed on the final
+          review, which is the one place they cannot get to. */}
+      {openBlockers.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+          <div className="text-[12.5px] font-semibold text-amber-900">
+            נותרו {openBlockers.length} החלטות להשלמה:
+          </div>
+          <ul className="mt-1 space-y-0.5 text-[12px] text-amber-800">
+            {openBlockers.map((b, i) => (
+              <li key={i}>
+                • {BLOCKER_HE[b.code] || b.code}
+                {b.fields?.length ? `: ${b.fields.map((f) => f.labelHe).join(', ')}` : ''}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -226,27 +248,50 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
 
       {/* ── field conflicts ────────────────────────────────────────────── */}
       {fieldConflicts.length > 0 && (
-        <Block title="שדות סותרים" hint="בשני הדילים יש ערך שונה. יש לבחור מה נכון לעסקה המאוחדת.">
+        <Block
+          title="שדות סותרים"
+          hint="בשני הדילים יש ערך שונה. יש לבחור מה נכון לעסקה המאוחדת."
+        >
           <div className="space-y-2">
-            {fieldConflicts.map((f) => (
-              <div key={f.key} className="rounded-lg border border-gray-200 p-2">
-                <div className="mb-1 text-[12px] font-semibold text-gray-700">{f.labelHe}</div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <MiniChoice
-                    on={(decisions.fields?.[f.key] || 'survivor') === 'survivor'}
-                    onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'survivor' } })}
-                    text={displayFieldValue(f, 'survivor', preview)}
-                    sub={`דיל #${preview.survivor.orderNo}`}
-                  />
-                  <MiniChoice
-                    on={decisions.fields?.[f.key] === 'other'}
-                    onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'other' } })}
-                    text={displayFieldValue(f, 'other', preview)}
-                    sub={`דיל #${preview.other.orderNo}`}
-                  />
+            {/* An UNANSWERED row shows NEITHER option selected.
+                It used to pre-select the survivor's side, which made a row that
+                still blocked the merge look already decided — the operator saw
+                a chosen value, a disabled "המשך", and no way to tell which row
+                wanted attention. The default value is still the survivor's (the
+                server resolves it that way); what changed is that the SCREEN no
+                longer claims a decision the operator has not made. */}
+            {fieldConflicts.map((f) => {
+              const answered = decisions.fields?.[f.key];
+              return (
+                <div
+                  key={f.key}
+                  className={`rounded-lg border p-2 ${answered ? 'border-gray-200' : 'border-amber-300 bg-amber-50/40'}`}
+                >
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-[12px] font-semibold text-gray-700">{f.labelHe}</span>
+                    {!answered && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                        טרם נבחר
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <MiniChoice
+                      on={answered === 'survivor'}
+                      onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'survivor' } })}
+                      text={displayFieldValue(f, 'survivor', preview)}
+                      sub={`דיל #${preview.survivor.orderNo}`}
+                    />
+                    <MiniChoice
+                      on={answered === 'other'}
+                      onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'other' } })}
+                      text={displayFieldValue(f, 'other', preview)}
+                      sub={`דיל #${preview.other.orderNo}`}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Block>
       )}
