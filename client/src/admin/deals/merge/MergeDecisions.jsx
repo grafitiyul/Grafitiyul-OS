@@ -307,14 +307,30 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
       {tasks.other.length > 0 && (
         <Block
           title="משימות פתוחות בדיל השני"
-          hint="משימות פתוחות הן עבודה שעוד צריך לעשות. ברירת המחדל מעבירה אותן לדיל שנשאר — אף משימה לא משוכפלת."
+          hint="משימות פתוחות הן עבודה שעוד צריך לעשות, ולכן הן עוברות לדיל שנשאר. משימה אוטומטית שכבר קיימת בדיל שנשאר תיסגר ככפילות — אפשר לשנות כל שורה."
         >
           <div className="space-y-1">
-            {tasks.other.map((t) => (
+            {tasks.other.map((t) => {
+              // The server's per-task suggestion (mergeResolve.suggestTaskActions):
+              // 'move' for real work, 'close_duplicate' where the survivor
+              // already has an open task of the same type.
+              const s = (tasks.suggestions || []).find((x) => x.id === t.id);
+              const value = decisions.tasks?.[t.id] || s?.suggested || 'move';
+              return (
               <div key={t.id} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5">
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-gray-800">{t.title}</span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-gray-800">
+                  {t.title}
+                  {s?.duplicate && (
+                    <span
+                      className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                      title={s.reasonHe || undefined}
+                    >
+                      כפילות
+                    </span>
+                  )}
+                </span>
                 <select
-                  value={decisions.tasks?.[t.id] || 'move'}
+                  value={value}
                   onChange={(e) => onPatch({ tasks: { ...(decisions.tasks || {}), [t.id]: e.target.value } })}
                   className="rounded border border-gray-300 px-2 py-1 text-[12px]"
                 >
@@ -323,7 +339,8 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
                   <option value="keep">להשאיר בדיל המאוחד</option>
                 </select>
               </div>
-            ))}
+              );
+            })}
           </div>
         </Block>
       )}

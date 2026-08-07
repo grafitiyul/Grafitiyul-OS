@@ -23,6 +23,8 @@ import {
   composeMergedLines,
   buildCombineCandidates,
   resolveContacts,
+  suggestTaskActions,
+  resolveTaskAction,
 } from './mergeResolve.js';
 
 const field = (key) => MERGE_FIELDS.find((f) => f.key === key);
@@ -269,6 +271,58 @@ test('combine keeps ONLY the selected lines', () => {
   });
   assert.deepEqual(rows.map((r) => r._sourceLineId), ['s1', 'o1']);
   assert.deepEqual(rows.map((r) => r.sortOrder), [0, 1], 'ordering is re-based, never inherited');
+});
+
+// ── open tasks ──────────────────────────────────────────────────────────────
+
+const task = (over) => ({ id: 't1', title: 'שיחה ראשונית', taskTypeId: 'tt_first_call', dueDate: null, ...over });
+
+test('real work MOVES to the survivor by default', () => {
+  const [s] = suggestTaskActions([], [task({ id: 'x', title: 'להחזיר טלפון', taskTypeId: 'tt_call' })]);
+  assert.equal(s.suggested, 'move');
+  assert.equal(s.duplicate, false);
+});
+
+test('an AUTOMATIC task the survivor already has open defaults to close-as-duplicate', () => {
+  // The production finding: merging two fresh leads left the survivor with two
+  // identical "שיחה ראשונית" tasks, breaking autoTasks' own one-per-deal rule.
+  const [s] = suggestTaskActions([task({ id: 'own' })], [task({ id: 'other' })]);
+  assert.equal(s.duplicate, true);
+  assert.equal(s.suggested, 'close_duplicate');
+  assert.ok(s.reasonHe, 'the operator is told WHY it is proposed as a duplicate');
+});
+
+test('the same TYPE is what makes a duplicate, not a similar title', () => {
+  const [s] = suggestTaskActions(
+    [task({ id: 'own', title: 'שיחה ראשונית', taskTypeId: 'tt_first_call' })],
+    [task({ id: 'other', title: 'שיחה ראשונית עם הלקוח', taskTypeId: 'tt_first_call' })],
+  );
+  assert.equal(s.suggested, 'close_duplicate', 'differently worded, same type → still one obligation');
+});
+
+test('typeless tasks fall back to an EXACT title match, never a fuzzy one', () => {
+  const exact = suggestTaskActions(
+    [{ id: 'a', title: 'לתאם מדריך', taskTypeId: null }],
+    [{ id: 'b', title: 'לתאם מדריך', taskTypeId: null }],
+  );
+  assert.equal(exact[0].suggested, 'close_duplicate');
+  const similar = suggestTaskActions(
+    [{ id: 'a', title: 'לתאם מדריך', taskTypeId: null }],
+    [{ id: 'b', title: 'לתאם מדריך לסיור השני', taskTypeId: null }],
+  );
+  assert.equal(similar[0].suggested, 'move', 'guessing would close real work by accident');
+});
+
+test('the operator always overrides the suggestion', () => {
+  const [s] = suggestTaskActions([task({ id: 'own' })], [task({ id: 'other' })]);
+  assert.equal(resolveTaskAction(s, undefined), 'close_duplicate', 'the suggestion applies when unanswered');
+  assert.equal(resolveTaskAction(s, 'move'), 'move');
+  assert.equal(resolveTaskAction(s, 'keep'), 'keep');
+  assert.equal(resolveTaskAction(s, 'nonsense'), 'close_duplicate', 'an unknown choice falls back, never crashes');
+});
+
+test('with no suggestion at all the default is still to move', () => {
+  assert.equal(resolveTaskAction(undefined, undefined), 'move');
 });
 
 // ── contacts (matrix 16, 17) ────────────────────────────────────────────────

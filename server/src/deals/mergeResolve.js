@@ -456,6 +456,55 @@ export function buildCombineCandidates(survivorLines = [], otherLines = []) {
   ];
 }
 
+// ── Open tasks ──────────────────────────────────────────────────────────────
+
+export const TASK_CHOICES = Object.freeze(['move', 'close_duplicate', 'keep']);
+
+/**
+ * What should happen, by default, to each OPEN task on the retired deal?
+ *
+ * Moving is the right default for real work: an open task is something someone
+ * still has to do, and dropping it would lose it.
+ *
+ * But an AUTOMATIC task is not work someone chose — it is the system's own
+ * "every new lead gets one first call". tasks/autoTasks.js guarantees at most
+ * ONE per deal, and blanket-moving breaks exactly that guarantee: merging two
+ * fresh leads left the survivor with two identical "שיחה ראשונית" tasks, every
+ * single time. That is not a duplicated RECORD (the row moved, it was not
+ * copied) — it is a duplicated OBLIGATION, which is the same problem for the
+ * person who has to work the list.
+ *
+ * So a task whose TYPE is already open on the survivor defaults to
+ * close_duplicate. The operator can still override any of it; only the default
+ * changed, and only where the system itself says one is enough.
+ */
+export function suggestTaskActions(survivorTasks = [], otherTasks = []) {
+  const openTypes = new Set(survivorTasks.map((t) => t.taskTypeId).filter(Boolean));
+  const openTitles = new Set(survivorTasks.map((t) => (t.title || '').trim()).filter(Boolean));
+  return otherTasks.map((t) => {
+    const sameType = !!t.taskTypeId && openTypes.has(t.taskTypeId);
+    // Typeless tasks fall back to an exact title match — deliberately exact,
+    // never fuzzy: guessing that two differently-worded tasks are "the same"
+    // is how real work gets closed by accident.
+    const sameTitle = !t.taskTypeId && openTitles.has((t.title || '').trim());
+    const duplicate = sameType || sameTitle;
+    return {
+      id: t.id,
+      title: t.title,
+      dueDate: t.dueDate ?? null,
+      taskTypeId: t.taskTypeId ?? null,
+      duplicate,
+      suggested: duplicate ? 'close_duplicate' : 'move',
+      reasonHe: duplicate ? 'קיימת כבר משימה פתוחה מאותו סוג בדיל שנשאר' : null,
+    };
+  });
+}
+
+/** The action actually applied to one task: the operator's choice, else the suggestion. */
+export function resolveTaskAction(suggestion, choice) {
+  return TASK_CHOICES.includes(choice) ? choice : (suggestion?.suggested || 'move');
+}
+
 // ── Contacts ────────────────────────────────────────────────────────────────
 
 /**

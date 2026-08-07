@@ -71,6 +71,8 @@ import {
   composeMergedLines,
   buildCombineCandidates,
   resolveContacts,
+  suggestTaskActions,
+  resolveTaskAction,
 } from './mergeResolve.js';
 
 /** Thrown for every refusal. `code` is what the route turns into an error body. */
@@ -574,6 +576,9 @@ export async function previewMerge(client, { dealAId, dealBId, decisions = {} })
     tasks: {
       survivor: survivorSide.tasks,
       other: otherSide.tasks,
+      // Per-task DEFAULT: move real work, close a duplicate the system itself
+      // says there should only be one of (see suggestTaskActions).
+      suggestions: suggestTaskActions(survivorSide.tasks, otherSide.tasks),
     },
     money: {
       survivor: moneyDto(survivorSide.money),
@@ -966,8 +971,11 @@ export async function mergeDeals(
     // Default 'move': an open task is future work someone still has to do, and
     // silently closing it would lose it. Nothing is ever DUPLICATED.
     const taskDecisions = decisions.tasks || {};
+    const taskSuggestions = new Map(
+      suggestTaskActions(survivorSide.tasks, otherSide.tasks).map((s) => [s.id, s]),
+    );
     for (const task of otherSide.tasks) {
-      const choice = taskDecisions[task.id] || 'move';
+      const choice = resolveTaskAction(taskSuggestions.get(task.id), taskDecisions[task.id]);
       if (choice === 'close_duplicate') {
         // The canonical terminal shape (taskService.transitionTask): status +
         // cancelledAt. transitionTask itself opens its OWN transaction, so it

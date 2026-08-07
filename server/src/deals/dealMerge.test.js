@@ -473,6 +473,33 @@ test('mismatched currencies BLOCK — shekels are never added to dollars', async
 
 // ── 19. tasks ───────────────────────────────────────────────────────────────
 
+test('an auto-task the survivor already has open is closed as a duplicate, not moved', async () => {
+  // Production QA finding: every merged survivor ended up with TWO identical
+  // "שיחה ראשונית" tasks, because moving was the blanket default. autoTasks
+  // guarantees one per deal; a merge must not break that.
+  const db = twoPlainDeals({
+    store: {
+      tasks: [
+        { id: 'own', dealId: 'a', title: 'שיחה ראשונית', taskTypeId: 'tt_first_call', status: 'open', dueDate: new Date('2026-09-01') },
+        { id: 'dup', dealId: 'b', title: 'שיחה ראשונית', taskTypeId: 'tt_first_call', status: 'open', dueDate: new Date('2026-09-02') },
+        { id: 'real', dealId: 'b', title: 'להחזיר טלפון', taskTypeId: 'tt_call', status: 'open', dueDate: new Date('2026-09-03') },
+      ],
+    },
+  });
+  const p = await previewMerge(db, { dealAId: 'a', dealBId: 'b', decisions: decisions() });
+  const byId = new Map(p.tasks.suggestions.map((s) => [s.id, s]));
+  assert.equal(byId.get('dup').suggested, 'close_duplicate');
+  assert.equal(byId.get('real').suggested, 'move');
+
+  const res = await mergeDeals({ dealAId: 'a', dealBId: 'b', decisions: decisions(), opId: OP }, { db });
+  assert.equal(res.outcome.tasksClosed, 1, 'the duplicate auto-task was closed');
+  assert.equal(res.outcome.tasksMoved, 1, 'the real work moved');
+  const open = db._s.tasks.filter((t) => t.dealId === 'a' && t.status === 'open');
+  assert.equal(open.filter((t) => t.title === 'שיחה ראשונית').length, 1,
+    'exactly ONE initial-call task survives — autoTasks\' own invariant holds');
+  assert.equal(db._s.tasks.find((t) => t.id === 'dup').status, 'cancelled');
+});
+
 test('open tasks move by default, are never duplicated, and can be closed', async () => {
   const db = twoPlainDeals({
     store: {
