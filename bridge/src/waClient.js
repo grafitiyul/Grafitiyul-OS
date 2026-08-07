@@ -406,6 +406,35 @@ export class WaClient {
     return this.sendContent(jid, { text }, options);
   }
 
+  // React to a message. An EMPTY emoji is WhatsApp's own "remove my reaction"
+  // — the same call, so add / change / remove are one operation and converge
+  // to exactly one reaction per person.
+  //
+  // The target key is reconstructed from the mirrored row (id + fromMe, plus
+  // participant in groups), exactly like the reply context above: a reaction
+  // addresses a message, it is not a message of its own, and it must never
+  // become an ordinary text bubble.
+  //
+  // NOT routed through sendContent's onWhatsApp gate: the conversation already
+  // exists (we are reacting to a message in it), and a reaction is not worth a
+  // number-existence round trip.
+  async sendReaction({ jid, targetId, fromMe = false, participant = null, emoji = '' }) {
+    const readiness = this.getReadiness();
+    if (!readiness.ok) throw new Error('whatsapp_not_connected');
+    const key = {
+      remoteJid: jid,
+      id: targetId,
+      fromMe: !!fromMe,
+      ...(participant ? { participant } : {}),
+    };
+    const sent = await this.socket.sendMessage(jid, { react: { text: emoji || '', key } });
+    this.log.info(
+      { jidShape: String(jid).slice(-20), removed: !emoji },
+      'reaction sent',
+    );
+    return { externalMessageId: sent?.key?.id ?? null };
+  }
+
   // Send a voice note (Slice: voice from GOS). ptt:true renders the WhatsApp
   // voice-message bubble; the buffer must already be OGG/Opus (see voice.js —
   // it throws on anything else). seconds + waveform are supplied explicitly

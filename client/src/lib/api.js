@@ -955,6 +955,9 @@ export const api = {
     starMessage: (messageId, starred) =>
       request(`/api/whatsapp/messages/${messageId}/star`, { method: 'PUT', body: JSON.stringify({ starred }) }),
     chatStarred: (chatId) => request(`/api/whatsapp/chats/${chatId}/starred`),
+    // One reaction per person per message — an empty emoji clears ours.
+    reactToMessage: (messageId, emoji) =>
+      request(`/api/whatsapp/messages/${messageId}/react`, { method: 'PUT', body: JSON.stringify({ emoji }) }),
     sendMessage: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
     sendVoice: (chatId, data) =>

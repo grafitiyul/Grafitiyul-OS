@@ -1,10 +1,17 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Checks from './Checks.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { CHAT_ROW_ACCENT, chatRowClass } from './chatSelection.js';
+import { waPlainText } from './waFormat.js';
+import { whatsAppSecondaryName } from './chatIdentity.js';
+import ChatPeekCard from './ChatPeekCard.jsx';
+
+// How long the pointer must rest on a row before it peeks. Long enough that
+// moving down the list flashes nothing, short enough to feel intentional.
+const PEEK_DELAY_MS = 450;
 
 // ONE conversation row — the shared list-row component for every WhatsApp
 // conversation list (the inbox today; any future surface reuses this, so the
@@ -49,7 +56,9 @@ function fmtSnoozedUntil(iso) {
 
 function snippet(msg) {
   if (!msg) return 'אין הודעות';
-  if (msg.textContent) return msg.textContent.slice(0, 60);
+  // Same grammar as the bubbles, markers dropped — WhatsApp shows the words,
+  // not the syntax, on a one-line row.
+  if (msg.textContent) return waPlainText(msg.textContent).slice(0, 60);
   return { image: '📷 תמונה', video: '🎬 סרטון', audio: '🎤 הודעה קולית', document: '📄 מסמך', sticker: 'סטיקר' }[msg.messageType] || 'הודעה';
 }
 
@@ -164,6 +173,7 @@ export default function ChatListRow({
   onToggleSnoozeMenu,
   onSnooze, // (isoString | null)
   onToggleHidden, // manual hide/unhide ("הסתר מהרשימה")
+  peekDisabled = false, // touch/mobile: there is no hover, so there is no peek
 }) {
   const unreadN = unreadCount;
   const manualOnly = manualUnread && unreadN === 0;
@@ -172,6 +182,7 @@ export default function ChatListRow({
   const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
   const isGroup = chat.type === 'group';
   const showPhone = !isGroup && chat.phoneNumber && chat.displayName !== chat.phoneNumber;
+  const waName = whatsAppSecondaryName(chat);
   // WhatsApp-style group preview: "יובל: מגיע עוד 10 דקות" — sender name →
   // phone → the same consistent unknown-participant fallback the bubbles use.
   const senderPrefix =
@@ -184,16 +195,44 @@ export default function ChatListRow({
   const moreBtnRef = useRef(null);
   const [moreOpen, setMoreOpen] = useState(false);
 
+  // Hover peek — a READ-ONLY look at the conversation (ChatPeekCard). The delay
+  // is what keeps scanning the list from flashing a card per row; it is cleared
+  // the moment the pointer leaves, and nothing is fetched until it fires.
+  const rowRef = useRef(null);
+  const peekTimer = useRef(null);
+  const [peekOpen, setPeekOpen] = useState(false);
+  const openPeek = () => {
+    if (peekDisabled) return;
+    clearTimeout(peekTimer.current);
+    peekTimer.current = setTimeout(() => setPeekOpen(true), PEEK_DELAY_MS);
+  };
+  const closePeek = () => {
+    clearTimeout(peekTimer.current);
+    peekTimer.current = setTimeout(() => setPeekOpen(false), 120);
+  };
+  useEffect(() => () => clearTimeout(peekTimer.current), []);
+  // Any real interaction supersedes the peek — opening, or opening a menu.
+  const dismissPeek = () => {
+    clearTimeout(peekTimer.current);
+    setPeekOpen(false);
+  };
+
   return (
     <>
     <div
+      ref={rowRef}
       role="button"
       tabIndex={0}
       data-chat-row={chat.id}
       data-selected={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
-      onClick={() => onOpen(chat)}
+      onClick={() => {
+        dismissPeek();
+        onOpen(chat);
+      }}
       onKeyDown={(e) => e.key === 'Enter' && onOpen(chat)}
+      onMouseEnter={openPeek}
+      onMouseLeave={closePeek}
       className={chatRowClass({ active, cursor })}
     >
       {/* Selected indicator — solid blue accent on the far right (RTL leading) edge. */}
@@ -303,6 +342,19 @@ export default function ChatListRow({
             {chat.account.label}
           </span>
         )}
+        {/* WhatsApp-native profile name — secondary to the CRM identity above,
+            shown only when it actually differs (chatIdentity.js). This is how
+            the operator recognises that "דור קורן" in the CRM is the
+            "Dor Koren Grafitiyul" they see on their phone. */}
+        {waName && (
+          <span
+            className="min-w-0 max-w-[45%] shrink truncate text-[10.5px] text-gray-400"
+            dir="auto"
+            title={`השם ב-WhatsApp: ${waName}`}
+          >
+            WhatsApp: {waName}
+          </span>
+        )}
         {/* Phone — always visible, on the identity edge. The country flag now
             rides the TITLE line (large), so this stays digits-only. */}
         {showPhone && (
@@ -396,6 +448,16 @@ export default function ChatListRow({
         </div>
       </div>
     </div>
+
+    {/* Hover peek — read-only, portaled, never opens or reads the chat. */}
+    <ChatPeekCard
+      anchorRef={rowRef}
+      chat={chat}
+      open={peekOpen && !moreOpen && !snoozeMenuOpen}
+      onClose={dismissPeek}
+      onMouseEnter={() => clearTimeout(peekTimer.current)}
+      onMouseLeave={closePeek}
+    />
 
     {/* Snooze presets — the canonical anchored popover (portaled: never
         clipped by the list's scroll container, flips near the bottom). */}

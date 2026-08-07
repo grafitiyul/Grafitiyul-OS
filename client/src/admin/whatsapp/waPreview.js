@@ -1,10 +1,11 @@
 import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
+import { parseWaMarkup } from './waFormat.js';
 
-// THE WhatsApp preview renderer. Every surface that shows "how this message
-// will look on WhatsApp" renders through here — the Communication Center
-// editor, the delivery simulator, the Team composer, the message history. One
-// renderer means a message can never look one way while being composed and
-// another way while being reviewed.
+// THE WhatsApp AUTHORING preview renderer. Every surface that shows "how this
+// message will look on WhatsApp" renders through here — the Communication
+// Center editor, the delivery simulator, the Team composer. One renderer means
+// a message can never look one way while being composed and another way while
+// being reviewed.
 //
 // It renders the WhatsApp MARKUP (the exact text the bridge transmits, produced
 // by shared/waMarkup.mjs) rather than the editor's HTML, so the preview is a
@@ -17,46 +18,47 @@ import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
 // A token that survives into a resolved text is a MISSING value, and rendering
 // it as a chip is exactly right: it shows the operator what will be absent.
 //
-// (Moved out of WhatsAppBodyEditor.jsx, which pulled TipTap into every consumer
-// and made "the renderer" look like a detail of one editor.)
+// The GRAMMAR itself is not here — it lives in waFormat.js, shared with the
+// live conversation renderer (WaText.jsx). This module only decides how the
+// parsed nodes are PAINTED as an HTML string.
 
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/**
- * WhatsApp markup → styled preview HTML. Tokens render as chips.
- *
- * The formatting rules run over the author's own prose ONLY. Anything that is
- * not prose — code spans, variable chips, URLs — is lifted out first and put
- * back afterwards, because those routinely contain characters the markup rules
- * would otherwise eat:
- *
- *   {{customer_first_name}}          `_first_` read as italics
- *   https://grafitiyul.co.il/a_b_c   `_b_` read as italics
- *
- * Either one produces a preview that quietly misrepresents the message — the
- * exact failure this renderer exists to prevent.
- *
- * The placeholder is `<n>`: escaping has already turned every `<` in the
- * author's text into `&lt;`, so no message content can impersonate one.
- */
+const WRAP = { bold: 'strong', italic: 'em', strike: 's' };
+
+function paint(nodes) {
+  let out = '';
+  for (const n of nodes) {
+    switch (n.type) {
+      case 'text':
+        out += esc(n.value);
+        break;
+      case 'break':
+        out += '<br>';
+        break;
+      case 'code':
+        out += `<code class="rounded bg-black/10 px-1">${esc(n.value)}</code>`;
+        break;
+      case 'link':
+        // Flat styling on purpose: an authoring preview shows that the URL will
+        // be a link, it is not itself a place to click through to customers.
+        out += `<span class="text-sky-700 underline">${esc(n.text)}</span>`;
+        break;
+      case 'variable': {
+        const f = getDynamicFieldByKey(n.key);
+        out += `<span class="mx-0.5 inline-flex items-center rounded bg-blue-100 px-1 text-[0.85em] font-medium text-blue-800">${esc(f?.label || n.key)}</span>`;
+        break;
+      }
+      default:
+        out += `<${WRAP[n.type]}>${paint(n.children || [])}</${WRAP[n.type]}>`;
+    }
+  }
+  return out;
+}
+
+/** WhatsApp markup → styled preview HTML. Tokens render as chips. */
 export function waPreviewHtml(markup) {
-  const held = [];
-  const hold = (html) => `<${held.push(html) - 1}>`;
-
-  let out = esc(markup);
-  out = out.replace(/```([\s\S]+?)```/g, (m, code) => hold(`<code class="rounded bg-black/10 px-1">${code}</code>`));
-  out = out.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (m, key) => {
-    const f = getDynamicFieldByKey(key);
-    return hold(`<span class="mx-0.5 inline-flex items-center rounded bg-blue-100 px-1 text-[0.85em] font-medium text-blue-800">${esc(f?.label || key)}</span>`);
-  });
-  out = out.replace(/(https?:\/\/[^\s<]+)/g, (m, url) => hold(`<span class="text-sky-700 underline">${url}</span>`));
-
-  out = out.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
-  out = out.replace(/_([^_\n]+)_/g, '<em>$1</em>');
-  out = out.replace(/~([^~\n]+)~/g, '<s>$1</s>');
-  out = out.replace(/\n/g, '<br>');
-
-  return out.replace(/<(\d+)>/g, (m, i) => held[Number(i)] ?? m);
+  return paint(parseWaMarkup(markup, { variables: true }));
 }

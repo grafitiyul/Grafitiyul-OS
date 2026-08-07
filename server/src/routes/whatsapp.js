@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
-import { ownAccountPhoneSet, isInternalRemote } from '../whatsapp/selfIdentity.js';
+import { ownAccountPhoneSet, isInternalRemote, jidDigits } from '../whatsapp/selfIdentity.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
 import {
@@ -289,6 +289,13 @@ function toClientChat(chat) {
     accountId: chat.accountId,
     type: chat.type,
     displayName: chatDisplayName(chat),
+    // The WhatsApp-NATIVE identity, kept separate from the CRM-first
+    // displayName above: the profile name the person publishes on WhatsApp
+    // (pushName), else the name saved in the phone's address book. For a group
+    // the subject IS its name, so it is already the displayName and there is
+    // nothing secondary to say. The client decides whether it adds information
+    // (chatIdentity.js) — the server just stops throwing it away.
+    providerName: chat.type === 'group' ? null : chat.pushName ?? chat.savedContactName ?? null,
     phoneNumber: chat.phoneNumber,
     // Prefer OUR R2 copy (never expires; served via the presign route). The
     // raw CDN URL is the fallback for chats the avatar worker hasn't reached —
@@ -1147,15 +1154,27 @@ router.get(
 async function reactionsFor(accountId, rows) {
   const extIds = rows.map((m) => m.externalMessageId).filter(Boolean);
   if (extIds.length === 0) return new Map();
-  const reactions = await prisma.whatsAppMessageReaction.findMany({
-    where: { accountId, externalMessageId: { in: extIds } },
-    select: { externalMessageId: true, emoji: true, reactorPhone: true },
-  });
+  const [reactions, account] = await Promise.all([
+    prisma.whatsAppMessageReaction.findMany({
+      where: { accountId, externalMessageId: { in: extIds } },
+      select: { externalMessageId: true, emoji: true, reactorPhone: true, reactorName: true },
+    }),
+    prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { phoneJid: true } }),
+  ]);
+  // Which reaction is OURS — resolved server-side from the account's own
+  // number, so the client never has to know what our phone numbers are to
+  // draw its own reaction as selected.
+  const ownPhone = jidDigits(account?.phoneJid);
   const byExt = new Map();
   for (const r of reactions) {
     if (!r.emoji) continue; // empty emoji = reaction removed
     if (!byExt.has(r.externalMessageId)) byExt.set(r.externalMessageId, []);
-    byExt.get(r.externalMessageId).push({ emoji: r.emoji, reactorPhone: r.reactorPhone });
+    byExt.get(r.externalMessageId).push({
+      emoji: r.emoji,
+      reactorPhone: r.reactorPhone,
+      reactorName: r.reactorName ?? null,
+      mine: !!ownPhone && r.reactorPhone === ownPhone,
+    });
   }
   return byExt;
 }
@@ -1266,6 +1285,100 @@ router.put(
       include: { contact: { select: CONTACT_LITE_SELECT } },
     });
     res.json(toClientChat(row));
+  }),
+);
+
+// React to one message with an emoji — or clear our reaction (emoji: '').
+//
+// ONE reaction per reactor per message is WhatsApp's own model and the table's
+// unique key, so add / change / remove are all this single call. The row is
+// written here as well as by the bridge's echo: same unique key, so the echo is
+// an idempotent upsert and the operator's own reaction never flickers waiting
+// for a round trip.
+//
+// A reaction is NOT a message: nothing is appended to the thread, and none of
+// the send-path side effects (activity stamps, pacing, idempotency journal)
+// apply.
+router.put(
+  '/messages/:id/react',
+  handle(async (req, res) => {
+    const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji.trim() : '';
+    // Guard the shape, not the content: one to four codepoints covers every
+    // emoji WhatsApp accepts (including ZWJ families and skin tones) without
+    // this route becoming an emoji registry.
+    if (emoji && [...emoji].length > 8) return res.status(400).json({ error: 'emoji_invalid' });
+
+    const msg = await prisma.whatsAppMessage.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        externalMessageId: true,
+        direction: true,
+        rawPayload: true,
+        chat: { select: { id: true, accountId: true, externalChatId: true, type: true } },
+      },
+    });
+    if (!msg || !msg.chat) return res.status(404).json({ error: 'not_found' });
+    if (!msg.externalMessageId) return res.status(400).json({ error: 'message_not_on_whatsapp' });
+
+    const account = await prisma.whatsAppAccount.findUnique({
+      where: { id: msg.chat.accountId },
+      select: { phoneJid: true },
+    });
+    const ownPhone = jidDigits(account?.phoneJid);
+    if (!ownPhone) return res.status(409).json({ error: 'account_not_paired' });
+
+    try {
+      await callBridge(msg.chat.accountId, '/react', {
+        method: 'POST',
+        timeoutMs: 15_000,
+        body: {
+          jid: msg.chat.externalChatId,
+          targetId: msg.externalMessageId,
+          fromMe: msg.direction === 'outgoing',
+          participant: msg.chat.type === 'group' ? msg.rawPayload?.key?.participant || null : null,
+          emoji,
+        },
+      });
+    } catch (err) {
+      // The bridge's structured outcome, not a generic 502 — "the phone is
+      // disconnected" is a different thing for the operator than "that failed".
+      const code = err?.data?.error || err?.code || 'react_failed';
+      return res.status(err?.status === 503 ? 503 : 422).json({ error: code });
+    }
+
+    const where = {
+      accountId_externalMessageId_reactorPhone: {
+        accountId: msg.chat.accountId,
+        externalMessageId: msg.externalMessageId,
+        reactorPhone: ownPhone,
+      },
+    };
+    if (emoji) {
+      await prisma.whatsAppMessageReaction.upsert({
+        where,
+        create: {
+          accountId: msg.chat.accountId,
+          externalMessageId: msg.externalMessageId,
+          reactorPhone: ownPhone,
+          emoji,
+          reactedAt: new Date(),
+        },
+        update: { emoji, reactedAt: new Date() },
+      });
+    } else {
+      await prisma.whatsAppMessageReaction.deleteMany({
+        where: {
+          accountId: msg.chat.accountId,
+          externalMessageId: msg.externalMessageId,
+          reactorPhone: ownPhone,
+        },
+      });
+    }
+
+    const rows = await prisma.whatsAppMessage.findMany({ where: { id: msg.id } });
+    const [message] = await serializePage(msg.chat.accountId, rows);
+    res.json(message);
   }),
 );
 

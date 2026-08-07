@@ -1,6 +1,9 @@
+import { useRef, useState } from 'react';
 import MessageMedia from './MessageMedia.jsx';
 import Checks from './Checks.jsx';
-import { linkifyText } from '../../lib/linkify.jsx';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import { waTextNodes } from './WaText.jsx';
+import { waPlainText } from './waFormat.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 
 // One WhatsApp message, WhatsApp-style: outbound = green bubble on the far
@@ -8,6 +11,11 @@ import { formatPhoneDisplay } from '../../lib/phone.js';
 // render as a centered chip. Group chats show the sender name on inbound.
 // Outgoing messages carry the delivery checks (✓ / ✓✓ / blue ✓✓); reactions
 // received on a message render as an emoji chip under the bubble.
+//
+// Body text renders through waTextNodes — the SHARED WhatsApp markup grammar
+// (waFormat.js), so *bold* / _italic_ / ~strike~ / ```mono``` look here exactly
+// as they look in the template preview and on the recipient's phone. Links keep
+// the shared safe-link markup; the stored textContent is never rewritten.
 
 const TYPE_LABEL = {
   image: 'תמונה',
@@ -36,26 +44,38 @@ function senderColor(name) {
 }
 
 function quotedSnippet(q) {
-  if (q.textContent) return q.textContent.slice(0, 120);
+  if (q.textContent) return waPlainText(q.textContent).slice(0, 120);
   return TYPE_LABEL[q.messageType] || 'הודעה';
 }
 
-// Group raw reactions ([{emoji, reactorPhone}]) into "👍 2"-style chips.
+// Group raw reactions ([{emoji, reactorPhone, reactorName, mine}]) into
+// "👍 2"-style chips, remembering which emoji is OURS (server-resolved) so the
+// operator can see their own reaction and click it off. Who reacted rides along
+// as the chip's title — in a group that is the whole point of a reaction.
 function groupReactions(list) {
-  const counts = new Map();
+  const byEmoji = new Map();
   for (const r of list || []) {
     if (!r?.emoji) continue;
-    counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+    const cur = byEmoji.get(r.emoji) || { emoji: r.emoji, count: 0, mine: false, who: [] };
+    cur.count += 1;
+    if (r.mine) cur.mine = true;
+    cur.who.push(r.mine ? 'אני' : r.reactorName || formatPhoneDisplay(r.reactorPhone) || 'משתתף');
+    byEmoji.set(r.emoji, cur);
   }
-  return [...counts.entries()];
+  return [...byEmoji.values()];
 }
+
+// WhatsApp's own quick row. The picker stays deliberately small: reactions are
+// a one-click acknowledgement, not an authoring surface.
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 // Revealed by hover on hover-capable devices; on touch the bubble itself is
 // tappable and `shown` (owned by the thread) reveals the same actions — hover
 // alone would make reply/star unreachable on a phone.
-function HoverAction({ onClick, title, children, active = false, shown = false }) {
+function HoverAction({ onClick, title, children, active = false, shown = false, btnRef = null }) {
   return (
     <button
+      ref={btnRef}
       type="button"
       onClick={(e) => {
         e.stopPropagation();
@@ -81,9 +101,13 @@ export default function MessageBubble({
   quoted = null,
   onReply = null,
   onToggleStar = null,
+  onReact = null, // (message, emoji) — '' clears our reaction
   actionsShown = false,
   onBubbleTap = null,
 }) {
+  const reactBtnRef = useRef(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [reacting, setReacting] = useState(false);
   if (m.messageType === 'system') {
     return (
       <div className="my-2 flex justify-center">
@@ -100,9 +124,36 @@ export default function MessageBubble({
   // unattributed bubble reads as unreliable.
   const sender = m.senderName || formatPhoneDisplay(m.senderPhone);
   const reactions = groupReactions(m.reactions);
+  const myEmoji = reactions.find((r) => r.mine)?.emoji || null;
+
+  // One in-flight reaction at a time per bubble: WhatsApp's model is ONE
+  // reaction per person, so a second click while the first is still flying
+  // would race two different truths onto the same row.
+  const react = async (emoji) => {
+    if (!onReact || reacting) return;
+    setPickerOpen(false);
+    setReacting(true);
+    try {
+      // Clicking the emoji you already chose removes it, exactly like WhatsApp.
+      await onReact(m, emoji === myEmoji ? '' : emoji);
+    } finally {
+      setReacting(false);
+    }
+  };
 
   const actions = (
     <>
+      {onReact && (
+        <HoverAction
+          btnRef={reactBtnRef}
+          onClick={() => setPickerOpen((v) => !v)}
+          title="תגובת אימוג'י"
+          active={!!myEmoji}
+          shown={actionsShown}
+        >
+          {myEmoji || '☺'}
+        </HoverAction>
+      )}
       {onReply && (
         <HoverAction onClick={onReply} title="תגובה" shown={actionsShown}>↩</HoverAction>
       )}
@@ -160,7 +211,7 @@ export default function MessageBubble({
 
         {m.textContent && (
           <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-gray-900" dir="auto">
-            {linkifyText(m.textContent)}
+            {waTextNodes(m.textContent)}
           </p>
         )}
 
@@ -177,19 +228,54 @@ export default function MessageBubble({
 
         {reactions.length > 0 && (
           <div className={`-mb-3 mt-0.5 flex translate-y-1.5 gap-1 ${outbound ? 'justify-start' : 'justify-end'}`}>
-            {reactions.map(([emoji, count]) => (
-              <span
-                key={emoji}
-                className="inline-flex items-center gap-0.5 rounded-full bg-white px-1.5 py-0.5 text-[11px] shadow ring-1 ring-gray-200"
+            {reactions.map((r) => (
+              <button
+                key={r.emoji}
+                type="button"
+                disabled={!onReact || reacting}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  react(r.emoji);
+                }}
+                title={r.who.join(', ')}
+                className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] shadow ring-1 ${
+                  r.mine ? 'bg-emerald-50 ring-emerald-300' : 'bg-white ring-gray-200'
+                } ${onReact ? 'cursor-pointer' : 'cursor-default'}`}
               >
-                <span>{emoji}</span>
-                {count > 1 && <span className="text-[10px] text-gray-500">{count}</span>}
-              </span>
+                <span>{r.emoji}</span>
+                {r.count > 1 && <span className="text-[10px] text-gray-500">{r.count}</span>}
+              </button>
             ))}
           </div>
         )}
       </div>
       {!outbound && actions}
+
+      {/* Emoji picker — the canonical anchored popover, so it is never clipped
+          by the thread's scroll container. */}
+      <AnchoredMenu
+        anchorRef={reactBtnRef}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        width={222}
+        panelClassName="rounded-full px-1.5 py-1"
+      >
+        <div className="flex items-center justify-center gap-0.5">
+          {QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => react(emoji)}
+              title={emoji === myEmoji ? 'הסרת התגובה' : emoji}
+              className={`flex h-8 w-8 items-center justify-center rounded-full text-[18px] transition hover:bg-gray-100 ${
+                emoji === myEmoji ? 'bg-emerald-100' : ''
+              }`}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </AnchoredMenu>
     </div>
   );
 }

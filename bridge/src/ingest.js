@@ -818,19 +818,69 @@ export function createIngest({ prisma, socket, log, accountId }) {
   }
 
   // ── reactions ───────────────────────────────────────────────────────────
+  //
+  // Baileys emits `messages.reaction` as { key, reaction }, and the two keys
+  // mean DIFFERENT things:
+  //   key            — the TARGET message's key (what was reacted to)
+  //   reaction.key   — the REACTOR's own message key (who reacted; fromMe = us)
+  //   reaction.text  — the emoji; EMPTY string means the reaction was REMOVED
+  //
+  // This used to read `r.text` and treat the TARGET's key as the reactor, so
+  // every row was written with an empty emoji (and the API drops those) and
+  // attributed to the chat's counterparty whoever actually reacted. That is
+  // why no reaction had ever reached the UI — production had zero usable rows.
   async function ingestReaction(r) {
     const targetId = r.key?.id;
     if (!targetId) return;
-    const reactorPhone = jidToPhone(r.key?.participant ?? r.key?.remoteJid ?? null);
+
+    const reactorKey = r.reaction?.key ?? null;
+    const fromMe = reactorKey?.fromMe === true;
+    // Same self-identity ladder the message path uses: for a LID-migrated
+    // account user.id is the LID, so the phone JID (user.phoneNumber) wins.
+    const reactorPhone = fromMe
+      ? jidToPhone(socket.user?.phoneNumber ?? socket.user?.id ?? null)
+      : jidToPhone(reactorKey?.participant ?? reactorKey?.remoteJid ?? null) ??
+        jidToPhone(senderPnFromKey(reactorKey ?? {}));
     if (!reactorPhone) return;
-    const emoji = r.text ?? '';
-    const reactedAt = r.senderTimestampMs ? new Date(Number(r.senderTimestampMs)) : new Date();
+
+    const emoji = typeof r.reaction?.text === 'string' ? r.reaction.text : '';
+    const ms = r.reaction?.senderTimestampMs;
+    const reactedAt = ms ? new Date(Number(ms)) : new Date();
+
+    // Removing a reaction sends an EMPTY emoji. Deleting the row (rather than
+    // storing '') is what makes add → change → remove converge to exactly one
+    // truth per reactor, with no tombstones for the API to filter.
+    if (!emoji) {
+      await prisma.whatsAppMessageReaction.deleteMany({
+        where: { accountId, externalMessageId: targetId, reactorPhone },
+      });
+      return;
+    }
+
+    // Group reactions are only useful if you can tell WHO reacted. WhatsApp
+    // does not carry a pushName on the reaction, so the name comes from what
+    // this participant is already known as in this account's mirror.
+    const known = fromMe
+      ? null
+      : await prisma.whatsAppMessage.findFirst({
+          where: { chat: { accountId }, senderPhone: reactorPhone, senderName: { not: null } },
+          orderBy: { timestampFromSource: 'desc' },
+          select: { senderName: true },
+        });
+
     await prisma.whatsAppMessageReaction.upsert({
       where: {
         accountId_externalMessageId_reactorPhone: { accountId, externalMessageId: targetId, reactorPhone },
       },
-      create: { accountId, externalMessageId: targetId, reactorPhone, emoji, reactedAt },
-      update: { emoji, reactedAt },
+      create: {
+        accountId,
+        externalMessageId: targetId,
+        reactorPhone,
+        reactorName: known?.senderName ?? null,
+        emoji,
+        reactedAt,
+      },
+      update: { emoji, reactedAt, ...(known?.senderName ? { reactorName: known.senderName } : {}) },
     });
   }
 

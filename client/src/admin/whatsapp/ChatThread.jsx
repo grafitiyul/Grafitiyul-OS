@@ -359,6 +359,24 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
     }
   }
 
+  // React to a message. The server owns convergence (one reaction per person,
+  // empty emoji = removed) and returns the message with its reactions
+  // recomputed, so the bubble is drawn from the server's truth rather than a
+  // locally guessed one — add / change / remove can never diverge.
+  async function reactToMessage(m, emoji) {
+    const before = m.reactions || [];
+    // Optimistic: drop our previous reaction, add the new one (if any).
+    const optimistic = [...before.filter((r) => !r.mine), ...(emoji ? [{ emoji, mine: true }] : [])];
+    setMessages((cur) => (cur || []).map((x) => (x.id === m.id ? { ...x, reactions: optimistic } : x)));
+    try {
+      const updated = await api.whatsapp.reactToMessage(m.id, emoji);
+      setMessages((cur) => (cur || []).map((x) => (x.id === m.id ? { ...x, ...updated } : x)));
+    } catch (e) {
+      setMessages((cur) => (cur || []).map((x) => (x.id === m.id ? { ...x, reactions: before } : x)));
+      setError(e?.payload?.error === 'whatsapp_not_connected' ? 'הטלפון לא מחובר — התגובה לא נשלחה' : 'שליחת התגובה נכשלה');
+    }
+  }
+
   function jumpToDate() {
     if (!jumpDate) return;
     const end = new Date(`${jumpDate}T23:59:59.999`);
@@ -539,6 +557,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
                     quoted={m.quotedExternalId ? byExternalId.get(m.quotedExternalId) : null}
                     onReply={canSend ? () => setReplyTo(m) : null}
                     onToggleStar={toggleStar}
+                    onReact={canSend ? reactToMessage : null}
                     actionsShown={actionsFor === m.id}
                     onBubbleTap={() => setActionsFor((cur) => (cur === m.id ? null : m.id))}
                   />

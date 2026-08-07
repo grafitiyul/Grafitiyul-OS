@@ -12,6 +12,12 @@ import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
 import { useIsMobile } from '../../lib/useIsMobile.js';
 import { chatMatchesAccountFilter, isChatSelected } from './chatSelection.js';
+import {
+  applyUnreadSnapshot,
+  isUnreadChat,
+  reconcileUnreadSnapshot,
+  unreadSessionKey,
+} from './unreadSnapshot.js';
 import { DEAL_STATUS_LABELS } from '../../../../shared/dealStatus.mjs';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
@@ -320,6 +326,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   // Groups are read/reply-only here — no CRM linking or deal actions.
   const [kind, setKind] = useState('private');
   const [statusFilter, setStatusFilter] = useState('all');
+  // "לא נקראו" frozen membership + the epoch that ends a filter session when
+  // the operator re-clicks the active chip (the explicit "re-apply" gesture).
+  const [unreadSnapshot, setUnreadSnapshot] = useState(null);
+  const [unreadEpoch, setUnreadEpoch] = useState(0);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null); // chat object snapshot
   const [linking, setLinking] = useState(false);
@@ -444,14 +454,24 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     };
   }, []);
 
+  // "לא נקראו" membership — frozen for the filter session (unreadSnapshot.js).
+  // Opening a conversation clears its unread truth but must NOT yank the row
+  // out from under the operator mid-task; the set recomputes when they change
+  // what they are looking at, or re-click the active chip.
+  const unreadKey = unreadSessionKey({ scope, kind, accountFilter, search, epoch: unreadEpoch });
+  useEffect(() => {
+    setUnreadSnapshot((prev) =>
+      reconcileUnreadSnapshot(prev, { chats, active: statusFilter === 'unread', sessionKey: unreadKey }),
+    );
+  }, [chats, statusFilter, unreadKey]);
+
   // Status filter — client-side over the loaded window.
   const filteredChats = useMemo(() => {
     if (!chats) return null;
     if (statusFilter === 'all') return chats;
+    if (statusFilter === 'unread') return applyUnreadSnapshot(chats, unreadSnapshot);
     return chats.filter((c) => {
       switch (statusFilter) {
-        case 'unread':
-          return (c.unreadCount ?? 0) > 0 || !!c.manualUnread;
         case 'awaiting':
           return c.lastMessage?.direction === 'incoming';
         case 'deal':
@@ -464,7 +484,14 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           return true;
       }
     });
-  }, [chats, statusFilter]);
+  }, [chats, statusFilter, unreadSnapshot]);
+
+  // Does the frozen set currently hold rows that have since been read? That is
+  // the only state in which "re-apply the filter" changes anything.
+  const unreadHoldsRead = useMemo(
+    () => statusFilter === 'unread' && !!filteredChats?.some((c) => !isUnreadChat(c)),
+    [statusFilter, filteredChats],
+  );
 
   // Open a conversation. WORK-QUEUE MODE: when the deal drawer is already
   // open, switching conversations follows PASSIVELY — exactly-one matching
@@ -725,20 +752,29 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               ))}
             </div>
             <div className="flex items-center gap-1 overflow-x-auto">
-              {statusFilters.map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setStatusFilter(f.key)}
-                  className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-medium transition ${
-                    statusFilter === f.key
-                      ? 'bg-gray-800 text-white'
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
+              {statusFilters.map((f) => {
+                const isActive = statusFilter === f.key;
+                // Re-clicking the ACTIVE unread chip is the explicit "re-apply
+                // the filter" gesture: it ends the frozen session, so rows read
+                // during it drop out. Shown as ↻ once the set actually holds
+                // read rows, so the affordance appears exactly when it means
+                // something.
+                const canReapply = isActive && f.key === 'unread' && unreadHoldsRead;
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => (canReapply ? setUnreadEpoch((e) => e + 1) : setStatusFilter(f.key))}
+                    title={canReapply ? 'רענון הרשימה — שיחות שנקראו ייעלמו' : undefined}
+                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-medium transition ${
+                      isActive ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {f.label}
+                    {canReapply && <span className="mr-1">↻</span>}
+                  </button>
+                );
+              })}
             </div>
             <input
               ref={searchInputRef}
@@ -774,6 +810,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                       manualUnread={!!chat.manualUnread}
                       showAccount={accountFilter === 'all' && accounts.length > 1}
                       snoozeMenuOpen={snoozeMenuFor === chat.id}
+                      peekDisabled={isMobile}
                       onOpen={openChat}
                       onTogglePin={(c) => setChatState(c, { pinned: !c.pinnedAt })}
                       onToggleRead={toggleRead}

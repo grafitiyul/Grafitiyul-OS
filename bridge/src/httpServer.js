@@ -206,6 +206,30 @@ export function startHttpServer(client) {
     }
   });
 
+  // React to a message (called by GOS when an operator picks an emoji, or
+  // clears theirs — an empty emoji removes). Soft-fails with 503 when
+  // disconnected, like /mark-read: a reaction is not worth blocking on.
+  app.post('/react', async (req, res) => {
+    const { jid, targetId, fromMe, participant, emoji } = req.body || {};
+    if (!jid || typeof jid !== 'string') return res.status(400).json({ error: 'jid_required' });
+    if (!targetId || typeof targetId !== 'string') return res.status(400).json({ error: 'target_required' });
+    try {
+      const out = await client.sendReaction({
+        jid,
+        targetId,
+        fromMe: !!fromMe,
+        participant: typeof participant === 'string' ? participant : null,
+        emoji: typeof emoji === 'string' ? emoji : '',
+      });
+      res.json({ ok: true, ...out });
+    } catch (err) {
+      const detail = errSummary(err);
+      log.warn({ err: detail }, '[/react] failed');
+      const soft = detail === 'whatsapp_not_connected';
+      res.status(soft ? 503 : 500).json({ error: 'react_failed', detail });
+    }
+  });
+
   app.post('/sign-out', async (_req, res) => {
     log.warn('[/sign-out] requested');
     try {
@@ -225,7 +249,7 @@ export function startHttpServer(client) {
       error: 'not_found',
       method: req.method,
       url: req.url,
-      registeredRoutes: ['GET /health', 'GET /status', 'POST /send', 'POST /send-voice', 'POST /mark-read', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
+      registeredRoutes: ['GET /health', 'GET /status', 'POST /send', 'POST /send-voice', 'POST /send-media', 'POST /mark-read', 'POST /react', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
     });
   });
 
