@@ -124,15 +124,31 @@ test('no matching template at all → no_confirmation_template', () => {
 
 // ── deal → context (classification SSOT) ─────────────────────────────────────
 
-test('linked organization forces business + the org\'s own type', () => {
+test('an unclassified deal with an organization → business + the org\'s own type', () => {
   const c = confirmationCtxFromDeal({
     productId: 'p1',
-    activityType: 'private', // stale copy must not win
+    activityType: null,
     organizationId: 'org1',
     organization: { organizationTypeId: 'ot_agency' },
     organizationTypeId: 'ot_school', // contradicting deal-level copy must not win
   });
   assert.equal(c.activityType, 'business');
+  assert.equal(c.orgTypeId, 'ot_agency');
+});
+
+test('an EXPLICIT private classification survives the linked organization', () => {
+  // The customer-visible reason this rule changed: reading the org link as an
+  // override selected the BUSINESS confirmation template — wrong framing, wrong
+  // wording — for a company that deliberately booked a private tour. The ORG
+  // TYPE half of the rule is untouched and still comes from the organization.
+  const c = confirmationCtxFromDeal({
+    productId: 'p1',
+    activityType: 'private',
+    organizationId: 'org1',
+    organization: { organizationTypeId: 'ot_agency' },
+    organizationTypeId: 'ot_school',
+  });
+  assert.equal(c.activityType, 'private');
   assert.equal(c.orgTypeId, 'ot_agency');
 });
 

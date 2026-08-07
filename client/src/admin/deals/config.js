@@ -20,6 +20,16 @@ export const ACTIVITY_TYPE_LABELS = {
   business: 'עסקי',
 };
 
+// Selected-option styling for an activity choice — the deal header's editor
+// popover and the conversion dialog both render the same three buttons, so the
+// tones live here beside the labels rather than in whichever component happened
+// to need them first.
+export const ACTIVITY_OPTION_ON = {
+  business: 'bg-emerald-600 text-white border-emerald-600',
+  private: 'bg-rose-600 text-white border-rose-600',
+  group: 'bg-amber-500 text-white border-amber-500',
+};
+
 // The deal's EFFECTIVE organization type — the ONE derived read, mirroring the
 // server rule (server/src/deals/classification.js): a linked Organization is
 // the source of truth for the type (even when that org has no type — a stale

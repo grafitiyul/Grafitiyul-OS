@@ -15,6 +15,7 @@ import { contactPhone, contactEmail, contactFullName } from './context.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { ingressLabel } from '../deals/marketing.js';
 import { GENERIC_ACTIVITY_EN, GENERIC_ACTIVITY_HE } from '../displayFallbacks.js';
+import { effectiveActivityType } from '../../../shared/dealActivity.mjs';
 import {
   TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
 } from './format.js';
@@ -101,10 +102,11 @@ export const VARIABLES = [
     // (never another person's name substituted).
     resolve: (ctx) => (ctx.owner ? adminDisplayName(ctx.owner) || null : null) },
   { key: 'activity_type', labelHe: 'סוג הפעילות', labelEn: 'Activity type', category: 'deal', contexts: ['deal'],
-    // Business label, never the enum. Linked org forces business (the
-    // classification SSOT rule — same as the condition evaluator).
+    // Business label, never the enum. THE shared resolver
+    // (shared/dealActivity.mjs) — same answer the condition evaluator and the
+    // confirmation template matcher get, by construction.
     resolve: (ctx, lang) => {
-      const type = ctx.deal?.organizationId ? 'business' : ctx.deal?.activityType;
+      const type = effectiveActivityType(ctx.deal);
       return type ? ACTIVITY_TYPE_LABELS[lang === 'en' ? 'en' : 'he'][type] || null : null;
     } },
   { key: 'lead_source', labelHe: 'מקור הליד', labelEn: 'Lead source', category: 'deal', contexts: ['deal'],

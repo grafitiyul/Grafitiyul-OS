@@ -110,8 +110,9 @@ export async function createDealFromReservationGroup(tx, { session, group }) {
   });
   if (!org) throw coded('organization_missing');
 
-  // Canonical classification rule — org-linked forces business + clears the
-  // deal-level type copy. Same call shape as the deals route.
+  // Canonical classification rule — clears the deal-level type copy, and (a
+  // brand-new deal linking an organization, with 'business' stated outright)
+  // classifies it as business. Same call shape as the deals route.
   const classification = normalizeClassification({
     organizationId: org.id,
     activityType: 'business',

@@ -13,7 +13,11 @@
 // same object the variable resolver uses, so preview and the live engine can
 // never disagree.
 
-export const ACTIVITY_TYPES = ['group', 'private', 'business'];
+import { ACTIVITY_TYPES as CANONICAL_ACTIVITY_TYPES, effectiveActivityType } from '../../../shared/dealActivity.mjs';
+
+// Re-exported from the canonical vocabulary rather than re-listed, so a future
+// activity type reaches the Communication Center's activity gate automatically.
+export const ACTIVITY_TYPES = CANONICAL_ACTIVITY_TYPES;
 export const CONDITION_OPS = ['eq', 'neq', 'any_of', 'none_of', 'exists', 'not_exists'];
 
 // field key → { labelHe, get(ctx) → scalar | null }.  Values compared as
@@ -71,9 +75,12 @@ export function evaluateApplicability(event, ctx) {
   const checks = [];
   let applicable = true;
 
-  // 1. Activity gate. Effective activity type: linked org forces business
-  //    (classification SSOT); otherwise the deal's own value.
-  const activity = ctx.deal?.organizationId ? 'business' : (ctx.deal?.activityType ?? null);
+  // 1. Activity gate — THE shared resolver (shared/dealActivity.mjs): an
+  //    explicit activity type is authoritative, a linked organization answers
+  //    only for a deal that has none. This used to re-derive the rule inline as
+  //    an override, which targeted the business messages at a company's
+  //    deliberately-private booking.
+  const activity = effectiveActivityType(ctx.deal);
   const mode = event.activityMode || 'all';
   const listed = Array.isArray(event.activityTypes) ? event.activityTypes : [];
   if (mode === 'include') {

@@ -1151,6 +1151,15 @@ model Deal {
   // collection state is created or changed by this correction.
   historicalWonAt              DateTime?
   historicalWonNote            Json?
+  // ── Activity-type CONVERSION (deals/activityConversion.js) ──────────────
+  // The idempotency identity of the LAST conversion performed on this deal —
+  // a client-supplied UUID, unique across all deals. Converting cancels a
+  // booking, releases seats, creates or joins a tour and reconciles scheduled
+  // communications; a double click, a refresh, a retry or a re-opened modal
+  // must never run that twice, and the UNIQUE index is what lets the DATABASE
+  // answer "already done?" instead of the application guessing. Null = the
+  // deal has never been converted.
+  conversionOpId               String?                    @unique
   lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free

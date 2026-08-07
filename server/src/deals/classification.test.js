@@ -5,12 +5,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeClassification } from './classification.js';
 
-// ── Bug #1: group deal + attach organization → becomes business ──────────────
+// ── An UNCLASSIFIED deal + an organization → business ────────────────────────
 
-test('group deal → attach organization → automatically business, no deal-level type', () => {
+test('unclassified deal → attach organization → business, no deal-level type', () => {
   const out = normalizeClassification({
     organizationId: 'org1',
-    activityType: 'group', // the deal's existing (now wrong) classification
+    activityType: null,
     organizationTypeId: null,
     organizationSubtypeId: null,
     orgTypeId: 'municipality',
@@ -23,13 +23,21 @@ test('group deal → attach organization → automatically business, no deal-lev
   });
 });
 
-test('private deal → attach organization → also forced business', () => {
-  const out = normalizeClassification({
-    organizationId: 'org1',
-    activityType: 'private',
-    orgTypeId: 'school',
-  });
-  assert.equal(out.activityType, 'business');
+test('an organization never overwrites a classification the deal already carries', () => {
+  // The rule that replaced "org forces business". A company booking a private
+  // experience, and a company buying seats on an open tour, are both real; the
+  // organization says who pays, not what is delivered. Changing what a deal IS
+  // belongs to the conversion flow, never to a side-effect of linking a company.
+  assert.equal(
+    normalizeClassification({ organizationId: 'org1', activityType: 'private', orgTypeId: 'school' })
+      .activityType,
+    'private',
+  );
+  assert.equal(
+    normalizeClassification({ organizationId: 'org1', activityType: 'group', orgTypeId: 'school' })
+      .activityType,
+    'group',
+  );
 });
 
 // ── Bug #2: manual type must never survive next to a linked organization ─────
@@ -150,4 +158,51 @@ test('empty-string inputs normalise to null (API sends "" for cleared selects)',
     organizationTypeId: null,
     organizationSubtypeId: null,
   });
+});
+
+// ── The activity rule is a DEFAULT, not an override ──────────────────────────
+//
+// The rule is deliberately transition-FREE: there is no "attaching" state and
+// no "explicit" flag, because any such state is a back door through which a
+// deal's identity can change outside the conversion flow that owns it.
+
+test('the rule is idempotent — repeated saves never drift a deliberate classification', () => {
+  const once = normalizeClassification({
+    organizationId: 'org1', activityType: 'private', orgTypeId: 'school',
+  });
+  const twice = normalizeClassification({
+    organizationId: 'org1', activityType: once.activityType, orgTypeId: 'school',
+  });
+  assert.equal(once.activityType, 'private');
+  assert.equal(twice.activityType, 'private');
+});
+
+test('a deliberate private-with-organization deal keeps the ORG TYPE rule intact', () => {
+  // The organization-type half of the SSOT is untouched by the activity change:
+  // the deal-level copy is still force-cleared, and a foreign subtype is still
+  // dropped. Only `activityType` was ever in question.
+  const out = normalizeClassification({
+    organizationId: 'org1',
+    activityType: 'private',
+    organizationTypeId: 'stale-deal-level-type',
+    organizationSubtypeId: 'sub-of-another-type',
+    orgTypeId: 'school',
+    subtypeTypeId: 'municipality',
+  });
+  assert.deepEqual(out, {
+    activityType: 'private',
+    organizationTypeId: null,
+    organizationSubtypeId: null,
+  });
+});
+
+test('an explicit clear on an org-linked deal falls back to business, never null', () => {
+  // The API sends activityType:'' to clear. An org-linked deal has an answer
+  // available, so it is used — persisting a null classification is its own bug.
+  const out = normalizeClassification({
+    organizationId: 'org1',
+    activityType: '',
+    orgTypeId: 'school',
+  });
+  assert.equal(out.activityType, 'business');
 });

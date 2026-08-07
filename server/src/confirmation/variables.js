@@ -15,6 +15,7 @@
 // strictness the composer uses (names never fall back across languages).
 
 import { durationHe, durationEn } from '../../../shared/duration.mjs';
+import { effectiveActivityType } from '../../../shared/dealActivity.mjs';
 import {
   TOUR_LANG_LABELS,
   ACTIVITY_TYPE_LABELS,
@@ -113,8 +114,11 @@ export const CONFIRMATION_VARIABLES = [
     key: 'activity_type', category: 'deal',
     labelHe: 'סוג הפעילות', labelEn: 'Activity type',
     descriptionHe: 'קבוצתי / פרטי / עסקי, בשפת השליחה',
+    // THE shared resolver (shared/dealActivity.mjs) — an explicit activity type
+    // is authoritative; a linked organization answers only when nothing was
+    // chosen. Never re-derived inline.
     resolve: (ctx, lang) => {
-      const key = ctx.deal?.organizationId ? 'business' : ctx.deal?.activityType;
+      const key = effectiveActivityType(ctx.deal);
       return key ? ACTIVITY_TYPE_LABELS[lang === 'en' ? 'en' : 'he']?.[key] || null : null;
     },
   },

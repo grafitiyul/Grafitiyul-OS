@@ -65,6 +65,7 @@ import savedViewsRouter from './routes/savedViews.js';
 import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
 import dealTourPlanRouter from './routes/dealTourPlan.js';
+import dealConversionRouter from './routes/dealConversion.js';
 import icountDocsRouter from './routes/icountDocs.js';
 import taskTypesRouter from './routes/taskTypes.js';
 import whatsappTemplatesRouter from './routes/whatsappTemplates.js';
@@ -403,6 +404,11 @@ app.use('/api/deals', requireAdminAuth, dealFilesRouter);
 // Deal Tour PLANNING (pre-WON) — /:id/tour-plan* (same nested pattern). The
 // internal planning layer; materialized into a real tour by the WON transition.
 app.use('/api/deals', requireAdminAuth, dealTourPlanRouter);
+// Activity-type CONVERSION — /:id/conversion*. The ONE writer of activityType
+// on a deal that already carries operational state (the plain PUT refuses with
+// 409 conversion_required); cancels/creates bookings, moves seats, reconciles
+// scheduled messages and writes the audit record.
+app.use('/api/deals', requireAdminAuth, dealConversionRouter);
 // iCount accounting documents + custom payment links — /:id/icount/*,
 // /:id/custom-payment-links (same nested-under-deals pattern as tasks/files).
 app.use('/api/deals', requireAdminAuth, icountDocsRouter);

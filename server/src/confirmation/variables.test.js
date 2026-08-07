@@ -89,7 +89,7 @@ test('English resolution is strict for names, labeled for enums', () => {
   assert.equal(values.team_name, 'The Grafitiyul team');
 });
 
-test('linked organization wins over deal-level classification', () => {
+test('organization details resolve, and an EXPLICIT activity type is kept', () => {
   const withOrg = {
     ...ctx,
     deal: {
@@ -101,7 +101,18 @@ test('linked organization wins over deal-level classification', () => {
   const { values } = resolveConfirmationVariables(withOrg, 'he');
   assert.equal(values.org_name, 'סוכנות נסיעות בע״מ');
   assert.equal(values.org_type, 'סוכנות');
-  assert.equal(values.activity_type, 'עסקי'); // org forces business
+  // ctx.deal carries an explicit activityType — the organization is a default
+  // for deals with no answer of their own, never an override (dealActivity.mjs).
+  assert.equal(values.activity_type, 'קבוצתי');
+});
+
+test('an unclassified deal with an organization reads as business', () => {
+  const unclassified = {
+    ...ctx,
+    deal: { ...ctx.deal, activityType: null, organizationId: 'org1' },
+  };
+  const { values } = resolveConfirmationVariables(unclassified, 'he');
+  assert.equal(values.activity_type, 'עסקי');
 });
 
 test('empty context resolves everything to "" with labeled missing entries', () => {

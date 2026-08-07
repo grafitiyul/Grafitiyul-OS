@@ -539,6 +539,24 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    // ── Activity-type CONVERSION ("שנה סוג פעילות") ──────────────────────
+    // The ONE way activityType changes on a deal that already has operational
+    // state — the plain update refuses those with 409 conversion_required.
+    // `preview` is a pure read (no emit); `convert` cancels/creates bookings
+    // and tours, so it goes through tourMutation like every tour-affecting
+    // call. `retryConversionEffects` finishes a conversion whose external
+    // syncs failed — idempotent, and it can never re-convert anything.
+    conversionPreview: (id, params) => request(`/api/deals/${id}/conversion/preview${qs(params)}`),
+    convert: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/conversion`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })),
+    retryConversionEffects: (id, data = {}) =>
+      request(`/api/deals/${id}/conversion/retry-effects`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     addContact: (id, data) =>
       request(`/api/deals/${id}/contacts`, {
         method: 'POST',

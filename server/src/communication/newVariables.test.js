@@ -44,9 +44,16 @@ test('activity_type returns the business label per language', () => {
   assert.equal(resolveVariables(['activity_type'], fullCtx, 'en').values.activity_type, 'Private');
 });
 
-test('activity_type: a linked organization forces the business label (classification SSOT)', () => {
-  const ctx = { ...fullCtx, deal: { ...fullCtx.deal, activityType: 'private', organizationId: 'org1' } };
+test('activity_type: a linked organization labels an UNCLASSIFIED deal business', () => {
+  const ctx = { ...fullCtx, deal: { ...fullCtx.deal, activityType: null, organizationId: 'org1' } };
   assert.equal(resolveVariables(['activity_type'], ctx, 'he').values.activity_type, 'עסקי');
+});
+
+test('activity_type: an EXPLICIT type outranks the linked organization', () => {
+  // shared/dealActivity.mjs — the organization answers for a deal with no
+  // answer of its own; it never overwrites a deliberate classification.
+  const ctx = { ...fullCtx, deal: { ...fullCtx.deal, activityType: 'private', organizationId: 'org1' } };
+  assert.equal(resolveVariables(['activity_type'], ctx, 'he').values.activity_type, 'פרטי');
 });
 
 test('sub_organization resolves the OrganizationUnit name; missing unit is missing', () => {

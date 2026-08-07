@@ -67,6 +67,7 @@ import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import WonRecoveryBar from './WonRecoveryBar.jsx';
+import ActivityConversionDialog from './ActivityConversionDialog.jsx';
 import PostPaymentCompletionModal from './PostPaymentCompletionModal.jsx';
 import { deleteBlockedMessage } from './deleteBlocked.js';
 import { fmtTourDate } from '../tours/config.js';
@@ -171,6 +172,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // + the canonical CreateDealModal; this flag only opens/closes it.
   const [sameContactOpen, setSameContactOpen] = useState(false);
   const [silentWonOpen, setSilentWonOpen] = useState(false);
+  // "שנה סוג פעילות" — opened from the kebab, and automatically whenever the
+  // server refuses a plain activityType edit with 409 conversion_required.
+  const [conversionOpen, setConversionOpen] = useState(false);
   // שכפל דיל re-entry guard (ref, not state — no re-render needed).
   const dupBusyRef = useRef(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
@@ -667,6 +671,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       await api.deals.update(id, payload);
       await refresh();
     } catch (e) {
+      // The deal already has operational state (an active booking or seats), so
+      // changing the activity type moves real tours and real seats. The server
+      // refuses the plain edit and the operator lands in the flow that does it
+      // properly — never a dead end, and never a silent half-change.
+      if (e.payload?.error === 'conversion_required') {
+        setConversionOpen(true);
+        return;
+      }
       alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
@@ -1440,6 +1452,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               >
                 העתק URL של דיל
               </button>
+              {/* Changing what a deal IS moves seats on real tours and changes
+                  what the customer is booked for — a structured conversion, not
+                  a field edit. Lives here rather than in the activity badge:
+                  the badge stays the quick classification control for deals
+                  with nothing operational attached. */}
+              <button
+                onClick={() => { setMenuOpen(false); setConversionOpen(true); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                <div>שנה סוג פעילות</div>
+                <div className="text-[11px] text-gray-500">העברה מסודרת בין קבוצתי · פרטי · עסקי</div>
+              </button>
               {/* Historical correction — deliberately NOT beside the WON button:
                   it closes a deal that already happened without firing today's
                   operational machinery. Hidden once the deal is WON. */}
@@ -1533,6 +1557,25 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           deal={deal}
           onClose={() => setSilentWonOpen(false)}
           onDone={() => { setSilentWonOpen(false); refresh(); }}
+        />
+      )}
+
+      {/* "שנה סוג פעילות" — the structured conversion. Mounted on demand so a
+          fresh operation id is minted per operator intent (its idempotency
+          identity), never reused across two different decisions. */}
+      {conversionOpen && (
+        <ActivityConversionDialog
+          open={conversionOpen}
+          deal={deal}
+          onClose={() => setConversionOpen(false)}
+          onDone={(res, opts) => {
+            setConversionOpen(false);
+            refresh();
+            // The updated confirmation is OFFERED, never sent blind: this opens
+            // the existing preview with the NEW operational state so the
+            // operator approves what the customer will actually receive.
+            if (opts?.sendConfirmation) setConfirmEmailOpen(true);
+          }}
         />
       )}
 
@@ -1981,13 +2024,6 @@ function BuildingIcon() {
   );
 }
 
-// Selected-option styling inside the editor popover. (Badge tone maps live in
-// deals/config.js — shared with the WhatsApp inbox badge, one source only.)
-const ACTIVITY_OPTION_ON = {
-  business: 'bg-emerald-600 text-white border-emerald-600',
-  private: 'bg-rose-600 text-white border-rose-600',
-  group: 'bg-amber-500 text-white border-amber-500',
-};
 // The single identity badge that sits next to the deal title. It is DISPLAY ONLY
 // — it shows the most specific classification at a glance and never exposes a
 // form. Clicking opens a small popover that holds all the editing controls.
@@ -2075,9 +2111,6 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
     subtypes.filter((s) => !s.organizationTypeId || s.organizationTypeId === tId);
 
   function pickActivity(v) {
-    // Org-linked deals are business by definition — the buttons are disabled,
-    // this guard is just belt-and-braces (the server enforces it regardless).
-    if (hasOrg && v !== 'business') return;
     if (v === 'business') {
       if (deal.activityType !== 'business') onActivityType('business');
       setStep('orgType');
@@ -2155,27 +2188,30 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
       <div className="flex gap-1.5 px-1">
         {ACTIVITY_TYPES.map((v) => {
           const on = deal.activityType === v;
-          // Org-linked → business by definition; group/private are not offerable.
-          const locked = hasOrg && v !== 'business';
           return (
             <button
               key={v}
               type="button"
               onClick={() => pickActivity(v)}
-              disabled={locked}
-              title={locked ? 'דיל עם ארגון מקושר הוא עסקי' : undefined}
               className={`flex-1 rounded-lg px-2 py-1.5 text-[12px] font-medium border transition ${
                 on ? ACTIVITY_OPTION_ON[v] : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-              } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white`}
+              }`}
             >
               {ACTIVITY_TYPE_LABELS[v]}
             </button>
           );
         })}
       </div>
+      {/* An organization is WHO PAYS, not WHAT IS DELIVERED — a company can book
+          a private experience or seats on an open tour. So the org no longer
+          locks the choice; it only supplies the answer for a deal that has
+          none. The note explains whichever of the two states is live, so the
+          combination never reads as a mistake. */}
       {hasOrg && (
         <p className="px-1 pt-1.5 text-[11px] text-gray-400">
-          מקושר ארגון — הדיל עסקי בהגדרה. להסרה: עריכת הארגון בכותרת.
+          {deal.activityType && deal.activityType !== 'business'
+            ? `מקושר ארגון (${deal.organization?.name}) והפעילות מסווגת כ${ACTIVITY_TYPE_LABELS[deal.activityType]} — בחירה מכוונת. הארגון נשאר מקושר לחשבונית ולהיסטוריה.`
+            : 'מקושר ארגון — הדיל מסווג כעסקי. אפשר לבחור סוג פעילות אחר; הארגון יישאר מקושר.'}
         </p>
       )}
     </div>

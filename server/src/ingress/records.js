@@ -137,7 +137,7 @@ export async function createLeadDeal(tx, { normalized, stageKey = null }) {
   //
   const classification = normalizeClassification({
     organizationId,
-    activityType: organizationId ? 'business' : activityTypeForIngress(normalized),
+    activityType: activityTypeForIngress(normalized),
     organizationTypeId: null,
     organizationSubtypeId: null,
     orgTypeId: null,
@@ -516,9 +516,15 @@ export async function updateOrderDeal(tx, { dealId, normalized, meaning, previou
   if (normalized.context?.participants !== null && normalized.context?.participants !== undefined) {
     data.participants = normalized.context.participants;
   }
-  // A linked organization is the classification SSOT — never contradict it.
-  const deal = await tx.deal.findUnique({ where: { id: dealId }, select: { organizationId: true } });
-  if (deal?.organizationId) delete data.activityType;
+  // A paid Woo order is a group booking — but never overwrite a classification
+  // a human already made on this deal. An org-linked deal, and equally a deal
+  // an operator deliberately classified (including through the activity-type
+  // conversion flow), keeps what it has; only an unclassified deal is stamped.
+  const deal = await tx.deal.findUnique({
+    where: { id: dealId },
+    select: { organizationId: true, activityType: true },
+  });
+  if (deal?.organizationId || deal?.activityType) delete data.activityType;
 
   await tx.deal.update({ where: { id: dealId }, data });
   await writeOrderStatusNote(tx, { dealId, normalized, meaning, previousStatus, createdAt });

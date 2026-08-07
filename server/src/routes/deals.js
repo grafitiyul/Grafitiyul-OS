@@ -50,6 +50,7 @@ import {
   resolveActivityType,
   persistAssumedActivityType,
 } from '../deals/resolveActivityType.js';
+import { hasOperationalState } from '../deals/activityConversion.js';
 import { stampSettledRegistration } from '../tours/registrations.js';
 import { clearPostPaymentCompletion } from '../deals/postPaymentReview.js';
 import { dealDeletionBlockers, clearDeletableDealRefs } from '../deals/deleteGuard.js';
@@ -659,7 +660,8 @@ router.post(
     const tourErr = applyTourFields(b, data);
     if (tourErr) return res.status(400).json({ error: tourErr });
 
-    // Linked organization ⇒ business + the ORG's type is the effective type.
+    // The ORG's type is the effective type; a new deal that links an
+    // organization is classified business unless the caller named a type.
     const classErr = await reconcileClassification(data, {
       organizationId: data.organizationId,
       activityType: data.activityType,
@@ -793,11 +795,16 @@ router.put(
 
     // Classification SSOT — reconcile against the RESULTING organization link
     // (sent value if present, else the existing one), so attach, replace and
-    // detach all converge through the one rule: linked org ⇒ business, org's
-    // type effective (deal-level copy force-nulled), subtype must belong.
+    // detach all converge through the one rule: the org's type is effective
+    // (deal-level copy force-nulled), the subtype must belong, and the org
+    // supplies an activity type only when the deal has none. A save can no
+    // longer rewrite a classification the operator chose — which is what makes
+    // "private, organization kept" survive, and what keeps every real change of
+    // activity type inside the conversion flow that owns it.
+    const resultingOrgId =
+      b.organizationId !== undefined ? data.organizationId : existing.organizationId;
     const classErr = await reconcileClassification(data, {
-      organizationId:
-        b.organizationId !== undefined ? data.organizationId : existing.organizationId,
+      organizationId: resultingOrgId,
       activityType:
         b.activityType !== undefined ? data.activityType : existing.activityType,
       organizationTypeId:
@@ -884,6 +891,34 @@ router.put(
     const wonTransition = b.status === 'won' && existing.status !== 'won';
     const lostTransition = b.status === 'lost' && existing.status !== 'lost';
     const reopenTransition = b.status === 'open' && existing.status === 'won';
+
+    // ── activityType is NOT an ordinary field once the deal is operational ──
+    //
+    // This was the hole. `activityType` was written straight through here with
+    // no guard at all, and GROUP_LOCKED_FIELDS (below) does not contain it: an
+    // operator could flip a WON group deal to 'private' and the Booking stayed
+    // active on the group slot, the TicketRegistration kept consuming the seat,
+    // Woo kept showing it sold — and nothing detected it, because
+    // pendingTourUpdate() early-returns on a group slot and wonGate only runs
+    // on a WON transition. The deal was commercially one thing and operationally
+    // another, indefinitely.
+    //
+    // A deal with NO operational state has nothing to reconcile, so the ordinary
+    // edit keeps working and the common case keeps its one click. The moment
+    // there is an active booking or a capacity-holding registration, the change
+    // is a structured conversion and belongs to the ONE service that owns it
+    // (deals/activityConversion.js, POST /:id/conversion).
+    if (
+      b.activityType !== undefined
+      && (data.activityType || null) !== (existing.activityType || null)
+      && (await hasOperationalState(prisma, req.params.id))
+    ) {
+      return res.status(409).json({
+        error: 'conversion_required',
+        from: existing.activityType || null,
+        to: data.activityType || null,
+      });
+    }
 
     // A deal joined to a GROUP slot cannot edit slot-owned planning fields —
     // the slot is authoritative; moving = "החלף סיור" (the tour-booking route).
@@ -1439,10 +1474,25 @@ router.post(
     if (chosen && !VALID_ACTIVITY_TYPES.includes(chosen)) {
       return res.status(400).json({ error: 'invalid_activity_type' });
     }
-    // The org rule is canonical and outranks a hand-picked value here: an
-    // org-linked deal is business, full stop (deals/classification.js).
-    if (chosen && chosen !== 'business' && before.organizationId) {
-      return res.status(409).json({ error: 'organization_forces_business' });
+    // An organization no longer forces business — it answers only for a deal
+    // with no answer of its own (shared/dealActivity.mjs) — so any of the three
+    // types is a legitimate answer here, org or not.
+    //
+    // What IS refused is CORRECTING the classification of a deal that already
+    // carries operational state. Confirming the system's assumption is what
+    // this card is for; changing what the deal IS moves seats and tours and
+    // belongs to the ONE service that owns that (POST /:id/conversion). The
+    // client opens the conversion dialog on this code.
+    if (
+      chosen
+      && chosen !== (before.activityType || null)
+      && (await hasOperationalState(prisma, req.params.id))
+    ) {
+      return res.status(409).json({
+        error: 'conversion_required',
+        from: before.activityType || null,
+        to: chosen,
+      });
     }
 
     const origin = await userOrigin(req.adminAuth?.userId);

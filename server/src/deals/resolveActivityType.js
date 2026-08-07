@@ -15,10 +15,12 @@
 //      Never inferred from anything softer — a group registration owns a real
 //      seat on a real slot, and inventing one would fabricate operational state.
 //   2. an ORGANIZATION is linked → business. This is not a guess: it is the
-//      project's existing canonical classification rule (deals/classification.js
-//      normalizeClassification force-writes activityType='business' for every
-//      org-linked deal on create and update). Applying it here just applies it
-//      LATE, to a row that predates the rule or never passed through the API.
+//      project's canonical classification rule (shared/dealActivity.mjs
+//      effectiveActivityType — an organization answers for a deal that has no
+//      answer of its own). Applying it here just applies it LATE, to a row that
+//      predates the rule or never passed through the API. Note it is a DEFAULT,
+//      not an override: step 1 above already returned for any deal that carries
+//      its own value, including a deliberate private-with-organization deal.
 //   3. otherwise → private. The residual case, and the overwhelmingly common
 //      one: a private customer bought a private experience.
 //
@@ -30,6 +32,7 @@
 // classifies a customer's business.
 
 import { emitTimelineEvent } from '../timeline/events.js';
+import { effectiveActivityType } from '../../../shared/dealActivity.mjs';
 
 /** Payment/WON causes that PROVE money actually arrived (Deal.wonActor.cause). */
 const PAID_CAUSES = new Set(['card_payment', 'icount_payment', 'cardcom_payment', 'woo_order']);
@@ -53,7 +56,13 @@ export function resolveActivityType(deal, { groupSlotSelected = false } = {}) {
   if (groupSlotSelected) {
     return { activityType: 'group', assumed: true, reason: 'group_slot_selected' };
   }
-  if (deal?.organizationId) {
+  // Steps 2 and 3 ARE the shared reader ladder (shared/dealActivity.mjs) — the
+  // org answers for a deal that has no answer of its own. Delegated rather than
+  // repeated so "does an organization mean business?" has exactly one answer in
+  // the codebase; this function only adds the group signal it can see and the
+  // residual `private` it is obliged to commit to.
+  const effective = effectiveActivityType(deal);
+  if (effective === 'business') {
     return { activityType: 'business', assumed: true, reason: 'organization_linked' };
   }
   return { activityType: 'private', assumed: true, reason: 'default_private' };

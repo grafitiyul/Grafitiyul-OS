@@ -18,6 +18,7 @@
 // are caught at save time — before an operator ever reaches send.
 
 import { effectiveOrgTypeId } from '../deals/classification.js';
+import { effectiveActivityType } from '../../../shared/dealActivity.mjs';
 
 export const CONFIRMATION_ACTIVITY_TYPES = ['group', 'private', 'business'];
 
@@ -54,13 +55,22 @@ export function templateMatches(t, ctx = {}) {
   });
 }
 
-// Deal → matching context. A linked organization forces `business` and the
-// org's OWN type — the classification SSOT (src/deals/classification.js);
-// language, guide and org-subtype deliberately play no part here.
+// Deal → matching context.
+//
+// activityType comes from THE shared resolver (shared/dealActivity.mjs): an
+// explicit activity type is authoritative, and a linked organization answers
+// only for a deal that has none. This used to read the org link as an OVERRIDE,
+// which sent the BUSINESS confirmation email — wrong date wording, wrong
+// framing — to a company that had deliberately booked a private tour.
+//
+// orgTypeId still comes from the organization, unchanged: the ORGANIZATION TYPE
+// half of the classification SSOT (src/deals/classification.js) was always
+// correct and is untouched. Language, guide and org-subtype deliberately play
+// no part here.
 export function confirmationCtxFromDeal(deal) {
   return {
     productId: deal?.productId || null,
-    activityType: deal?.organizationId ? 'business' : deal?.activityType || null,
+    activityType: effectiveActivityType(deal),
     orgTypeId: effectiveOrgTypeId(deal),
   };
 }

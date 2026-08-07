@@ -19,10 +19,21 @@ test('activity exclude gate', () => {
   assert.equal(evaluateApplicability(event, { deal: { activityType: 'private' } }).applicable, true);
 });
 
-test('linked organization forces business (classification SSOT)', () => {
+test('an UNCLASSIFIED deal with a linked organization counts as business', () => {
   const event = { ...baseEvent, activityMode: 'include', activityTypes: ['business'] };
-  const ctx = { deal: { activityType: 'private', organizationId: 'org1' } };
+  const ctx = { deal: { activityType: null, organizationId: 'org1' } };
   assert.equal(evaluateApplicability(event, ctx).applicable, true);
+});
+
+test('an EXPLICIT activity type outranks the linked organization', () => {
+  // A company that deliberately booked a private tour must not be swept into
+  // the business audience — the gate reads shared/dealActivity.mjs, which
+  // treats the organization as a default, never an override.
+  const businessOnly = { ...baseEvent, activityMode: 'include', activityTypes: ['business'] };
+  const privateOnly = { ...baseEvent, activityMode: 'include', activityTypes: ['private'] };
+  const ctx = { deal: { activityType: 'private', organizationId: 'org1' } };
+  assert.equal(evaluateApplicability(businessOnly, ctx).applicable, false);
+  assert.equal(evaluateApplicability(privateOnly, ctx).applicable, true);
 });
 
 test('org type filter uses the linked org type, falling back to the deal copy', () => {
