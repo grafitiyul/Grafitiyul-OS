@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activityMismatch } from './activityMismatch.js';
+import { activityMismatch, mismatchSeverity } from './activityMismatch.js';
 
 // The predicate that would have caught the original hole: a WON group deal
 // flipped to 'private' while its Booking stayed active on the group slot.
@@ -45,4 +45,24 @@ test('an unknown activity type is not asserted about', () => {
 test('a tour with no kind is not asserted about', () => {
   assert.equal(activityMismatch({ activityType: 'private' }, {}), false);
   assert.equal(activityMismatch({ activityType: 'private' }, null), false);
+});
+
+// ── severity: the two classes are genuinely different ────────────────────────
+//
+// The first production sweep found 9 real mismatches — 6 business-on-private
+// (legacy residue of the old "organization forces business" rule) and 3
+// group-on-private. Calling all nine CRITICAL would bury the three that matter.
+
+test('a mismatch involving a group slot is CRITICAL', () => {
+  assert.equal(mismatchSeverity({ activityType: 'private' }, { kind: 'group_slot' }), 'critical');
+  assert.equal(mismatchSeverity({ activityType: 'business' }, { kind: 'group_slot' }), 'critical');
+  assert.equal(mismatchSeverity({ activityType: 'group' }, { kind: 'private' }), 'critical');
+  assert.equal(mismatchSeverity({ activityType: 'group' }, { kind: 'business' }), 'critical');
+});
+
+test('private ↔ business is a WARNING — a label, not a broken operation', () => {
+  // The same fact the conversion service relies on when it updates `kind` in
+  // place instead of replacing the tour: nothing operational differs.
+  assert.equal(mismatchSeverity({ activityType: 'private' }, { kind: 'business' }), 'warning');
+  assert.equal(mismatchSeverity({ activityType: 'business' }, { kind: 'private' }), 'warning');
 });

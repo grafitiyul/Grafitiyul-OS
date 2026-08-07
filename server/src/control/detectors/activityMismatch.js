@@ -51,23 +51,55 @@ export function activityMismatch(deal, tour) {
   return expected !== tour.kind;
 }
 
+// HOW BADLY wrong — and the two cases really are different in kind, which the
+// first production sweep proved: it found 9 real mismatches, 6 of them
+// business-deal-on-a-private-tour (the legacy residue of the old
+// "organization forces business" rule, which flipped the deal without ever
+// touching the tour) and 3 of them group-deal-on-a-dedicated-tour.
+//
+//   group ↔ dedicated  — CRITICAL. Genuinely incoherent: the seat model,
+//     capacity, Woo stock and the open-tour reports all read the tour, while
+//     pricing and customer communication read the deal. They disagree about
+//     what is being sold.
+//
+//   private ↔ business — WARNING. Nothing in the server branches on this
+//     distinction: every operational branch is group_slot vs not. It is the
+//     calendar summary line and the guide portal label. Exactly the reason the
+//     conversion service updates `kind` in place instead of replacing the tour
+//     — and exactly why raising six CRITICAL cards for it would teach the
+//     office to ignore the detector that catches the real thing.
+export function mismatchSeverity(deal, tour) {
+  const involvesGroup = deal?.activityType === 'group' || tour?.kind === 'group_slot';
+  return involvesGroup ? 'critical' : 'warning';
+}
+
 function buildPayload(deal, tour) {
   const customer = dealBookerLabel(deal) || 'לקוח';
   const when = [fmtDate(tour.date), tour.startTime].filter(Boolean).join(' ');
   const dealLabel = ACTIVITY_TYPE_LABELS_HE[deal.activityType] || deal.activityType;
   const tourLabel = KIND_LABEL_HE[tour.kind] || tour.kind;
+  const severity = mismatchSeverity(deal, tour);
+  const opening = `הדיל מסווג כפעילות ${dealLabel}, אך הוא משובץ ל${tourLabel}${when ? ` בתאריך ${when}` : ''}. `;
   return {
     type: TYPE,
-    severity: 'critical',
+    severity,
     sourceModule: 'deals',
     dedupeKey: dedupeKey(deal.id),
-    title: `סוג הפעילות בדיל אינו תואם לסיור המשובץ — ${customer}`,
+    title:
+      severity === 'critical'
+        ? `סוג הפעילות בדיל אינו תואם לסיור המשובץ — ${customer}`
+        : `סיווג הסיור לא עודכן לפי הדיל — ${customer}`,
     explanation:
-      `הדיל מסווג כפעילות ${dealLabel}, אך הוא משובץ ל${tourLabel}${when ? ` בתאריך ${when}` : ''}. `
-      + 'כלומר מבחינה מסחרית הדיל אומר דבר אחד ומבחינה תפעולית קורה דבר אחר: '
-      + 'התמחור, מייל האישור, המסרים ללקוח והדוחות נגזרים מהסיווג שבדיל, '
-      + 'בעוד שהמקומות, המדריכים והיומן נגזרים מהסיור בפועל. '
-      + 'יש להכריע מה נכון ולבצע שינוי סוג פעילות מסודר מתוך הדיל.',
+      severity === 'critical'
+        ? opening
+          + 'כלומר מבחינה מסחרית הדיל אומר דבר אחד ומבחינה תפעולית קורה דבר אחר: '
+          + 'התמחור, מייל האישור, המסרים ללקוח והדוחות נגזרים מהסיווג שבדיל, '
+          + 'בעוד שהמקומות, הקיבולת, המלאי בחנות והמדריכים נגזרים מהסיור בפועל. '
+          + 'יש להכריע מה נכון ולבצע שינוי סוג פעילות מסודר מתוך הדיל.'
+        : opening
+          + 'ההבדל בין פרטי לעסקי הוא בתווית בלבד — המקומות, הקיבולת והתפעול זהים לגמרי, '
+          + 'ולכן שום דבר לא שבור. מה שכן: ביומן ובאזור המדריכים הסיור עדיין מוצג בסיווג הישן. '
+          + 'שינוי סוג פעילות מתוך הדיל מיישר את התווית באותו סיור עצמו, בלי לגעת בשום דבר אחר.',
     entityRefs: [
       { type: 'deal', id: deal.id, orderNo: deal.orderNo, label: customer },
       { type: 'tour_event', id: tour.id, label: when || 'סיור' },
@@ -133,7 +165,9 @@ registerIssueType(TYPE, {
   labelHe: 'סוג פעילות שאינו תואם לסיור',
   purposeHe:
     'הדיל מסווג כסוג פעילות אחד אך משובץ לסיור מסוג אחר — התמחור והתקשורת עם הלקוח '
-    + 'נגזרים מהסיווג, בעוד המקומות והתפעול נגזרים מהסיור בפועל.',
+    + 'נגזרים מהסיווג, בעוד המקומות והתפעול נגזרים מהסיור בפועל. '
+    + 'אי-התאמה שמערבת סיור קבוצתי היא קריטית (מקומות, קיבולת ומלאי); '
+    + 'אי-התאמה בין פרטי לעסקי היא תווית בלבד ומסומנת כאזהרה.',
   fixHe: 'נסגר אוטומטית כשמבצעים שינוי סוג פעילות מסודר מתוך הדיל, או כשהדיל משובץ לסיור מהסוג הנכון.',
   sourceModule: 'deals',
   buildActions(issue) {
