@@ -17,6 +17,9 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
   const [busyId, setBusyId] = useState(null);
   const [menuId, setMenuId] = useState(null);
   const [editId, setEditId] = useState(null);
+  // Tasks completed from THIS strip, held on screen so the completion stays
+  // reversible from the same checkbox: id -> { task, index }.
+  const [closedHere, setClosedHere] = useState(() => new Map());
 
   useEffect(() => {
     // /api/admin-users returns { users: [...] } — normalize to an array.
@@ -29,7 +32,22 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
       .catch(() => {});
   }, []);
 
-  if (!tasks || tasks.length === 0) return null;
+  // A task completed HERE stays on screen, in its place, in its completed
+  // state — so the checkbox that completed it is still under the pointer and
+  // clicking it again reopens. Without this the row vanished on the next
+  // refetch (the strip is fed `status=open`) and an accidental completion had
+  // no way back from where it happened.
+  //
+  // It is a display memory only: `id -> { task, index }`, dropped as soon as
+  // the task is reopened (the refetch owns it again) or the Deal is left.
+  const openIds = new Set((tasks || []).map((t) => t.id));
+  const rows = [...(tasks || [])];
+  for (const [id, held] of closedHere) {
+    if (openIds.has(id)) continue; // reopened — the live list has it
+    rows.splice(Math.min(held.index, rows.length), 0, { ...held.task, status: 'completed' });
+  }
+
+  if (rows.length === 0) return null;
 
   // `cause` names WHY the tasks changed. Completing the last open task on an
   // OPEN deal is the one case the timeline reacts to (it offers the next task),
@@ -40,20 +58,51 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
     try {
       await fn();
       onChanged?.(cause);
+      return true;
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
+      return false;
     } finally {
       setBusyId(null);
     }
   }
 
+  const forget = (id) =>
+    setClosedHere((cur) => {
+      if (!cur.has(id)) return cur;
+      const next = new Map(cur);
+      next.delete(id);
+      return next;
+    });
+
+  // Hold the row FIRST, so the tick is instant and the row never blinks out
+  // between the request and the refetch. A refusal puts it straight back.
+  async function completeTask(t, index) {
+    setClosedHere((cur) => new Map(cur).set(t.id, { task: t, index }));
+    const ok = await run(() => api.dealTasks.complete(dealId, t.id), t.id, {
+      reason: 'completed',
+      taskId: t.id,
+    });
+    if (!ok) forget(t.id);
+  }
+
+  // The canonical terminal→open transition — same row, same id, history kept.
+  async function reopenTask(t) {
+    const ok = await run(() => api.tasks.bulk({ action: 'reopen', ids: [t.id] }), t.id, {
+      reason: 'task_reopened',
+      taskId: t.id,
+    });
+    if (ok) forget(t.id); // the refetch owns it again
+  }
+
   return (
     <section dir="rtl">
       <h3 className="text-[12px] font-bold tracking-wide text-gray-500 mb-2">
-        משימות פתוחות ({tasks.length})
+        משימות פתוחות ({openIds.size})
       </h3>
       <ul className="space-y-2">
-        {tasks.map((t) => {
+        {rows.map((t, rowIndex) => {
+          const done = t.status && t.status !== 'open';
           const tone = t.priority ? PRIORITY_TONE[t.priority] : null;
           const isWa = t.channel === 'whatsapp';
           if (editId === t.id) {
@@ -89,29 +138,33 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
                   setEditId(t.id);
                 }
               }}
-              className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+              // NO hover tint or border change. The row is clickable (it opens
+              // the editor), but lighting it up on hover read as "this task is
+              // about to be selected/ticked" while the pointer was merely on
+              // its way to the checkbox. The only hover feedback in this row
+              // belongs to the controls inside it. Keyboard focus still shows a
+              // ring — that is focus, which is never triggered by a mouse.
+              className={`flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+                done ? 'bg-gray-50' : 'bg-white'
+              }`}
             >
               <TaskCheckbox
                 status={t.status || 'open'}
                 busy={busyId === t.id}
-                onComplete={() =>
-                  run(() => api.dealTasks.complete(dealId, t.id), t.id, {
-                    reason: 'completed',
-                    taskId: t.id,
-                  })
-                }
-                onReopen={() =>
-                  run(() => api.tasks.bulk({ action: 'reopen', ids: [t.id] }), t.id, {
-                    reason: 'task_reopened',
-                    taskId: t.id,
-                  })
-                }
+                onComplete={() => completeTask(t, rowIndex)}
+                onReopen={() => reopenTask(t)}
               />
               <span className="shrink-0 text-[15px] leading-none">
                 <TaskIcon name={t.icon} channel={t.channel} size={16} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-medium text-gray-800">{t.title}</div>
+                <div
+                  className={`truncate text-[13.5px] font-medium ${
+                    done ? 'text-gray-400 line-through' : 'text-gray-800'
+                  }`}
+                >
+                  {t.title}
+                </div>
                 <div className="flex items-center gap-2 text-[11.5px] text-gray-500">
                   <span>{formatDue(t.dueDate, t.dueTime)}</span>
                   {isWa && t.scheduled?.status && (
@@ -133,7 +186,11 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
               {/* Actions — the canonical AnchoredMenu (portaled, tap-dismissable):
                   the old hand-rolled absolute menu could only be dismissed by
                   mouseleave (impossible on touch) and was clipped by the
-                  workspace's overflow container. */}
+                  workspace's overflow container.
+                  A row held here in its COMPLETED state offers no menu: send-now
+                  and cancel are transitions of an open task, and the way back is
+                  the checkbox itself — not a menu item. */}
+              {!done && (
               <TaskRowMenu
                 open={menuId === t.id}
                 onToggle={() => setMenuId(menuId === t.id ? null : t.id)}
@@ -153,6 +210,7 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
                     run(() => api.dealTasks.cancel(dealId, t.id), t.id);
                 }}
               />
+              )}
             </li>
           );
         })}

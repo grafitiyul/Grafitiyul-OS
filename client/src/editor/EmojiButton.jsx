@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { EMOJI_I18N_HE, loadEmojiPicker } from '../lib/emojiPickerData.js';
+import EmojiPickerPanel from '../lib/EmojiPickerPanel.jsx';
 
-// The one shared emoji picker for every rich-text surface. Used by the body
-// editor's toolbar (RichEditor via Toolbar.jsx), the single-line TitleEditor
-// and the WhatsApp body editor — exactly one emoji implementation.
-//
-// Backed by emoji-picker-element (the full Unicode catalog, categories,
-// search, skin tones, frequently-used via IndexedDB) with the SAME bundled
-// dataset + Hebrew i18n as the WhatsApp chat composer — no external service,
-// nothing fetched at runtime. Loaded lazily on first open.
+// The emoji BUTTON for rich-text surfaces: the body editor's toolbar
+// (RichEditor via Toolbar.jsx), the single-line TitleEditor and the WhatsApp
+// body editor. The picker itself is EmojiPickerPanel — the one catalog shared
+// with the chat composer and message reactions; this file only owns the button
+// and where its popup sits.
 //
 // Insertion is a plain Unicode character via `insertContent`: it works in any
 // TipTap editor, in RTL and LTR content alike, never creates a block node and
@@ -16,7 +13,6 @@ import { EMOJI_I18N_HE, loadEmojiPicker } from '../lib/emojiPickerData.js';
 export default function EmojiButton({ editor, placement = 'up' }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const hostRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -34,33 +30,6 @@ export default function EmojiButton({ editor, placement = 'up' }) {
       document.removeEventListener('keydown', onEsc);
     };
   }, [open]);
-
-  // Mount the web component into the popup on open (lazy element + dataset).
-  useEffect(() => {
-    if (!open) return;
-    let disposed = false;
-    let picker = null;
-    let onPick = null;
-    loadEmojiPicker().then(({ dataSource }) => {
-      if (disposed || !hostRef.current) return;
-      picker = document.createElement('emoji-picker');
-      picker.dataSource = dataSource;
-      picker.i18n = EMOJI_I18N_HE;
-      picker.style.width = '100%';
-      picker.style.height = '100%';
-      onPick = (e) => {
-        const emoji = e?.detail?.unicode;
-        if (emoji && editor) editor.chain().focus().insertContent(emoji).run();
-        setOpen(false);
-      };
-      picker.addEventListener('emoji-click', onPick);
-      hostRef.current.replaceChildren(picker);
-    });
-    return () => {
-      disposed = true;
-      if (picker && onPick) picker.removeEventListener('emoji-click', onPick);
-    };
-  }, [open, editor]);
 
   const menuPos = placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-1';
 
@@ -81,13 +50,16 @@ export default function EmojiButton({ editor, placement = 'up' }) {
           role="dialog"
           aria-label="בחירת אימוג'י"
           dir="ltr"
-          className={`absolute ${menuPos} left-0 z-30 h-[22rem] w-[20rem] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg`}
+          className={`absolute ${menuPos} left-0 z-30 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg`}
         >
-          <div ref={hostRef} className="h-full w-full">
-            <div className="flex h-full items-center justify-center text-[12px] text-gray-400">
-              טוען אימוג׳ים…
-            </div>
-          </div>
+          <EmojiPickerPanel
+            width={320}
+            height={352}
+            onPick={(emoji) => {
+              if (editor) editor.chain().focus().insertContent(emoji).run();
+              setOpen(false);
+            }}
+          />
         </div>
       )}
     </div>

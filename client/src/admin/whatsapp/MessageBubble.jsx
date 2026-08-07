@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import MessageMedia from './MessageMedia.jsx';
 import Checks from './Checks.jsx';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import EmojiPickerPanel from '../../lib/EmojiPickerPanel.jsx';
 import { waTextNodes } from './WaText.jsx';
 import { waPlainText } from './waFormat.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
@@ -106,8 +107,15 @@ export default function MessageBubble({
   onBubbleTap = null,
 }) {
   const reactBtnRef = useRef(null);
+  const bubbleRef = useRef(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The quick row is the default; "+" swaps in the full catalog in place.
+  const [fullPicker, setFullPicker] = useState(false);
   const [reacting, setReacting] = useState(false);
+  const closePicker = () => {
+    setPickerOpen(false);
+    setFullPicker(false); // next open starts on the quick row again
+  };
   if (m.messageType === 'system') {
     return (
       <div className="my-2 flex justify-center">
@@ -131,7 +139,7 @@ export default function MessageBubble({
   // would race two different truths onto the same row.
   const react = async (emoji) => {
     if (!onReact || reacting) return;
-    setPickerOpen(false);
+    closePicker();
     setReacting(true);
     try {
       // Clicking the emoji you already chose removes it, exactly like WhatsApp.
@@ -149,7 +157,10 @@ export default function MessageBubble({
           onClick={() => setPickerOpen((v) => !v)}
           title="תגובת אימוג'י"
           active={!!myEmoji}
-          shown={actionsShown}
+          // The action cluster is hover-revealed. While its own popup is open
+          // it must STAY revealed, or the operator is picking an emoji with the
+          // control they opened it from invisible underneath.
+          shown={actionsShown || pickerOpen}
         >
           {myEmoji || '☺'}
         </HoverAction>
@@ -175,6 +186,8 @@ export default function MessageBubble({
       {/* Actions — on the empty side of the row (hover, or tap on touch) */}
       {outbound && actions}
       <div
+        ref={bubbleRef}
+        data-message-bubble={m.id}
         onClick={(e) => {
           // Tap-to-reveal for touch: taps on interactive content (links,
           // media, audio controls) keep their own behavior.
@@ -251,30 +264,55 @@ export default function MessageBubble({
       </div>
       {!outbound && actions}
 
-      {/* Emoji picker — the canonical anchored popover, so it is never clipped
-          by the thread's scroll container. */}
+      {/* Reaction picker — the canonical anchored popover, so it is never
+          clipped by the thread's scroll container and flips/clamps at the
+          viewport edges.
+          It anchors to the BUBBLE, not to the ☺ button: that button lives in
+          the hover-revealed action cluster, so the moment the pointer left the
+          row it became `hidden`, its rect collapsed to 0×0, and the popup was
+          placed against that — which is how it ended up in a corner of the
+          screen instead of next to the message. The bubble is always laid out,
+          so the popup can never lose the message it belongs to. */}
       <AnchoredMenu
-        anchorRef={reactBtnRef}
+        anchorRef={bubbleRef}
         open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        width={222}
-        panelClassName="rounded-full px-1.5 py-1"
+        onClose={closePicker}
+        width={fullPicker ? 332 : 258}
+        align={outbound ? 'end' : 'start'}
+        panelClassName={fullPicker ? 'rounded-2xl p-0' : 'rounded-full px-1.5 py-1'}
       >
-        <div className="flex items-center justify-center gap-0.5">
-          {QUICK_REACTIONS.map((emoji) => (
+        {fullPicker ? (
+          // Every emoji — the SAME picker the editors and the chat composer
+          // use, not a second selector.
+          <EmojiPickerPanel onPick={react} width={330} height={300} />
+        ) : (
+          <div className="flex items-center justify-center gap-0.5">
+            {QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => react(emoji)}
+                title={emoji === myEmoji ? 'הסרת התגובה' : emoji}
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-[18px] transition hover:bg-gray-100 ${
+                  emoji === myEmoji ? 'bg-emerald-100' : ''
+                }`}
+              >
+                {emoji}
+              </button>
+            ))}
+            {/* WhatsApp's "+" — the quick row stays a quick row, and everything
+                else is one click away. */}
             <button
-              key={emoji}
               type="button"
-              onClick={() => react(emoji)}
-              title={emoji === myEmoji ? 'הסרת התגובה' : emoji}
-              className={`flex h-8 w-8 items-center justify-center rounded-full text-[18px] transition hover:bg-gray-100 ${
-                emoji === myEmoji ? 'bg-emerald-100' : ''
-              }`}
+              onClick={() => setFullPicker(true)}
+              title="עוד אימוג'ים"
+              aria-label="עוד אימוג'ים"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 text-[16px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
             >
-              {emoji}
+              +
             </button>
-          ))}
-        </div>
+          </div>
+        )}
       </AnchoredMenu>
     </div>
   );

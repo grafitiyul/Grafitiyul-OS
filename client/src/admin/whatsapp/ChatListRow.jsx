@@ -270,16 +270,23 @@ export default function ChatListRow({
             מוסתרת
           </span>
         )}
-        {/* Identity cluster — the NAME leads, the foreign-number flag follows
-            on its TRAILING side (RTL: to the left of the name; mirrors by
-            inherited direction in an LTR context), large enough to actually
-            read (flag-icons scale with font-size). One cluster so the flag
-            rides the NAME — the stretch gap sits between it and the
-            timestamp, never between the name and its flag. Israeli numbers
-            render nothing (PhoneFlag policy). */}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* Identity cluster — everything that answers "who is this", on ONE
+            line, in reading order:
+                [CRM name]  [flag]  ~  [WhatsApp name]
+            The CRM name leads and stays the primary identity (larger, and bold
+            while unread). The foreign-number flag sits BETWEEN the two names,
+            large enough to actually read (flag-icons scale with font-size);
+            Israeli numbers render nothing (PhoneFlag policy). The WhatsApp
+            profile name follows after a bare "~" — no label, because at this
+            size a word costs more than it explains — and only when it adds
+            information (chatIdentity.js).
+            One cluster, so the stretch gap sits between it and the timestamp
+            and never inside the identity itself. The CRM name truncates first:
+            it may shrink but never vanish, while the secondary name gives up
+            its space. */}
+        <span data-identity="cluster" className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <span
-            className={`min-w-0 truncate text-right text-[14px] ${
+            className={`min-w-0 shrink truncate text-right text-[14px] ${
               unread ? 'font-bold text-gray-900' : 'font-normal text-gray-600'
             }`}
             dir="auto"
@@ -293,7 +300,21 @@ export default function ChatListRow({
             )}
           </span>
           {!isGroup && chat.phoneNumber && (
-            <PhoneFlag phone={chat.phoneNumber} className="text-[16px]" />
+            <PhoneFlag phone={chat.phoneNumber} className="shrink-0 self-center text-[16px]" />
+          )}
+          {waName && (
+            <>
+              <span className="shrink-0 text-[12px] font-normal text-gray-300" aria-hidden>
+                ~
+              </span>
+              <span
+                className="min-w-0 shrink truncate text-[12.5px] font-normal text-gray-400"
+                dir="auto"
+                title={`השם בוואטסאפ: ${waName}`}
+              >
+                {waName}
+              </span>
+            </>
           )}
         </span>
         <span
@@ -342,20 +363,7 @@ export default function ChatListRow({
             {chat.account.label}
           </span>
         )}
-        {/* WhatsApp-native profile name — secondary to the CRM identity above,
-            shown only when it actually differs (chatIdentity.js). This is how
-            the operator recognises that "דור קורן" in the CRM is the
-            "Dor Koren Grafitiyul" they see on their phone. */}
-        {waName && (
-          <span
-            className="min-w-0 max-w-[45%] shrink truncate text-[10.5px] text-gray-400"
-            dir="auto"
-            title={`השם ב-WhatsApp: ${waName}`}
-          >
-            WhatsApp: {waName}
-          </span>
-        )}
-        {/* Phone — always visible, on the identity edge. The country flag now
+        {/* Phone — always visible, on the identity edge. The country flag
             rides the TITLE line (large), so this stays digits-only. */}
         {showPhone && (
           <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-gray-400" dir="ltr">

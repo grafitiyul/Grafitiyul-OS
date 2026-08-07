@@ -281,3 +281,82 @@ test('ordinary Hebrew that is unrelated to CRM status is left alone', () => {
   const inbox = fs.readFileSync(path.join(clientRoot, 'src', 'admin', 'whatsapp', 'WhatsAppInbox.jsx'), 'utf8');
   assert.match(inbox, /אבודים או שהסיור כבר עבר/);
 });
+
+// ── The completion checkbox is the only interactive thing in the row ────────
+
+test('the task row has NO hover tint or border change', async () => {
+  // Lighting the row up as the pointer travelled toward the checkbox read as
+  // "this task is about to be selected/ticked". The row is still clickable —
+  // it opens the editor — but hover feedback belongs to the controls inside it.
+  const { container, unmount } = await render(
+    React.createElement(OpenTasksStrip, { dealId: 'd1', tasks: [TASK], onChanged: () => {} }),
+  );
+  const row = container.querySelector('li[role="button"]');
+  assert.ok(row, 'the row is there');
+  assert.ok(!/hover:border-/.test(row.className), 'no hover border');
+  assert.ok(!/hover:bg-/.test(row.className), 'no hover background');
+  assert.ok(!/hover:ring-/.test(row.className), 'no hover ring');
+  // Keyboard focus is NOT hover and must keep its ring.
+  assert.match(row.className, /focus-visible:ring-2/, 'keyboard focus is still visible');
+  await unmount();
+});
+
+// A faithful stand-in for the real parent (TimelineFeed): it holds the OPEN
+// tasks and refetches on change — so a completed task really does leave the
+// list the strip is fed, exactly as in production.
+function StripHost({ initial }) {
+  const [tasks, setTasks] = React.useState(initial);
+  return React.createElement(OpenTasksStrip, {
+    dealId: 'd1',
+    tasks,
+    onChanged: () => setTasks((cur) => cur.filter((t) => t.status === 'open' && false)),
+  });
+}
+
+test('completing in the Deal keeps the row — and the same checkbox reopens it', async () => {
+  // The strip is fed status=open, so the row used to vanish on the refetch and
+  // an accidental completion had no way back from where it happened.
+  const { container, unmount } = await render(React.createElement(StripHost, { initial: [TASK] }));
+
+  const check = container.querySelector('[data-task-check="open"]');
+  assert.ok(check, 'an open checkbox to start');
+  await act(async () => check.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+  await act(async () => {});
+
+  assert.ok(posted.some((p) => /\/tasks\/t1\/complete/.test(p.url)), 'the completion fired');
+  const done = container.querySelector('[data-task-check="done"]');
+  assert.ok(done, 'the row is still on screen, now checked');
+  assert.equal(done.disabled, false, 'and the completed checkbox stays clickable');
+  assert.equal(container.querySelectorAll('li[role="button"]').length, 1, 'still exactly one row');
+
+  // Same control, other direction — through the canonical bulk reopen.
+  await act(async () => done.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+  await act(async () => {});
+  const reopen = posted.find((p) => p.url === '/api/tasks/bulk');
+  assert.ok(reopen, 'the canonical reopen endpoint was called');
+  assert.deepEqual(JSON.parse(reopen.body), { action: 'reopen', ids: ['t1'] });
+  // No replacement task was created anywhere along the way.
+  assert.ok(!posted.some((p) => /\/tasks$/.test(p.url)), 'nothing was created');
+  await unmount();
+});
+
+test('a completed row offers no ⋮ menu — the checkbox is the whole interaction', async () => {
+  const { container, unmount } = await render(React.createElement(StripHost, { initial: [TASK] }));
+  assert.ok(container.querySelector('button[aria-label="פעולות"]'), 'an open row has the ⋮');
+  const check = container.querySelector('[data-task-check="open"]');
+  await act(async () => check.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+  await act(async () => {});
+  assert.ok(container.querySelector('[data-task-check="done"]'), 'completed and still shown');
+  assert.equal(container.querySelector('button[aria-label="פעולות"]'), null, 'no ⋮ on a completed row');
+  await unmount();
+});
+
+test('a completed row reads as completed — struck through and muted', async () => {
+  const { container, unmount } = await render(React.createElement(StripHost, { initial: [TASK] }));
+  const check = container.querySelector('[data-task-check="open"]');
+  await act(async () => check.dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
+  await act(async () => {});
+  const title = [...container.querySelectorAll('div')].find((d) => d.textContent.trim() === TASK.title);
+  assert.match(title.className, /line-through/, 'the title is struck through');
+  await unmount();
+});

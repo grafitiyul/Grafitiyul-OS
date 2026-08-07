@@ -225,11 +225,57 @@ test('touch devices get no peek at all', async () => {
   host.remove();
 });
 
-test('the CRM name leads and the WhatsApp profile name follows it', async () => {
+// The identity line: [CRM name] [flag] ~ [WhatsApp name], all on the FIRST row.
+const cluster = (host) => row(host).querySelector('[data-identity="cluster"]');
+
+test('both names share the first line, separated by a bare ~', async () => {
   const { host, root } = await renderRow();
-  const text = row(host).textContent;
-  assert.ok(text.includes('דור קורן'), 'CRM identity is primary');
-  assert.ok(text.includes('WhatsApp: Dor Koren Grafitiyul'), 'WhatsApp-native name is secondary');
+  const id = cluster(host);
+  assert.ok(id, 'the identity cluster is on the row');
+  assert.ok(id.textContent.includes('דור קורן'), 'CRM identity is present');
+  assert.ok(id.textContent.includes('Dor Koren Grafitiyul'), 'and so is the WhatsApp name');
+  assert.ok(id.textContent.includes('~'), 'separated by ~');
+  // No label — the tilde does the whole job.
+  assert.ok(!row(host).textContent.includes('WhatsApp:'), 'the word "WhatsApp" is not a prefix');
+  await act(async () => root.unmount());
+  host.remove();
+});
+
+test('the CRM name stays primary — larger and bolder than the WhatsApp name', async () => {
+  const { host, root } = await renderRow();
+  const spans = [...cluster(host).querySelectorAll('span')];
+  const crm = spans.find((s) => s.textContent === 'דור קורן');
+  const wa = spans.find((s) => s.textContent === 'Dor Koren Grafitiyul');
+  assert.match(crm.className, /text-\[14px\]/, 'CRM name is the larger type');
+  assert.match(wa.className, /text-\[12\.5px\]/, 'the WhatsApp name is smaller');
+  assert.match(wa.className, /text-gray-400/, 'and quieter');
+  assert.ok(!/font-bold/.test(wa.className), 'never bolder than the identity it qualifies');
+  await act(async () => root.unmount());
+  host.remove();
+});
+
+test('a country flag sits BETWEEN the CRM name and the WhatsApp name', async () => {
+  const foreign = { ...CHAT, phoneNumber: '13475550123', displayName: 'John Smith', providerName: 'Johnny NYC' };
+  const { host, root } = await renderRow({ chat: foreign });
+  const kids = [...cluster(host).children];
+  const idx = (pred) => kids.findIndex(pred);
+  const crmAt = idx((el) => el.textContent === 'John Smith');
+  const flagAt = idx((el) => el.className.includes('fi') || el.querySelector?.('[class*="fi-"]'));
+  const tildeAt = idx((el) => el.textContent === '~');
+  const waAt = idx((el) => el.textContent === 'Johnny NYC');
+  assert.ok(crmAt >= 0 && waAt >= 0, 'both names rendered');
+  assert.ok(flagAt > crmAt, 'the flag follows the CRM name');
+  assert.ok(flagAt < waAt, 'and precedes the WhatsApp name — it sits between them');
+  assert.ok(tildeAt > flagAt && tildeAt < waAt, 'the ~ separates the flag from the WhatsApp name');
+  await act(async () => root.unmount());
+  host.remove();
+});
+
+test('identical names show once — the WhatsApp name only appears when it adds information', async () => {
+  const same = { ...CHAT, displayName: 'דור קורן', providerName: 'דור קורן' };
+  const { host, root } = await renderRow({ chat: same });
+  assert.ok(!cluster(host).textContent.includes('~'), 'no separator, because there is nothing to separate');
+  assert.equal(cluster(host).textContent.trim(), 'דור קורן');
   await act(async () => root.unmount());
   host.remove();
 });

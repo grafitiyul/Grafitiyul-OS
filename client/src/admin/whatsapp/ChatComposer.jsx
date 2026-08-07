@@ -5,10 +5,7 @@ import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
 import { isDraftChat, materializeChat, START_ERRORS } from './chatTarget.js';
 import { announceWhatsappMessageSent } from './composerEvents.js';
 import { formatPhoneDisplay } from '../../lib/phone.js';
-// Emoji DATA bundled locally (content-hashed static asset) — the picker's
-// default is a CDN fetch, which is both against the project's caching rules
-// and the root cause of the "טעינת האימוג׳י נכשלה" failure.
-import emojiDataUrl from 'emoji-picker-element-data/en/emojibase/data.json?url';
+import EmojiPickerPanel from '../../lib/EmojiPickerPanel.jsx';
 
 // Text composer at the bottom of a chat thread (Slice 6). Enter sends,
 // Shift+Enter breaks a line — WhatsApp muscle memory. Each logical message
@@ -49,83 +46,17 @@ function nextHourLocal() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Emoji picker — emoji-picker-element (lightweight web component: search,
-// categories, skin tones, remembers frequently-used in IndexedDB). Loaded
-// lazily on first open so the chat bundle stays lean.
-const EMOJI_I18N_HE = {
-  categoriesLabel: 'קטגוריות',
-  emojiUnsupportedMessage: 'הדפדפן לא תומך באימוג׳י צבעוני.',
-  favoritesLabel: 'בשימוש תדיר',
-  loadingMessage: 'טוען…',
-  networkErrorMessage: 'טעינת האימוג׳י נכשלה.',
-  regionLabel: 'בחירת אימוג׳י',
-  searchDescription: 'כשהתוצאות זמינות, השתמשו בחיצים ו-Enter לבחירה.',
-  searchLabel: 'חיפוש',
-  searchResultsLabel: 'תוצאות חיפוש',
-  skinToneDescription: 'כשנפתח, השתמשו בחיצים ו-Enter לבחירה.',
-  skinToneLabel: 'גוון עור (${skinTone})',
-  skinTones: ['ברירת מחדל', 'בהיר', 'בהיר-בינוני', 'בינוני', 'כהה-בינוני', 'כהה'],
-  skinTonesLabel: 'גווני עור',
-  categories: {
-    custom: 'מותאם אישית',
-    'smileys-emotion': 'סמיילים ורגשות',
-    'people-body': 'אנשים',
-    'animals-nature': 'חיות וטבע',
-    'food-drink': 'אוכל ושתייה',
-    'travel-places': 'נסיעות ומקומות',
-    activities: 'פעילויות',
-    objects: 'חפצים',
-    symbols: 'סמלים',
-    flags: 'דגלים',
-  },
-};
-
+// Emoji picking is EmojiPickerPanel — the one shared catalog (bundled dataset,
+// Hebrew i18n, search / categories / skin tones / frequently-used), also used by
+// the rich-text toolbars and by message reactions. This file owns only where the
+// popup sits and what happens to the chosen character.
 function EmojiPicker({ onPick, onClose }) {
-  const hostRef = useRef(null);
-  // The handler changes on every parent render (it closes over the text);
-  // route through a ref so the picker mounts ONCE and keeps its search state.
-  const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
-
-  useEffect(() => {
-    let cancelled = false;
-    let picker = null;
-    import('emoji-picker-element')
-      .then(() => {
-        if (cancelled || !hostRef.current) return;
-        picker = document.createElement('emoji-picker');
-        picker.i18n = EMOJI_I18N_HE;
-        // NOTE: never touch picker.dataset.source — `data-source` IS the
-        // component's data-URL attribute (setting it to a junk string was
-        // exactly the loading failure).
-        picker.dataSource = emojiDataUrl;
-        picker.style.setProperty('--emoji-size', '1.35rem');
-        picker.style.width = '320px';
-        picker.style.maxWidth = '88vw';
-        picker.style.height = '300px';
-        picker.addEventListener('emoji-click', (e) => {
-          const unicode = e?.detail?.unicode;
-          if (unicode) onPickRef.current(unicode);
-        });
-        hostRef.current.appendChild(picker);
-      })
-      .catch(() => {
-        /* picker unavailable (offline chunk load) — the button just closes */
-      });
-    return () => {
-      cancelled = true;
-      picker?.remove();
-    };
-  }, []);
-
   return (
     <>
       <div className="fixed inset-0 z-20" onClick={onClose} />
-      <div
-        ref={hostRef}
-        dir="rtl"
-        className="absolute bottom-[52px] right-0 z-30 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
-      />
+      <div className="absolute bottom-[52px] right-0 z-30 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
+        <EmojiPickerPanel onPick={onPick} width={320} height={300} />
+      </div>
     </>
   );
 }
