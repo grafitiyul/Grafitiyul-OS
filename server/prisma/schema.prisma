@@ -2278,6 +2278,32 @@ model WhatsAppTemplate {
   // template must survive one being retired. Null = never chosen, and resolves
   // to the default at send time.
   newLeadSendAccountId String?
+  // ── The COMPOSER default (a different question from the star above) ──
+  //
+  // isNewLeadDefault answers "which template is sent AUTOMATICALLY to a new
+  // customer lead". This one answers "which template does the composer OPEN
+  // with" — nothing is ever sent because of it; an operator still writes and
+  // presses send. Two names for two facts, deliberately not one column doing
+  // both: a template that greets strangers by itself and a template that is
+  // merely a convenient starting point are not the same promise.
+  //
+  // Scoped PER AUDIENCE by a partial unique index on (audience) — the guide
+  // composer and the customer composer each get at most one, and they never
+  // compete. Zero defaults is valid and means the composer opens empty.
+  isAudienceDefault Boolean @default(false)
+  // WHICH of our numbers this template is normally sent from.
+  //
+  // Distinct from newLeadSendAccountId above, which is configuration of the
+  // new-lead AUTOMATION and is only meaningful on the starred customer
+  // template. This one is a property of the template itself for MANUAL sends,
+  // so any template may carry it. Null = never chosen, and resolves at compose
+  // time to the audience's documented default (whatsapp/templateDefaults.js).
+  //
+  // A WhatsAppAccount id ('main' | 'office'), kept as a LOOSE reference like
+  // the rest of the WhatsApp module: accounts are bridge-keyed configuration
+  // and a template must survive one being retired — a stored id that no longer
+  // exists is reported to the operator, never silently swapped.
+  sendAccountId    String?
   sourceSystem     String? // 'airtable' for migrated rows, null for hand-created
   sourceRecordId   String? // Airtable recId (migration provenance)
   createdAt        DateTime @default(now())

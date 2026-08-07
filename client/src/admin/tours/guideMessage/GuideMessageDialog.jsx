@@ -74,6 +74,12 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
+  // The account is a PER-SEND choice seeded from the template. `accountTouched`
+  // separates "the operator picked this number for this message" from "the
+  // template suggested it", so switching template re-suggests but a deliberate
+  // pick is never silently replaced. Nothing here ever writes the template.
+  const accountTouched = useRef(false);
+  const [autoLoaded, setAutoLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [outcome, setOutcome] = useState(null);
@@ -125,6 +131,8 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     setOutcome(null);
     setPendingSwitch(null);
     setEmojiOpen(false);
+    setAutoLoaded(false);
+    accountTouched.current = false;
   }, [open]);
 
   const recipient = useMemo(
@@ -142,6 +150,25 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
 
   const selected = (templates || []).find((t) => t.id === templateId) || null;
   const isDirty = text.trim() !== seedText.trim();
+
+  // ── The default template loads itself ────────────────────────────────────
+  // Opening the composer with the wording already in it is the whole point of
+  // the star: an operator reviewing a summary should be one edit away from
+  // sending, not one selection plus one edit. It runs ONCE per opening, only
+  // when a recipient is known (the variables resolve against them), and it
+  // populates — it never locks. No default ⇒ the composer opens empty, exactly
+  // as before.
+  useEffect(() => {
+    if (!open || autoLoaded) return;
+    if (!templates || !subject || !personRefId) return;
+    setAutoLoaded(true);
+    const fallback = templates.find((t) => t.isAudienceDefault);
+    if (!fallback) return;
+    applyChoice(fallback.id, recipient?.language || subject.defaultLanguage || 'he');
+    // applyChoice is stable enough for this one-shot: it reads the very state
+    // this effect just verified is present.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoLoaded, templates, subject, personRefId]);
 
   const searchTemplates = useCallback(
     async (q) => {
@@ -197,11 +224,25 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     applyChoice(nextTemplateId, nextLang);
   }
 
+  // Which of OUR numbers a template says it goes from. Applied whenever a
+  // template is chosen — including the automatic load — UNLESS the operator
+  // already picked a number for this message. A configured number that is no
+  // longer in the canonical list is NOT substituted: the selector is left
+  // empty and the warning below names the problem.
+  function applyTemplateAccount(t) {
+    if (!t || accountTouched.current) return;
+    const wanted = t.effectiveSendAccountId || '';
+    if (!wanted) return;
+    const exists = (subject?.accounts || []).some((a) => a.id === wanted);
+    setAccountId(exists ? wanted : '');
+  }
+
   function applyChoice(nextTemplateId, nextLang) {
     setTemplateId(nextTemplateId);
     setLang(nextLang);
     setOutcome(null);
     setSendError(null);
+    applyTemplateAccount((templates || []).find((t) => t.id === nextTemplateId) || null);
     if (nextTemplateId) resolve(nextTemplateId, nextLang, personRefId);
     else {
       // "no template" is a legitimate choice: an empty editor to write in.
@@ -267,6 +308,7 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
 
   const tour = subject?.tour || null;
   const when = tour ? [tour.date, tour.startTime].filter(Boolean).join(' · ') : '';
+  const chosenAccount = (subject?.accounts || []).find((a) => a.id === accountId) || null;
   const langAvailable = (key) => (key === 'he' ? !!selected?.hasHe : !!selected?.hasEn);
 
   return (
@@ -366,9 +408,15 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
                   <span className="shrink-0 text-[12px] font-semibold text-gray-600">מהמספר</span>
                   <select
                     value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
+                    onChange={(e) => {
+                      // A per-send choice. It never writes the template — the
+                      // template's own number is changed in "עריכת תבניות".
+                      accountTouched.current = true;
+                      setAccountId(e.target.value);
+                    }}
                     className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[13px] focus:border-emerald-500 focus:outline-none"
                   >
+                    <option value="">בחרו מספר…</option>
                     {(subject.accounts || []).map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.label}
@@ -376,8 +424,30 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
                       </option>
                     ))}
                   </select>
+                  {selected && !accountTouched.current && accountId ? (
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
+                      לפי התבנית
+                    </span>
+                  ) : null}
                 </label>
               </div>
+
+              {/* The configured number is gone from the system. NOT swapped for
+                  another one — the operator chooses, or the send waits. */}
+              {selected && !accountId && selected.effectiveSendAccountId ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+                  המספר שמוגדר לתבנית הזו כבר לא זמין במערכת. בחרו מספר שליחה לפני השליחה —
+                  המערכת לא תחליף אותו בשקט במספר אחר.
+                </p>
+              ) : null}
+              {/* Configured, present, but its bridge is down. The queue holds
+                  the message rather than dropping it, and says so. */}
+              {chosenAccount && !chosenAccount.connected ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+                  ⚠ {chosenAccount.label} מנותק כרגע. ההודעה תמתין בתור ותצא כשהמספר יתחבר —
+                  היא לא תישלח מהמספר השני. אפשר לבחור מספר מחובר אחר.
+                </p>
+              ) : null}
 
               {recipient && !recipient.canSend ? (
                 <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">

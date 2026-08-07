@@ -19,22 +19,26 @@ import { registerDynamicFields } from '../../../lib/dynamicFields.js';
 // so an operator who knows one screen knows this one. What differs is the
 // variable set the editor offers, which the server decides per audience.
 //
-// There is no "default template" star here on purpose: the customer star means
-// "this is sent AUTOMATICALLY to new leads". Nothing is ever sent to a guide
-// automatically from this feature — an operator writes every message — so a
-// star would promise behaviour that does not exist. Ordering IS the default:
-// the first template is the one at the top of the picker.
+// The ★ here is the COMPOSER default: the template "הודעה למדריך" opens with.
+// It is deliberately NOT the customer star, which means "sent AUTOMATICALLY to
+// new leads" — nothing is ever sent to a guide by itself, and a star that
+// promised that would be a lie. Exactly one per audience, enforced in the
+// database; zero is valid and means the composer opens empty.
+//
+// "שליחה דרך" is the number this template is normally sent from. Stored as the
+// canonical account id, never the Hebrew label, so renaming a number in admin
+// cannot break it. Empty = inherit the audience default (שירות לקוחות).
 
 const LANG_TABS = [
   { key: 'he', label: 'עברית', bodyKey: 'bodyHeHtml' },
   { key: 'en', label: 'English', bodyKey: 'bodyEnHtml' },
 ];
 
-const emptyDraft = { nameHe: '', bodyHeHtml: '', bodyEnHtml: '', isActive: true };
+const emptyDraft = { nameHe: '', bodyHeHtml: '', bodyEnHtml: '', isActive: true, sendAccountId: '' };
 
 const isEmptyHtml = (html) => !html || !String(html).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 
-function TemplateEditor({ open, initial, variables, categories, onClose, onSubmit }) {
+function TemplateEditor({ open, initial, variables, categories, meta, onClose, onSubmit }) {
   const [draft, setDraft] = useState(initial);
   const [lang, setLang] = useState('he');
   const [saving, setSaving] = useState(false);
@@ -49,6 +53,13 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
 
   const bodyKey = LANG_TABS.find((t) => t.key === lang).bodyKey;
   const canSave = !!draft.nameHe.trim() && (!isEmptyHtml(draft.bodyHeHtml) || !isEmptyHtml(draft.bodyEnHtml));
+  // What "inherit" actually resolves to, named rather than implied — an
+  // operator should never have to guess which number an empty selection means.
+  const accounts = meta?.sendAccounts || [];
+  const inheritedLabel = accounts.find((a) => a.id === meta?.defaultSendAccountId)?.label || null;
+  const chosenAccount = accounts.find(
+    (a) => a.id === (draft.sendAccountId || meta?.defaultSendAccountId),
+  ) || null;
 
   async function save() {
     setSaving(true);
@@ -59,6 +70,9 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
         bodyHeHtml: draft.bodyHeHtml || '',
         bodyEnHtml: draft.bodyEnHtml || '',
         isActive: draft.isActive,
+        // '' means "inherit the audience default" — a real, storable choice,
+        // not a missing value.
+        sendAccountId: draft.sendAccountId || '',
         audience: 'guide',
       });
     } catch (e) {
@@ -67,7 +81,9 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
           ? `יש בנוסח משתנה שלא ניתן למלא בהודעה למדריך: ${(e.payload.keys || []).join(', ')}. השתמשו רק במשתנים מהתפריט.`
           : e?.payload?.error === 'body_required'
             ? 'צריך תוכן לפחות בשפה אחת.'
-            : 'השמירה נכשלה — נסו שוב.',
+            : e?.payload?.error === 'unknown_account'
+              ? 'מספר השליחה שנבחר אינו זמין במערכת.'
+              : 'השמירה נכשלה — נסו שוב.',
       );
     } finally {
       setSaving(false);
@@ -125,6 +141,40 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
             className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none"
           />
           <p className="mt-1 text-[11.5px] text-gray-400">השם מופיע בבורר התבניות בלבד. המדריך לא רואה אותו.</p>
+        </div>
+
+        {/* "שליחה דרך" — the number this template is normally sent from. The
+            options are the CANONICAL account list (same rows, same labels,
+            same order as every other sending surface); the stored value is the
+            account id. It is a PRESELECTION, not a lock: the composer lets the
+            operator send this one message from another number without touching
+            the template. */}
+        <div>
+          <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">שליחה דרך</label>
+          <select
+            value={draft.sendAccountId || ''}
+            onChange={(e) => setDraft((d) => ({ ...d, sendAccountId: e.target.value }))}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none"
+          >
+            <option value="">
+              ברירת מחדל להודעות למדריכים
+              {inheritedLabel ? ` — ${inheritedLabel}` : ''}
+            </option>
+            {(meta?.sendAccounts || []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+                {a.connected ? '' : ' (מנותק)'}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11.5px] text-gray-400">
+            המספר שממנו תישלח ההודעה כשבוחרים את התבנית. אפשר לשנות לשליחה בודדת בלי לשנות את התבנית.
+          </p>
+          {chosenAccount && !chosenAccount.connected && (
+            <p className="mt-1 text-[11.5px] font-medium text-amber-700">
+              ⚠ המספר הזה מנותק כרגע. הודעה שתישלח דרכו תמתין בתור עד שיתחבר — המערכת לא תשלח מהמספר השני.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-1 border-b border-gray-200">
@@ -228,6 +278,27 @@ export default function GuideTemplatesDialog({ open, onClose }) {
     }
   }
 
+  // The composer default. No confirmation dialog on purpose — unlike the
+  // customer star, this sends nothing to anybody; it only decides what appears
+  // in the editor when the composer opens, and it is one click to undo.
+  async function toggleDefault(item) {
+    try {
+      await api.whatsappTemplates.setAudienceDefault(item.id, !item.isAudienceDefault);
+      await refresh();
+    } catch (e) {
+      setAlertMsg(
+        e?.payload?.error === 'template_inactive'
+          ? 'לא ניתן לסמן תבנית שאינה פעילה. הפעילו אותה קודם.'
+          : 'שגיאה: ' + (e.payload?.error || e.message),
+      );
+    }
+  }
+
+  // Account id → the canonical label. Never a hardcoded Hebrew name: renaming
+  // a number in admin must rename it here too.
+  const accountLabel = (id) =>
+    (meta.sendAccounts || []).find((a) => a.id === id)?.label || id || '—';
+
   async function remove(item) {
     try {
       await api.whatsappTemplates.remove(item.id);
@@ -268,6 +339,10 @@ export default function GuideTemplatesDialog({ open, onClose }) {
             (שם המדריך, מתי היה הסיור, הלקוח) — והטקסט נפתח לעריכה חופשית לפני השליחה.
             גררו לשינוי הסדר; הסדר כאן הוא הסדר בבורר.
           </p>
+          <p className="mb-3 text-[12.5px] leading-relaxed text-gray-500">
+            ★ מסמן את תבנית ברירת המחדל — היא נטענת אוטומטית כשפותחים "הודעה למדריך",
+            ואפשר להחליף אותה או למחוק את הטקסט ולכתוב חופשי. בלי ברירת מחדל, המחבר נפתח ריק.
+          </p>
 
           {loading ? (
             <div className="py-12 text-center text-sm text-gray-400">טוען…</div>
@@ -286,14 +361,54 @@ export default function GuideTemplatesDialog({ open, onClose }) {
               renderRow={(item, { handle }) => (
                 <div className={`flex items-center gap-3 rounded-lg px-3 py-2.5 ${item.isActive ? '' : 'opacity-55'}`}>
                   {handle}
+                  {/* The composer default. Disabled on an inactive template —
+                      a paused template is offered nowhere and must not be the
+                      thing the composer opens with. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleDefault(item)}
+                    disabled={!item.isActive && !item.isAudienceDefault}
+                    aria-pressed={item.isAudienceDefault}
+                    aria-label={
+                      item.isAudienceDefault
+                        ? `ביטול ${item.nameHe} כתבנית ברירת המחדל`
+                        : `הפיכת ${item.nameHe} לתבנית ברירת המחדל`
+                    }
+                    title={
+                      !item.isActive && !item.isAudienceDefault
+                        ? 'תבנית לא פעילה — הפעילו אותה כדי לסמן'
+                        : 'תבנית ברירת המחדל — נטענת אוטומטית כשפותחים "הודעה למדריך"'
+                    }
+                    className={`rounded-lg px-2 py-1.5 text-[17px] leading-none transition ${
+                      item.isAudienceDefault
+                        ? 'text-amber-500 hover:bg-amber-50'
+                        : 'text-gray-300 hover:bg-gray-100 hover:text-amber-400'
+                    } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent`}
+                  >
+                    {item.isAudienceDefault ? '★' : '☆'}
+                  </button>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-medium text-gray-900">{item.nameHe}</p>
-                    <p className="mt-0.5 flex items-center gap-2 text-[11.5px] text-gray-500">
+                    <p className="truncate text-[14px] font-medium text-gray-900">
+                      {item.nameHe}
+                      {item.isAudienceDefault && (
+                        <span className="mr-2 align-middle rounded-md bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-800">
+                          ברירת מחדל
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-gray-500">
                       <span className={item.hasHe ? 'text-emerald-700' : 'text-gray-300'}>
                         {item.hasHe ? '● עברית' : '○ עברית'}
                       </span>
                       <span className={item.hasEn ? 'text-emerald-700' : 'text-gray-300'}>
                         {item.hasEn ? '● English' : '○ English'}
+                      </span>
+                      {/* The sending number, visible on the row itself —
+                          "which number does this go from" should never require
+                          opening the editor. */}
+                      <span className={item.sendAccountId ? 'text-gray-600' : 'text-gray-400'}>
+                        · דרך {accountLabel(item.effectiveSendAccountId)}
+                        {item.sendAccountId ? '' : ' (ברירת מחדל)'}
                       </span>
                       {!item.isActive && <span className="text-gray-400">· לא פעילה</span>}
                     </p>
@@ -331,6 +446,7 @@ export default function GuideTemplatesDialog({ open, onClose }) {
           initial={editing}
           variables={meta.variables}
           categories={meta.categories}
+          meta={meta}
           onClose={() => setEditing(null)}
           onSubmit={async (data) => {
             if (editing.id) await api.whatsappTemplates.update(editing.id, data);

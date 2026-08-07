@@ -719,6 +719,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ starred }),
       }),
+    // The COMPOSER default — which template the audience's composer OPENS with.
+    // A different fact from setNewLeadDefault above: nothing is ever sent
+    // because of it. starred:false clears it (the composer opens empty).
+    setAudienceDefault: (id, starred) =>
+      request(`/api/whatsapp-templates/${id}/audience-default`, {
+        method: 'PUT',
+        body: JSON.stringify({ starred }),
+      }),
     // Which business number the automatic new-lead reply sends from. Only the
     // starred template accepts it; takes effect on the next lead.
     setNewLeadAccount: (id, accountId) =>
