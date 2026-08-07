@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useRealtime } from '../../lib/realtime.js';
 import { showToast } from '../../lib/toast.js';
@@ -133,6 +133,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const { id: routeId } = useParams();
   const id = dealIdProp || routeId;
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   // Where "חזרה" goes: the originating list state when there is one, the deals
   // root otherwise (pasted link / new tab / arrival from global search).
   const listReturn = useListReturn('/admin/crm/deals', 'חזרה לדילים');
@@ -174,9 +175,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // + the canonical CreateDealModal; this flag only opens/closes it.
   const [sameContactOpen, setSameContactOpen] = useState(false);
   const [silentWonOpen, setSilentWonOpen] = useState(false);
-  // "שנה סוג פעילות" — opened from the kebab, and automatically whenever the
-  // server refuses a plain activityType edit with 409 conversion_required.
+  // "שנה סוג פעילות" — opened from the kebab, automatically whenever the server
+  // refuses a plain activityType edit with 409 conversion_required, and by the
+  // בקרה drift card's two correction actions (which arrive as ?convert=<type>
+  // and pre-aim the dialog at the side the operator chose to fix).
   const [conversionOpen, setConversionOpen] = useState(false);
+  const [conversionTarget, setConversionTarget] = useState(null);
   // שכפל דיל re-entry guard (ref, not state — no re-render needed).
   const dupBusyRef = useRef(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
@@ -448,6 +452,25 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     if (dealIdProp || !deal?.orderNo) return;
     if (routeId === deal.id) navigate(dealPath(deal), { replace: true });
   }, [dealIdProp, deal, routeId, navigate]);
+
+  // ?convert=<activityType> — the arrival point for the בקרה drift card's two
+  // correction actions ("שנה את הסיור ל…" / "שנה את הדיל ל…"). The card cannot
+  // perform the correction itself: it may need a group slot chosen or an
+  // organization decision, and the operator must see the exact consequences
+  // first. So it navigates here with the side it chose, and the conversion
+  // dialog opens pre-aimed at that target.
+  //
+  // The param is consumed ONCE and stripped from the URL, so a refresh or a
+  // back-navigation does not silently re-open a dialog the operator dismissed.
+  useEffect(() => {
+    const target = searchParams.get('convert');
+    if (!target || !deal) return;
+    setConversionTarget(ACTIVITY_TYPES.includes(target) ? target : null);
+    setConversionOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('convert');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, deal, setSearchParams]);
 
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
@@ -1588,9 +1611,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         <ActivityConversionDialog
           open={conversionOpen}
           deal={deal}
-          onClose={() => setConversionOpen(false)}
+          initialTarget={conversionTarget}
+          // Lets the dialog know when re-selecting the CURRENT type is a real
+          // action (the drift realign) rather than a no-op.
+          currentTourKind={(deal.bookings || []).find((bk) => bk.status === 'active')?.tourEvent?.kind || null}
+          onClose={() => { setConversionOpen(false); setConversionTarget(null); }}
           onDone={(res, opts) => {
             setConversionOpen(false);
+            setConversionTarget(null);
             refresh();
             // The updated confirmation is OFFERED, never sent blind: this opens
             // the existing preview with the NEW operational state so the

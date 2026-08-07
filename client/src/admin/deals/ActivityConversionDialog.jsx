@@ -4,6 +4,7 @@ import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
 import { api } from '../../lib/api.js';
 import { ACTIVITY_TYPE_LABELS, ACTIVITY_OPTION_ON } from './config.js';
+import { ACTIVITY_TO_TOUR_KIND } from '../../../../shared/dealActivity.mjs';
 
 // "שנה סוג פעילות" — the conversion workspace.
 //
@@ -62,7 +63,21 @@ const fmtWhen = (t) => {
 const mintOpId = () =>
   (globalThis.crypto?.randomUUID?.() || `op-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-export default function ActivityConversionDialog({ open, deal, onClose, onDone }) {
+// `initialTarget` pre-aims the dialog — used by the בקרה drift card's two
+// correction actions, which arrive knowing WHICH side the operator chose to
+// fix. It only preselects: the preview, the blockers, the slot/organization
+// questions and the confirm button all behave exactly as if the operator had
+// clicked that target themselves. Nothing is auto-confirmed.
+export default function ActivityConversionDialog({
+  open, deal, onClose, onDone, initialTarget = null, currentTourKind = null,
+}) {
+  // Selecting the deal's CURRENT type is meaningful exactly when its tour does
+  // not match it — the realign case. Otherwise it is the no-op the server
+  // refuses with `same_activity_type`, so the button stays disabled.
+  const canRealign = !!currentTourKind
+    && ACTIVITY_TO_TOUR_KIND[deal?.activityType] !== currentTourKind;
+  const isSelectable = (v) => v !== deal?.activityType || canRealign;
+
   const [target, setTarget] = useState(null);
   const [tourEventId, setTourEventId] = useState(null);
   const [orgChoice, setOrgChoice] = useState(null);
@@ -80,7 +95,11 @@ export default function ActivityConversionDialog({ open, deal, onClose, onDone }
   // organization decision must never leak into the next one.
   useEffect(() => {
     if (!open) return;
-    setTarget(null);
+    // A pre-aimed target is honoured whenever the server would accept it —
+    // which INCLUDES the deal's current type when the tour it sits on does not
+    // match (the drift card's "the deal is right, fix the tour" direction is a
+    // REALIGNMENT: the classification stays, the operational side moves).
+    setTarget(initialTarget && isSelectable(initialTarget) ? initialTarget : null);
     setTourEventId(null);
     setOrgChoice(null);
     setAllowOverbook(false);
@@ -88,7 +107,7 @@ export default function ActivityConversionDialog({ open, deal, onClose, onDone }
     setError(null);
     setSendConfirmation(false);
     setOpId(mintOpId());
-  }, [open, deal?.id]);
+  }, [open, deal?.id, initialTarget, deal?.activityType]);
 
   const loadPreview = useCallback(async () => {
     if (!open || !deal?.id || !target) {
@@ -231,13 +250,20 @@ export default function ActivityConversionDialog({ open, deal, onClose, onDone }
               {ACTIVITY_TYPES.map((v) => {
                 const isCurrent = deal.activityType === v;
                 const on = target === v;
+                const selectable = isSelectable(v);
                 return (
                   <button
                     key={v}
                     type="button"
-                    disabled={isCurrent || saving}
+                    disabled={!selectable || saving}
                     onClick={() => { setTarget(v); setTourEventId(null); setAllowOverbook(false); }}
-                    title={isCurrent ? 'זהו סוג הפעילות הנוכחי' : undefined}
+                    title={
+                      !selectable
+                        ? 'זהו סוג הפעילות הנוכחי'
+                        : isCurrent
+                          ? 'הסיווג נשאר — הסיור המשובץ יותאם אליו'
+                          : undefined
+                    }
                     className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
                       on ? ACTIVITY_OPTION_ON[v] : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                     } disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-white`}

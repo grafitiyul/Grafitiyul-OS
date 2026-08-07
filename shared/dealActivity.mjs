@@ -93,6 +93,61 @@ export function effectiveActivityType(deal) {
   return null;
 }
 
+// ── Deal.activityType ⇄ TourEvent.kind COMPATIBILITY ────────────────────────
+//
+// THE one resolver for "may this deal sit on this tour?". Every consumer asks
+// here rather than comparing raw enum values, because the question is
+// OPERATIONAL, not lexical: what actually differs between the two sides is the
+// seat model (a slot has capacity, shared stock and a Woo variation; a
+// dedicated tour has none of those), and `private` vs `business` differs in
+// nothing but a label.
+//
+// That asymmetry is why the pair (deal, tour) needs a resolver and not an
+// equality check — and it is exactly what a first production sweep showed:
+// 6 of 9 real mismatches were business-deal-on-private-tour (cosmetic), 3 were
+// group-deal-on-dedicated-tour (genuinely incoherent).
+
+/** Is the deal's activity type operationally compatible with the tour's kind? */
+export function isActivityTourCompatible(activityType, tourKind) {
+  if (!activityType || !tourKind) return true; // unknown ⇒ never asserted about
+  const expected = ACTIVITY_TO_TOUR_KIND[activityType];
+  if (!expected) return true; // an unmapped future type is not asserted about
+  return expected === tourKind;
+}
+
+/**
+ * The full compatibility verdict — what is wrong, how badly, and which side
+ * would have to move to fix it.
+ *
+ *   compatible   nothing to do
+ *   severity     'critical' when a group slot is involved (seats, capacity,
+ *                shared stock and open-tour reporting all disagree about what
+ *                is being sold) · 'warning' for private↔business (a label on
+ *                the calendar and in the guide portal; nothing operational
+ *                differs, which is why the conversion service relabels that
+ *                tour in place instead of replacing it)
+ *   structural   does fixing it move seats/bookings, or is it a relabel?
+ *   dealTarget   the activity type the DEAL would become if the TOUR is right
+ *   tourTarget   the activity type to convert TO if the DEAL is right (the
+ *                operational side moves to match it)
+ */
+export function activityTourCompatibility(activityType, tourKind) {
+  const compatible = isActivityTourCompatible(activityType, tourKind);
+  if (compatible) {
+    return { compatible: true, severity: null, structural: false, dealTarget: null, tourTarget: null };
+  }
+  const involvesGroup = activityType === 'group' || tourKind === 'group_slot';
+  return {
+    compatible: false,
+    severity: involvesGroup ? 'critical' : 'warning',
+    // A group slot on either side means real seats have to move; private↔business
+    // is a relabel of the same TourEvent.
+    structural: involvesGroup,
+    dealTarget: TOUR_KIND_TO_ACTIVITY[tourKind] || null,
+    tourTarget: activityType,
+  };
+}
+
 /**
  * Does this deal carry a combination an operator had to choose deliberately —
  * a linked organization on a non-business activity?

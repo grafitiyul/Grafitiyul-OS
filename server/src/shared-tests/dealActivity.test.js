@@ -14,6 +14,8 @@ import {
   TOUR_KIND_TO_ACTIVITY,
   effectiveActivityType,
   hasDeliberateOrgActivityMix,
+  isActivityTourCompatible,
+  activityTourCompatibility,
 } from '../../../shared/dealActivity.mjs';
 
 test('an explicit activity type is authoritative', () => {
@@ -62,4 +64,72 @@ test('the deliberate org/activity mix is detected only when a type was chosen', 
   // Unclassified + org is a DEFAULT, not a deliberate choice — nothing to explain.
   assert.equal(hasDeliberateOrgActivityMix({ organizationId: 'o', activityType: null }), false);
   assert.equal(hasDeliberateOrgActivityMix({ activityType: 'private' }), false);
+});
+
+// ── Deal ⇄ Tour compatibility: the ONE resolver the בקרה detector asks ───────
+
+test('every compatible pair is compatible', () => {
+  assert.equal(isActivityTourCompatible('group', 'group_slot'), true);
+  assert.equal(isActivityTourCompatible('private', 'private'), true);
+  assert.equal(isActivityTourCompatible('business', 'business'), true);
+});
+
+test('every incompatible pair is caught, in both directions', () => {
+  for (const [a, k] of [
+    ['group', 'private'], ['group', 'business'],
+    ['private', 'group_slot'], ['business', 'group_slot'],
+    ['private', 'business'], ['business', 'private'],
+  ]) {
+    assert.equal(isActivityTourCompatible(a, k), false, `${a} on ${k} should be incompatible`);
+  }
+});
+
+test('unknown sides are never asserted about — no false cards', () => {
+  // A deal with no classification is the assumption card's business, and an
+  // unmapped future activity type must not produce a critical alert.
+  assert.equal(isActivityTourCompatible(null, 'private'), true);
+  assert.equal(isActivityTourCompatible('private', null), true);
+  assert.equal(isActivityTourCompatible('workshop_series', 'private'), true);
+});
+
+test('a compatible pair carries no correction targets', () => {
+  const v = activityTourCompatibility('group', 'group_slot');
+  assert.deepEqual(v, {
+    compatible: true, severity: null, structural: false, dealTarget: null, tourTarget: null,
+  });
+});
+
+test('a group mismatch is CRITICAL and STRUCTURAL — real seats must move', () => {
+  const v = activityTourCompatibility('private', 'group_slot');
+  assert.equal(v.compatible, false);
+  assert.equal(v.severity, 'critical');
+  assert.equal(v.structural, true);
+  // "the tour is right, fix the deal" → the deal becomes group.
+  assert.equal(v.dealTarget, 'group');
+  // "the deal is right, fix the tour" → convert the deal's operational side to private.
+  assert.equal(v.tourTarget, 'private');
+});
+
+test('private ↔ business is a WARNING and NOT structural — a relabel', () => {
+  const v = activityTourCompatibility('business', 'private');
+  assert.equal(v.severity, 'warning');
+  assert.equal(v.structural, false, 'nothing operational differs, so nothing has to move');
+  assert.equal(v.dealTarget, 'private');
+  assert.equal(v.tourTarget, 'business');
+});
+
+test('the two correction targets are always DIFFERENT and always actionable', () => {
+  // The card offers both directions; if they ever collapsed to the same value
+  // one of the two buttons would be a no-op that refuses with same_activity_type.
+  for (const [a, k] of [
+    ['group', 'private'], ['private', 'group_slot'], ['business', 'group_slot'],
+    ['group', 'business'], ['private', 'business'], ['business', 'private'],
+  ]) {
+    const v = activityTourCompatibility(a, k);
+    assert.ok(v.dealTarget, `${a}/${k} has a deal-side target`);
+    assert.ok(v.tourTarget, `${a}/${k} has a tour-side target`);
+    assert.notEqual(v.dealTarget, v.tourTarget, `${a}/${k} targets must differ`);
+    assert.equal(v.tourTarget, a, 'the tour-side fix aims at what the DEAL says');
+    assert.equal(v.dealTarget, TOUR_KIND_TO_ACTIVITY[k], 'the deal-side fix aims at what the TOUR is');
+  }
 });

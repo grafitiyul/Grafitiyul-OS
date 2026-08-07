@@ -58,9 +58,18 @@ export const MODULE_LABELS = {
 // ref we can't route just renders as text.
 export function entityHref(target) {
   if (!target?.type) return null;
+  // Optional `query` — an action that must land the operator INSIDE a specific
+  // flow (e.g. the activity-conversion card aiming the Deal page at a target
+  // type) carries it here rather than inventing a second navigation concept.
+  const withQuery = (base) => {
+    const entries = Object.entries(target.query || {}).filter(([, v]) => v != null && v !== '');
+    if (!base || !entries.length) return base;
+    const qs = new URLSearchParams(entries).toString();
+    return `${base}${base.includes('?') ? '&' : '?'}${qs}`;
+  };
   switch (target.type) {
     case 'deal':
-      return dealPath({ orderNo: target.orderNo, id: target.id });
+      return withQuery(dealPath({ orderNo: target.orderNo, id: target.id }));
     case 'tour_event':
       return `/admin/tours/${target.id}`;
     case 'whatsapp':

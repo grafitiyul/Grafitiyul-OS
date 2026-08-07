@@ -68,6 +68,7 @@ import { emitTimelineEvent } from '../timeline/events.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TO_TOUR_KIND,
+  TOUR_KIND_TO_ACTIVITY,
   ACTIVITY_TYPE_LABELS_HE,
 } from '../../../shared/dealActivity.mjs';
 import {
@@ -125,9 +126,39 @@ const DEDICATED = new Set(['private', 'business']);
  *   private/business → group      → join_slot     (explicit slot required)
  *   group → private/business      → replace_tour  (the slot lives on)
  */
-export function conversionMode(from, to) {
+export function conversionMode(from, to, { currentTourKind = null } = {}) {
   if (!ACTIVITY_TYPES.includes(to)) throw coded('invalid_activity_type');
-  if (from === to) throw coded('same_activity_type');
+  const targetKind = ACTIVITY_TO_TOUR_KIND[to];
+  const tourAlreadyMatchesTarget = !!currentTourKind && currentTourKind === targetKind;
+
+  // ── same type: a REALIGNMENT, not a no-op ─────────────────────────────────
+  // The בקרה drift card's "the DEAL is right — fix the tour" direction keeps the
+  // classification exactly as it is and moves the OPERATIONAL side to match it.
+  // Refusing that as `same_activity_type` (as an earlier version did) left the
+  // more important half of the recovery with nowhere to go.
+  //
+  // The service's real job is "make the deal's operational structure match its
+  // activity type". A conversion changes the type AND the structure; a realign
+  // changes only the structure — same guards, same seat handling, same audit,
+  // same idempotency.
+  if (from === to) {
+    // Genuinely nothing to do: no tour at all, or a tour that already matches.
+    if (!currentTourKind || tourAlreadyMatchesTarget) throw coded('same_activity_type');
+    if (GROUPY.has(to)) return 'join_slot'; // a real slot must be chosen
+    // Leaving a dedicated tour that is merely mislabelled → relabel it in place;
+    // leaving a group slot → the deal needs its own tour.
+    return DEDICATED.has(TOUR_KIND_TO_ACTIVITY[currentTourKind]) ? 'update_kind' : 'replace_tour';
+  }
+
+  // ── align_classification ──────────────────────────────────────────────────
+  // The deal is ALREADY sitting on a tour of the target kind — only its own
+  // label is wrong. This is the "the TOUR is right, fix the deal" half of the
+  // recovery, and it must not touch a single seat: cancelling the booking and
+  // re-creating it on the same tour would release and re-consume real capacity,
+  // churn Woo and the calendar, and re-point live scheduled messages, all to
+  // correct a string. Smallest correct mutation, again.
+  if (tourAlreadyMatchesTarget) return 'align_classification';
+
   if (DEDICATED.has(from) && DEDICATED.has(to)) return 'update_kind';
   if (DEDICATED.has(from) && GROUPY.has(to)) return 'join_slot';
   if (GROUPY.has(from) && DEDICATED.has(to)) return 'replace_tour';
@@ -174,10 +205,12 @@ export async function previewConversion(
 
   const from = deal.activityType || null;
   const to = targetActivityType;
-  const mode = conversionMode(from, to);
 
   const booking = await activeBookingFor(client, dealId);
   const currentTour = booking?.tourEvent || null;
+  // The mode depends on where the deal ALREADY sits: a deal booked on a tour of
+  // the target kind only needs its label corrected (align_classification).
+  const mode = conversionMode(from, to, { currentTourKind: currentTour?.kind || null });
   const targetSlot = tourEventId
     ? await client.tourEvent.findUnique({ where: { id: tourEventId } })
     : null;
@@ -342,6 +375,11 @@ async function slotCapacityCheck(client, { slot, dealId, seats }) {
 function buildPlanSteps({ mode, currentTour, targetSlot, from, to, organizationChoice }) {
   const when = (t) => (t?.date ? `${t.date}${t.startTime ? ' ' + t.startTime : ''}` : 'ללא מועד');
   const steps = [];
+  if (mode === 'align_classification') {
+    steps.push(`הדיל כבר משובץ לסיור מהסוג הנכון (${when(currentTour)}) — רק הסיווג בדיל יתוקן.`);
+    steps.push('לא ישוחררו ולא ייתפסו מקומות, ההזמנה והרישום נשארים בדיוק כפי שהם.');
+    steps.push('היומן, המלאי בחנות והמסרים המתוזמנים אינם מושפעים.');
+  }
   if (mode === 'update_kind') {
     steps.push(`הסיור הקיים (${when(currentTour)}) יישאר בדיוק כפי שהוא — רק הסיווג ישתנה.`);
     steps.push('הגלריה, השאלונים, השכר, השיבוצים ואירוע היומן נשמרים ללא שינוי.');
@@ -412,10 +450,10 @@ export async function convertDealActivityType(
 
     const from = deal.activityType || null;
     const to = targetActivityType;
-    const mode = conversionMode(from, to);
 
     const booking = await activeBookingFor(tx, dealId);
     const oldTour = booking?.tourEvent || null;
+    const mode = conversionMode(from, to, { currentTourKind: oldTour?.kind || null });
 
     // ── every guard, re-evaluated here where it is authoritative ────────────
     if (deal.status === 'won') {
@@ -488,7 +526,7 @@ export async function convertDealActivityType(
     // An OPEN deal with no booking has no operational structure to move, so the
     // conversion is exactly a classification change — creating a tour here would
     // invent operational state that the WON transition alone may create.
-    if (mode === 'update_kind' || !needsStructure) {
+    if (mode === 'align_classification' || mode === 'update_kind' || !needsStructure) {
       // The smallest correct mutation: same TourEvent, new label. The calendar
       // summary is derived from `kind`, so the mirror is marked dirty and the
       // worker re-titles the existing Google event in place.
