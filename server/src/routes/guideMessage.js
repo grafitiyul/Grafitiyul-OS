@@ -13,7 +13,14 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { listSelectableAccounts, resolveForOperator } from '../whatsapp/senderAccount.js';
+import { listSelectableAccounts } from '../whatsapp/senderAccount.js';
+import {
+  getGuideMessageSettings,
+  setGuideSendAccount,
+  resolveGuideComposerAccount,
+  DEFAULT_GUIDE_SEND_ACCOUNT_ID,
+  GuideSettingsError,
+} from '../whatsapp/guideMessageSettings.js';
 import { checkSendAllowed } from '../communication/sendingPolicy.js';
 import {
   loadGuideMessageSubject,
@@ -58,6 +65,51 @@ async function loadSubjectOr404(req, res) {
   return subject;
 }
 
+// ── Flow settings ("הגדרות כלליות") ─────────────────────────────────────────
+//
+// One setting for the whole guide-message flow, not one per template. The
+// customer new-lead reply keeps its own, separate account setting — these two
+// flows never read each other.
+router.get(
+  '/settings',
+  handle(async (_req, res) => {
+    const accounts = await listSelectableAccounts(prisma);
+    const row = await getGuideMessageSettings();
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      sendAccountId: row?.sendAccountId || null,
+      effectiveSendAccountId: (row?.sendAccountId || '').trim() || DEFAULT_GUIDE_SEND_ACCOUNT_ID,
+      flowDefaultAccountId: DEFAULT_GUIDE_SEND_ACCOUNT_ID,
+      accounts,
+      updatedAt: row?.updatedAt || null,
+    });
+  }),
+);
+
+router.put(
+  '/settings',
+  handle(async (req, res) => {
+    const accounts = await listSelectableAccounts(prisma);
+    try {
+      const saved = await setGuideSendAccount(
+        req.body?.sendAccountId,
+        accounts.map((a) => a.id),
+        { updatedById: req.adminAuth?.userId || null },
+      );
+      return res.json({
+        sendAccountId: saved.sendAccountId,
+        effectiveSendAccountId: saved.sendAccountId,
+        flowDefaultAccountId: DEFAULT_GUIDE_SEND_ACCOUNT_ID,
+        accounts,
+        updatedAt: saved.updatedAt,
+      });
+    } catch (err) {
+      if (err instanceof GuideSettingsError) return res.status(400).json({ error: err.code });
+      throw err;
+    }
+  }),
+);
+
 // ── Who / from where / in which language ─────────────────────────────────────
 router.get(
   '/subject',
@@ -66,17 +118,11 @@ router.get(
     if (!subject) return undefined;
 
     const accounts = await listSelectableAccounts(prisma);
-    // Which of OUR numbers this operator sends from — the canonical operator
-    // resolver, so this dialog agrees with every other WhatsApp surface the
-    // same person uses. It THROWS on genuine ambiguity rather than guessing a
-    // business number; that is a choice for the operator, not a default we
-    // invent, and the picker below is where they make it.
-    let defaultAccountId = null;
-    try {
-      defaultAccountId = (await resolveForOperator(prisma, { userId: req.adminAuth?.userId })).accountId;
-    } catch {
-      defaultAccountId = null;
-    }
+    // The FLOW's number — one setting for "how this office writes to guides",
+    // not the operator's personal remembered sender and not a per-template
+    // choice. The operator can still change it for a single message; that
+    // never writes back here.
+    const flowAccount = await resolveGuideComposerAccount(accounts);
 
     const def = subject.recipients.find((r) => r.personRefId === subject.defaultPersonRefId) || null;
     res.set('Cache-Control', 'no-store');
@@ -99,9 +145,11 @@ router.get(
       // The guide's own recorded language, Hebrew when nothing was recorded.
       defaultLanguage: def ? guideLanguage(def.person) : 'he',
       accounts,
-      defaultAccountId: defaultAccountId && accounts.some((a) => a.id === defaultAccountId)
-        ? defaultAccountId
-        : accounts.find((a) => a.connected)?.id || accounts[0]?.id || null,
+      // The id to preselect. An unavailable configured number is reported as
+      // such rather than swapped for another — the composer then makes the
+      // operator choose instead of quietly sending from the wrong number.
+      defaultAccountId: flowAccount.available ? flowAccount.accountId : null,
+      accountSetting: flowAccount,
     });
   }),
 );

@@ -4,21 +4,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
-// "הודעה למדריך" — the default template + the per-template sending account.
+// "הודעה למדריך" — the default template + the FLOW's sending account.
 // RENDERS the real dialog (esbuild bundle, jsdom) against a recording fetch
 // stub and proves:
 //
 //   1. a default template LOADS ITSELF into the editor on open — no selection
 //      click — and the message stays fully editable;
-//   2. its configured account is preselected, labelled as coming from the
-//      template;
-//   3. no default ⇒ the composer opens empty (the old behaviour, unchanged);
-//   4. switching template re-loads the wording AND re-suggests that template's
-//      account;
-//   5. changing the account is a PER-SEND choice: it rides in the send request
-//      and writes nothing back to the template;
-//   6. a template account that no longer exists is NOT swapped for another
-//      number — the operator is warned and send stays blocked until they pick.
+//   2. the FLOW default number is preselected and labelled as the default;
+//   3. no default template ⇒ the composer opens empty (unchanged behaviour);
+//   4. switching template reloads the wording and KEEPS the flow number —
+//      templates do not carry one;
+//   5. changing the number is a PER-SEND choice: it rides in the send request
+//      and writes nothing back to the setting;
+//   6. a configured number that no longer exists is NOT swapped for another —
+//      the operator is warned and send stays blocked until they pick.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(here, '..', '..', '..', '..');
@@ -40,26 +39,24 @@ const SUBJECT = {
   defaultPersonRefId: 'g1',
   defaultLanguage: 'he',
   accounts: ACCOUNTS,
-  // What the OPERATOR's remembered number would be, absent any template.
-  defaultAccountId: 'main',
+  // The FLOW setting (הגדרות כלליות → שליחה דרך כברירת מחדל), resolved by the
+  // server. No template and no operator preference feeds this.
+  defaultAccountId: 'office',
+  accountSetting: { accountId: 'office', source: 'configured', available: true, connected: true },
 };
 
 const T_DEFAULT = {
   id: 't1', nameHe: 'תודה על הסיכום', hasHe: true, hasEn: true, isActive: true,
-  audience: 'guide', isAudienceDefault: true, sendAccountId: 'office', effectiveSendAccountId: 'office',
+  audience: 'guide', isAudienceDefault: true,
 };
 const T_OTHER = {
   id: 't2', nameHe: 'בקשת השלמה', hasHe: true, hasEn: false, isActive: true,
-  audience: 'guide', isAudienceDefault: false, sendAccountId: 'main', effectiveSendAccountId: 'main',
-};
-// Configured to a number that no longer exists in the canonical list.
-const T_RETIRED = {
-  id: 't3', nameHe: 'תבנית עם מספר שהוסר', hasHe: true, hasEn: false, isActive: true,
-  audience: 'guide', isAudienceDefault: true, sendAccountId: 'gone', effectiveSendAccountId: 'gone',
+  audience: 'guide', isAudienceDefault: false,
 };
 
 let calls = [];
 let templates = [T_DEFAULT, T_OTHER];
+let SUBJECT_OVERRIDE = null;
 
 let React;
 let createRoot;
@@ -104,7 +101,7 @@ before(async () => {
     const body = opts.body ? JSON.parse(opts.body) : null;
     calls.push({ url: u, method, body });
     const json = (b) => ({ ok: true, status: 200, json: async () => b, text: async () => JSON.stringify(b) });
-    if (u.includes('/api/guide-message/subject')) return json(SUBJECT);
+    if (u.includes('/api/guide-message/subject')) return json(SUBJECT_OVERRIDE || SUBJECT);
     if (u.includes('/api/guide-message/resolve')) {
       const t = templates.find((x) => x.id === body.templateId);
       return json({ templateId: body.templateId, language: body.lang, text: `נוסח: ${t?.nameHe}`, missingVariables: [] });
@@ -137,6 +134,7 @@ before(async () => {
 beforeEach(() => {
   calls = [];
   templates = [T_DEFAULT, T_OTHER];
+  SUBJECT_OVERRIDE = null;
   document.body.innerHTML = '';
 });
 
@@ -146,7 +144,8 @@ const accountSelect = () => [...document.querySelectorAll('select')]
   .find((s) => [...s.options].some((o) => o.value === 'office')) || null;
 const text = () => document.body.textContent;
 const sends = () => calls.filter((c) => c.url.includes('/guide-message/send'));
-const writes = () => calls.filter((c) => c.method !== 'GET' && c.url.includes('/whatsapp-templates'));
+const writes = () => calls.filter((c) => c.method !== 'GET'
+  && (c.url.includes('/whatsapp-templates') || c.url.includes('/guide-message/settings')));
 const button = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
 
 async function render() {
@@ -190,10 +189,10 @@ test('the loaded message stays fully editable, and clearing it works', async () 
   await ui.unmount();
 });
 
-test("the template's account is preselected and labelled as the template's", async () => {
+test('the FLOW default account is preselected and labelled as the default', async () => {
   const ui = await render();
-  assert.equal(accountSelect().value, 'office', 'שירות לקוחות, from the template — not the remembered number');
-  assert.match(text(), /לפי התבנית/);
+  assert.equal(accountSelect().value, 'office', 'שירות לקוחות — the flow setting');
+  assert.match(text(), /ברירת מחדל/);
   await ui.unmount();
 });
 
@@ -202,12 +201,12 @@ test('no default ⇒ the composer opens EMPTY (unchanged behaviour)', async () =
   const ui = await render();
   assert.equal(editor().value, '', 'nothing was loaded');
   assert.equal(calls.filter((c) => c.url.includes('/guide-message/resolve')).length, 0, 'and nothing was resolved');
-  // Falls back to the operator's own remembered number, as before.
-  assert.equal(accountSelect().value, 'main');
+  // The flow default still applies — it is not a property of the template.
+  assert.equal(accountSelect().value, 'office');
   await ui.unmount();
 });
 
-test('switching template reloads the wording AND re-suggests that account', async () => {
+test('switching template reloads the wording and KEEPS the flow account', async () => {
   const ui = await render();
   assert.equal(editor().value, 'נוסח: תודה על הסיכום');
   assert.equal(accountSelect().value, 'office');
@@ -229,32 +228,38 @@ test('switching template reloads the wording AND re-suggests that account', asyn
   await act(async () => { await sleep(200); });
 
   assert.equal(editor().value, 'נוסח: בקשת השלמה', 'the other template loaded');
-  assert.equal(accountSelect().value, 'main', 'and ITS account was suggested');
+  assert.equal(accountSelect().value, 'office', 'the number is the FLOW default — templates do not carry one');
   await ui.unmount();
 });
 
-test('changing the account is per-send: it rides in the send and writes NOTHING to the template', async () => {
+test('changing the account is per-send: it rides in the send and writes NOTHING to the setting', async () => {
   const ui = await render();
   await setValue(accountSelect(), 'main');
   assert.equal(accountSelect().value, 'main');
-  assert.equal(writes().length, 0, 'no template was updated by changing the number');
+  assert.equal(writes().length, 0, 'no setting was written by changing the number');
 
   await act(async () => button('שליחה').dispatchEvent(new window.MouseEvent('click', { bubbles: true })));
   await act(async () => { await sleep(120); });
   assert.equal(sends().length, 1);
   assert.equal(sends()[0].body.accountId, 'main', 'the ONE send used the operator’s choice');
-  assert.equal(writes().length, 0, 'and the template default is untouched');
+  assert.equal(writes().length, 0, 'and the flow default is untouched');
   await ui.unmount();
 });
 
-test('a retired template account is NOT swapped — warn, and block sending until chosen', async () => {
-  templates = [T_RETIRED];
+test('a retired FLOW account is NOT swapped — warn, and block sending until chosen', async () => {
+  // The configured number no longer exists in the canonical list.
+  const saved = SUBJECT;
+  SUBJECT_OVERRIDE = {
+    ...saved,
+    defaultAccountId: null,
+    accountSetting: { accountId: 'gone', source: 'configured', available: false, connected: false },
+  };
   const ui = await render();
   assert.equal(accountSelect().value, '', 'no number was silently substituted');
-  assert.notEqual(accountSelect().value, 'office', 'the audience default did not quietly take over');
   assert.match(text(), /כבר לא זמין|לא תחליף אותו בשקט/);
   assert.equal(button('שליחה').disabled, true, 'sending is blocked until a number is chosen');
   await setValue(accountSelect(), 'office');
   assert.equal(button('שליחה').disabled, false, 'choosing one unblocks it');
+  SUBJECT_OVERRIDE = null;
   await ui.unmount();
 });

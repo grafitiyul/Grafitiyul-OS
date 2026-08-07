@@ -21,10 +21,7 @@
 // them into one column would make turning on a convenience turn on an automatic
 // message, which is exactly the class of accident this project does not ship.
 
-import { AmbiguousSenderError } from './senderAccount.js';
-
 const STAR_FIELD = 'isAudienceDefault';
-const ACCOUNT_FIELD = 'sendAccountId';
 
 // Audiences whose composer supports a default template. Guide-only today, by
 // product decision: the customer composer already has a star with a different
@@ -32,58 +29,20 @@ const ACCOUNT_FIELD = 'sendAccountId';
 // Widening this is a deliberate act, not an accident.
 export const DEFAULTABLE_AUDIENCES = ['guide'];
 
-// The number a template is sent from when nobody chose one, per audience.
+// REMOVED: AUDIENCE_DEFAULT_ACCOUNT / templateSendAccountId /
+// resolveComposerAccount / setTemplateSendAccount.
 //
-// 'office' (שירות לקוחות) for guide messages: writing to a guide about a tour
-// that already happened is service, not sales, and the office number is the one
-// guides already have a conversation on. Like DEFAULT_NEW_LEAD_ACCOUNT_ID, this
-// is the deliberate documented answer for THIS flow only — it is a stable
-// bridge-keyed id, never the Hebrew label, so renaming the number in admin
-// cannot break it.
-export const AUDIENCE_DEFAULT_ACCOUNT = { guide: 'office' };
+// A per-template sending number lived here for one release and was removed on
+// the owner's decision: "which of our numbers do we write to guides from" is a
+// property of the FLOW, not of each wording. It now lives once, on
+// GuideMessageSettings (whatsapp/guideMessageSettings.js). This module is left
+// with exactly one job — WHICH template the composer opens with.
 
 /** May this audience have a composer default at all? */
 export const audienceSupportsDefault = (audience) =>
   DEFAULTABLE_AUDIENCES.includes(String(audience || ''));
 
-/**
- * The account a template will be composed from: its OWN choice first, then the
- * audience default. Never a coin-flip between two real business numbers — a
- * null here is an honest "nothing configured", and the caller decides.
- */
-export function templateSendAccountId(template) {
-  const own = String(template?.[ACCOUNT_FIELD] || '').trim();
-  if (own) return own;
-  return AUDIENCE_DEFAULT_ACCOUNT[template?.audience || 'customer'] || null;
-}
-
-/**
- * Resolve the account a composer should PRESELECT, and say whether it can
- * actually send. `accounts` is the canonical list (senderAccount.listSelectableAccounts).
- *
- * Returns { accountId, source, available, connected }:
- *   source     'template' | 'audience_default' | 'none'
- *   available  the id exists in the canonical list (a retired number does not)
- *   connected  that account's bridge is currently connected
- *
- * A configured-but-unavailable account resolves to accountId with
- * available:false rather than to a substitute. Silently swapping business
- * numbers is the failure mode this whole module exists to prevent.
- */
-export function resolveComposerAccount(template, accounts = []) {
-  const own = String(template?.[ACCOUNT_FIELD] || '').trim();
-  const fallback = AUDIENCE_DEFAULT_ACCOUNT[template?.audience || 'customer'] || null;
-  const accountId = own || fallback || null;
-  const row = accountId ? accounts.find((a) => a.id === accountId) || null : null;
-  return {
-    accountId,
-    source: own ? 'template' : accountId ? 'audience_default' : 'none',
-    available: !!row,
-    connected: !!row?.connected,
-  };
-}
-
-/** Raised when a template cannot hold the default / the account. */
+/** Raised when a template cannot hold the composer default. */
 export class TemplateDefaultError extends Error {
   constructor(code) {
     super(code);
@@ -102,8 +61,7 @@ export async function getAudienceDefault(db, audience) {
     where: { [STAR_FIELD]: true, isActive: true, audience },
     select: {
       id: true, nameHe: true, audience: true,
-      bodyHeHtml: true, bodyEnHtml: true, isActive: true,
-      [ACCOUNT_FIELD]: true, updatedAt: true,
+      bodyHeHtml: true, bodyEnHtml: true, isActive: true, updatedAt: true,
     },
   });
 }
@@ -149,30 +107,6 @@ export async function clearAudienceDefault(db, templateId) {
 }
 
 /**
- * Choose the number this template is normally sent from.
- *
- * Unlike the new-lead account (which only the starred template may hold,
- * because only it sends by itself), ANY template may carry this: every template
- * can be sent manually, so every template has a sensible "from".
- *
- * `validAccountIds` comes from the canonical account list — this module does
- * not decide which numbers exist. An empty string CLEARS the choice, which
- * resolves back to the audience default.
- */
-export async function setTemplateSendAccount(db, templateId, accountId, validAccountIds = null) {
-  const id = String(accountId ?? '').trim();
-  if (id && validAccountIds && !validAccountIds.includes(id)) {
-    throw new TemplateDefaultError('unknown_account');
-  }
-  const target = await db.whatsAppTemplate.findUnique({ where: { id: templateId }, select: { id: true } });
-  if (!target) throw new TemplateDefaultError('not_found');
-  return db.whatsAppTemplate.update({
-    where: { id: templateId },
-    data: { [ACCOUNT_FIELD]: id || null },
-  });
-}
-
-/**
  * The isActive patch, through the default rule: deactivating the default drops
  * it in the SAME update, so a paused template stops opening the composer and
  * the screen shows the truth.
@@ -182,7 +116,3 @@ export function activePatch(isActive) {
   if (!isActive) data[STAR_FIELD] = false;
   return data;
 }
-
-// Re-exported so a caller that resolves an account can distinguish "nothing is
-// configured" from "two numbers and nobody chose" without importing two modules.
-export { AmbiguousSenderError };

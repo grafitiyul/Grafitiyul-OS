@@ -1160,6 +1160,40 @@ model Deal {
   // answer "already done?" instead of the application guessing. Null = the
   // deal has never been converted.
   conversionOpId               String?                    @unique
+  // ── Deal MERGE lineage ("איחוד דילים", deals/dealMerge.js) ──────────────
+  // Two deals turned out to be ONE real transaction. One survives; the other is
+  // RETIRED — never deleted. Deletion is not an option and never will be: every
+  // financial table (IcountDocument, DealCollectionEvidence, PaymentRequest,
+  // QuoteVersion, QuoteDocument) cascades from Deal, so dropping the row would
+  // silently destroy issued tax documents. deleteGuard.js already refuses that
+  // for exactly this reason; merge honours the same invariant.
+  //
+  //   mergedIntoDealId — set on the RETIRED deal, pointing at its survivor. Its
+  //                      presence is THE definition of "retired": every active
+  //                      surface filters on it (deals/mergeLineage.js
+  //                      activeDealWhere) and the write guard refuses ordinary
+  //                      mutations on it.
+  //   mergedAt         — when the merge committed.
+  //   mergeOpId        — the idempotency identity of the merge that RETIRED this
+  //                      deal, a client-supplied UUID unique across all deals. A
+  //                      merge re-parents bookings, seats, contacts and quote
+  //                      lines; a double click, refresh, retry or duplicate
+  //                      request must never run that twice, and the UNIQUE index
+  //                      is what lets the DATABASE answer "already done?"
+  //                      instead of the application guessing.
+  //
+  // The retired deal keeps its orderNo forever (numbers are never reused), stays
+  // searchable, and serves a tombstone at its own URL pointing at the survivor.
+  mergedInto                   Deal?                      @relation("DealMergeLineage", fields: [mergedIntoDealId], references: [id], onDelete: Restrict)
+  mergedIntoDealId             String?
+  mergedAt                     DateTime?
+  mergeOpId                    String?                    @unique
+  // Back-relation: the deals retired INTO this one. Read-time history,
+  // collection and search aggregation walk this (never a stored copy).
+  mergedFrom                   Deal[]                     @relation("DealMergeLineage")
+  // The audit records of merges this deal took part in, on either side.
+  mergesAsSurvivor             DealMerge[]                @relation("DealMergeSurvivor")
+  mergeAsRetired               DealMerge?                 @relation("DealMergeRetired")
   lostAt                       DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free
@@ -1329,6 +1363,56 @@ model Deal {
   @@index([status, collectionReviewStatus])
   // Serves the payment-review filter (deposit-vs-full audit).
   @@index([status, paymentReviewStatus])
+  // Serves BOTH halves of the merge lineage read: "is this deal retired?"
+  // (every active-surface filter) and "what was retired into it?" (history,
+  // collection and search aggregation).
+  @@index([mergedIntoDealId])
+}
+
+// ── Deal MERGE audit ("איחוד דילים") ────────────────────────────────────────
+// ONE immutable record per merge: which deal survived, which was retired, who
+// decided, and EXACTLY what they decided. It is the evidence that makes a merge
+// reconstructable years later — the retired deal's own row only says "merged
+// into X", it cannot say why the price of A won, or that the participant count
+// was combined rather than chosen.
+//
+// Deliberately a separate model rather than a timeline entry: a timeline entry
+// is prose for a human to read, while this is queried structurally (the
+// integrity detector walks it, the tombstone renders from it, and lineage
+// aggregation resolves history through it).
+model DealMerge {
+  id              String   @id @default(cuid())
+  survivorDeal    Deal     @relation("DealMergeSurvivor", fields: [survivorDealId], references: [id], onDelete: Restrict)
+  survivorDealId  String
+  // Frozen COPIES of both order numbers. The FKs above already identify the
+  // deals, but a merge record must stay readable as a business fact ("#27100
+  // was merged into #27042") without a join, and the numbers are what the
+  // operator actually recognises.
+  survivorOrderNo Int
+  retiredDeal     Deal     @relation("DealMergeRetired", fields: [retiredDealId], references: [id], onDelete: Restrict)
+  // UNIQUE: a deal is retired at most ONCE. A survivor may absorb many deals
+  // (chained merges), but a retired deal can never be retired again — the
+  // database enforces it, not a code path.
+  retiredDealId   String   @unique
+  retiredOrderNo  Int
+  // The idempotency identity of this merge, shared with Deal.mergeOpId.
+  opId            String   @unique
+  actorUserId     String?
+  actorName       String?
+  mergedAt        DateTime @default(now())
+  // The operator's decision snapshot, frozen: which deal survived and why each
+  // conflict resolved the way it did (commercial, participants, status,
+  // organization, operational, contacts, tasks). Shape is owned by
+  // deals/dealMerge.js.
+  decisions       Json
+  // What the merge ACTUALLY did — counts and ids of everything that moved:
+  // contacts linked, quote lines composed, booking/registrations re-parented or
+  // cancelled, tasks moved/closed, review cards raised. The honest record of
+  // effects, written inside the same transaction.
+  outcome         Json
+
+  @@index([survivorDealId])
+  @@index([mergedAt])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────
@@ -2291,19 +2375,13 @@ model WhatsAppTemplate {
   // composer and the customer composer each get at most one, and they never
   // compete. Zero defaults is valid and means the composer opens empty.
   isAudienceDefault Boolean @default(false)
-  // WHICH of our numbers this template is normally sent from.
+  // REMOVED: sendAccountId (a per-template sending number).
   //
-  // Distinct from newLeadSendAccountId above, which is configuration of the
-  // new-lead AUTOMATION and is only meaningful on the starred customer
-  // template. This one is a property of the template itself for MANUAL sends,
-  // so any template may carry it. Null = never chosen, and resolves at compose
-  // time to the audience's documented default (whatsapp/templateDefaults.js).
-  //
-  // A WhatsAppAccount id ('main' | 'office'), kept as a LOOSE reference like
-  // the rest of the WhatsApp module: accounts are bridge-keyed configuration
-  // and a template must survive one being retired — a stored id that no longer
-  // exists is reported to the operator, never silently swapped.
-  sendAccountId    String?
+  // It was built, shipped unused (zero rows ever carried a value) and removed
+  // on the owner's decision: "which number do we write to guides from" is a
+  // property of the FLOW, not of each wording. It now lives once, on
+  // GuideMessageSettings, and the operator can still override it per message.
+  // One setting to change instead of one per template.
   sourceSystem     String? // 'airtable' for migrated rows, null for hand-created
   sourceRecordId   String? // Airtable recId (migration provenance)
   createdAt        DateTime @default(now())
@@ -2312,6 +2390,30 @@ model WhatsAppTemplate {
   @@unique([sourceSystem, sourceRecordId])
   @@index([isActive, sortOrder])
   @@index([audience, isActive, sortOrder])
+}
+
+// Settings for ONE business flow: Management Tasks → tour summary → "הודעה
+// למדריך". Singleton, the project's standard shape for flow-level settings
+// (TourSettings / TourGallerySettings).
+//
+// It answers one question — "which of our numbers do we write to guides from
+// by default" — once, for the whole flow, instead of once per template. That
+// was the owner's correction: the number is a property of how this office
+// talks to its guides, not of any particular wording.
+//
+// DELIBERATELY SEPARATE from WhatsAppTemplate.newLeadSendAccountId, which
+// configures the automatic reply to a new CUSTOMER lead. Two different flows,
+// two different audiences, two different defaults — neither reads the other.
+model GuideMessageSettings {
+  id String @id @default("singleton")
+  // A WhatsAppAccount id ('main' | 'office'), never the Hebrew label — renaming
+  // a number in admin must not change behaviour. Null means "never configured"
+  // and resolves to the documented flow default in
+  // whatsapp/guideMessageSettings.js; the migration seeds 'office'
+  // (שירות לקוחות), which is the answer today.
+  sendAccountId String?
+  updatedAt     DateTime @updatedAt
+  updatedById   String? // loose ref (createdById convention)
 }
 
 // One attempted automatic reply to a genuinely new external lead — created for

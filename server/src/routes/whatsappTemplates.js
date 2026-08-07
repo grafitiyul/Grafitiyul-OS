@@ -26,10 +26,8 @@ import { listSelectableAccounts } from '../whatsapp/senderAccount.js';
 import {
   setAudienceDefault,
   clearAudienceDefault,
-  resolveComposerAccount,
   audienceSupportsDefault,
   activePatch,
-  AUDIENCE_DEFAULT_ACCOUNT,
   TemplateDefaultError,
 } from '../whatsapp/templateDefaults.js';
 
@@ -46,22 +44,6 @@ const router = Router();
 
 const MAX_NAME = 120;
 const MAX_BODY = 20_000;
-
-/**
- * Validate a template's "שליחה דרך" against the CANONICAL account list — this
- * route never decides which numbers exist. '' clears the choice (the template
- * falls back to its audience default); an unknown id is refused rather than
- * stored, because an invisible bad setting surfaces later as a message from
- * the wrong business number.
- */
-async function readSendAccountId(raw) {
-  if (raw === undefined) return { skip: true };
-  const id = String(raw ?? '').trim();
-  if (!id) return { value: null };
-  const valid = (await listSelectableAccounts(prisma)).map((a) => a.id);
-  if (!valid.includes(id)) return { error: 'unknown_account' };
-  return { value: id };
-}
 
 // Body HTML in, storable body HTML out:
 //   1. alias moustache → canonical spelling ({{first_name}} → {{customer_first_name}}),
@@ -106,11 +88,6 @@ function toClient(t) {
     // schema comment). Nothing is sent because of it; it decides what the
     // composer opens with.
     isAudienceDefault: !!t.isAudienceDefault,
-    // The template's OWN choice (null = never chosen) and the id that would
-    // actually be preselected once the audience default is applied. Both
-    // travel, so a screen can show "inherited" without guessing the rule.
-    sendAccountId: t.sendAccountId || null,
-    effectiveSendAccountId: resolveComposerAccount(t).accountId,
     // Which business number that automatic reply goes out from. Resolved (never
     // raw null) so the dropdown always shows the account that would actually be
     // used, including for a template that has never been configured.
@@ -151,12 +128,9 @@ router.get(
         connected: a.connected,
         bridgeConfigured: a.bridgeConfigured,
       })),
-      // The number a template of THIS audience is sent from when nobody chose
-      // one. Customer keeps its new-lead answer ('main' / מכירות); guide gets
-      // its own ('office' / שירות לקוחות). Ids, never labels.
-      defaultSendAccountId: audience === 'guide'
-        ? AUDIENCE_DEFAULT_ACCOUNT.guide
-        : DEFAULT_NEW_LEAD_ACCOUNT_ID,
+      // The new-lead automation's account. The GUIDE flow's sending number is
+      // NOT here — it is a flow setting, served by GET /api/guide-message/settings.
+      defaultSendAccountId: DEFAULT_NEW_LEAD_ACCOUNT_ID,
       // Whether this audience's composer supports a default template at all.
       supportsAudienceDefault: audienceSupportsDefault(audience),
     });
@@ -208,9 +182,6 @@ router.post(
     if (!bodyHeHtml && !bodyEnHtml) return res.status(400).json({ error: 'body_required' });
     const tokenErr = bodyTokenError(bodyHeHtml, bodyEnHtml, audience);
     if (tokenErr) return res.status(400).json(tokenErr);
-    const acc = await readSendAccountId(b.sendAccountId);
-    if (acc.error) return res.status(400).json({ error: acc.error });
-
     // Ordering is per audience — a new guide template goes to the end of the
     // GUIDE list, not behind every customer template ever written.
     const last = await prisma.whatsAppTemplate.findFirst({
@@ -224,7 +195,6 @@ router.post(
         audience,
         bodyHeHtml,
         bodyEnHtml,
-        ...(acc.skip ? {} : { sendAccountId: acc.value }),
         isActive: b.isActive !== false,
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
@@ -257,9 +227,6 @@ router.put(
       Object.assign(data, activePatch(b.isActive));
       if (!data.isActive) data.isNewLeadDefault = false;
     }
-    const acc = await readSendAccountId(b.sendAccountId);
-    if (acc.error) return res.status(400).json({ error: acc.error });
-    if (!acc.skip) data.sendAccountId = acc.value;
 
     const nextHe = data.bodyHeHtml !== undefined ? data.bodyHeHtml : existing.bodyHeHtml;
     const nextEn = data.bodyEnHtml !== undefined ? data.bodyEnHtml : existing.bodyEnHtml;

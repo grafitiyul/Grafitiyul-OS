@@ -25,20 +25,20 @@ import { registerDynamicFields } from '../../../lib/dynamicFields.js';
 // promised that would be a lie. Exactly one per audience, enforced in the
 // database; zero is valid and means the composer opens empty.
 //
-// "שליחה דרך" is the number this template is normally sent from. Stored as the
-// canonical account id, never the Hebrew label, so renaming a number in admin
-// cannot break it. Empty = inherit the audience default (שירות לקוחות).
+// "שליחה דרך" is NOT a per-template setting: which of our numbers we write to
+// guides from is a property of the FLOW, and lives once in the הגדרות כלליות
+// section at the top of this screen.
 
 const LANG_TABS = [
   { key: 'he', label: 'עברית', bodyKey: 'bodyHeHtml' },
   { key: 'en', label: 'English', bodyKey: 'bodyEnHtml' },
 ];
 
-const emptyDraft = { nameHe: '', bodyHeHtml: '', bodyEnHtml: '', isActive: true, sendAccountId: '' };
+const emptyDraft = { nameHe: '', bodyHeHtml: '', bodyEnHtml: '', isActive: true };
 
 const isEmptyHtml = (html) => !html || !String(html).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 
-function TemplateEditor({ open, initial, variables, categories, meta, onClose, onSubmit }) {
+function TemplateEditor({ open, initial, variables, categories, onClose, onSubmit }) {
   const [draft, setDraft] = useState(initial);
   const [lang, setLang] = useState('he');
   const [saving, setSaving] = useState(false);
@@ -53,13 +53,6 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
 
   const bodyKey = LANG_TABS.find((t) => t.key === lang).bodyKey;
   const canSave = !!draft.nameHe.trim() && (!isEmptyHtml(draft.bodyHeHtml) || !isEmptyHtml(draft.bodyEnHtml));
-  // What "inherit" actually resolves to, named rather than implied — an
-  // operator should never have to guess which number an empty selection means.
-  const accounts = meta?.sendAccounts || [];
-  const inheritedLabel = accounts.find((a) => a.id === meta?.defaultSendAccountId)?.label || null;
-  const chosenAccount = accounts.find(
-    (a) => a.id === (draft.sendAccountId || meta?.defaultSendAccountId),
-  ) || null;
 
   async function save() {
     setSaving(true);
@@ -70,9 +63,6 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
         bodyHeHtml: draft.bodyHeHtml || '',
         bodyEnHtml: draft.bodyEnHtml || '',
         isActive: draft.isActive,
-        // '' means "inherit the audience default" — a real, storable choice,
-        // not a missing value.
-        sendAccountId: draft.sendAccountId || '',
         audience: 'guide',
       });
     } catch (e) {
@@ -81,9 +71,7 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
           ? `יש בנוסח משתנה שלא ניתן למלא בהודעה למדריך: ${(e.payload.keys || []).join(', ')}. השתמשו רק במשתנים מהתפריט.`
           : e?.payload?.error === 'body_required'
             ? 'צריך תוכן לפחות בשפה אחת.'
-            : e?.payload?.error === 'unknown_account'
-              ? 'מספר השליחה שנבחר אינו זמין במערכת.'
-              : 'השמירה נכשלה — נסו שוב.',
+            : 'השמירה נכשלה — נסו שוב.',
       );
     } finally {
       setSaving(false);
@@ -143,51 +131,6 @@ function TemplateEditor({ open, initial, variables, categories, meta, onClose, o
           <p className="mt-1 text-[11.5px] text-gray-400">השם מופיע בבורר התבניות בלבד. המדריך לא רואה אותו.</p>
         </div>
 
-        {/* "שליחה דרך" — the number this template is normally sent from.
-            Framed as its own SECTION rather than a bare label: it shipped as a
-            plain field between the name input and the language tabs, and the
-            operator it was built for could not find it. A control nobody sees
-            is a control that does not exist.
-            The options are the CANONICAL account list (same rows, same labels,
-            same order as every other sending surface); the stored value is the
-            account id. It is a PRESELECTION, not a lock: the composer lets the
-            operator send one message from another number without touching the
-            template. */}
-        <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3.5">
-          <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
-            <h3 className="text-[13px] font-semibold text-gray-900">שליחה דרך</h3>
-            <span className="text-[11.5px] text-gray-500">מאיזה מספר תישלח ההודעה כשבוחרים את התבנית</span>
-          </div>
-          <select
-            aria-label="מספר הוואטסאפ שממנו נשלחת התבנית"
-            value={draft.sendAccountId || ''}
-            onChange={(e) => setDraft((d) => ({ ...d, sendAccountId: e.target.value }))}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none"
-          >
-            <option value="">
-              ברירת מחדל להודעות למדריכים
-              {inheritedLabel ? ` — ${inheritedLabel}` : ''}
-            </option>
-            {(meta?.sendAccounts || []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-                {a.connected ? '' : ' (מנותק)'}
-              </option>
-            ))}
-          </select>
-          {/* The effective answer, stated in words — an operator should never
-              have to work out what "inherit" resolves to. */}
-          <p className="mt-2 text-[12px] text-gray-600">
-            תישלח מ־<b className="text-gray-900">{chosenAccount?.label || '—'}</b>
-            {draft.sendAccountId ? '' : ' (ברירת מחדל)'}
-            <span className="text-gray-400"> · אפשר לשנות לשליחה בודדת בלי לשנות את התבנית</span>
-          </p>
-          {chosenAccount && !chosenAccount.connected && (
-            <p className="mt-1 text-[11.5px] font-medium text-amber-700">
-              ⚠ המספר הזה מנותק כרגע. הודעה שתישלח דרכו תמתין בתור עד שיתחבר — המערכת לא תשלח מהמספר השני.
-            </p>
-          )}
-        </section>
 
         <div className="flex items-center gap-1 border-b border-gray-200">
           {LANG_TABS.map((t) => {
@@ -244,6 +187,10 @@ export default function GuideTemplatesDialog({ open, onClose }) {
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [alertMsg, setAlertMsg] = useState(null);
+  // The FLOW's settings — one row for "הודעה למדריך" as a whole, not per
+  // template. { sendAccountId, effectiveSendAccountId, accounts, ... }
+  const [settings, setSettings] = useState(null);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -270,7 +217,30 @@ export default function GuideTemplatesDialog({ open, onClose }) {
         );
       })
       .catch(() => setMeta({ variables: [], categories: {} }));
+    api.guideMessage.settings().then(setSettings).catch(() => setSettings(null));
   }, [open, refresh]);
+
+  // Saving the flow default is immediate — it is one dropdown with one effect,
+  // and nothing is sent because of it. A failure re-reads the truth rather than
+  // leaving the screen showing a value the server never accepted.
+  async function saveSendAccount(accountId) {
+    if (!accountId) return;
+    const previous = settings;
+    setSettings((s) => ({ ...s, sendAccountId: accountId, effectiveSendAccountId: accountId }));
+    setSavingSettings(true);
+    try {
+      setSettings(await api.guideMessage.saveSettings({ sendAccountId: accountId }));
+    } catch (e) {
+      setSettings(previous);
+      setAlertMsg(
+        e?.payload?.error === 'unknown_account'
+          ? 'המספר שנבחר אינו זמין במערכת.'
+          : 'שמירת ההגדרה נכשלה — נסו שוב.',
+      );
+    } finally {
+      setSavingSettings(false);
+    }
+  }
 
   async function reorder(ids) {
     try {
@@ -309,7 +279,9 @@ export default function GuideTemplatesDialog({ open, onClose }) {
   // Account id → the canonical label. Never a hardcoded Hebrew name: renaming
   // a number in admin must rename it here too.
   const accountLabel = (id) =>
-    (meta.sendAccounts || []).find((a) => a.id === id)?.label || id || '—';
+    (settings?.accounts || meta.sendAccounts || []).find((a) => a.id === id)?.label || id || '—';
+  const effectiveAccount = (settings?.accounts || [])
+    .find((a) => a.id === settings?.effectiveSendAccountId) || null;
 
   async function remove(item) {
     try {
@@ -346,6 +318,53 @@ export default function GuideTemplatesDialog({ open, onClose }) {
         }
       >
         <div dir="rtl">
+          {/* ── הגדרות כלליות — the FLOW, not any one template ──────────────
+              "Which of our numbers do we write to guides from" is one decision
+              for how this office talks to its guides. It used to live on each
+              template, which meant changing it in N places and reading it in
+              N places; it now lives here once. The composer still lets an
+              operator send a single message from another number, and that
+              never writes back to this setting. */}
+          <section className="mb-4 rounded-xl border border-gray-200 bg-gray-50/70 p-3.5">
+            <h3 className="text-[13px] font-semibold text-gray-900">הגדרות כלליות</h3>
+            <p className="mt-0.5 text-[11.5px] text-gray-500">
+              חלות על כל ההודעות למדריכים מסקירת סיכומי סיור — לא על תבנית מסוימת.
+            </p>
+            <label className="mt-2.5 block">
+              <span className="mb-1 block text-[12.5px] font-medium text-gray-700">שליחה דרך כברירת מחדל</span>
+              <select
+                aria-label="מספר הוואטסאפ שממנו נשלחות הודעות למדריכים כברירת מחדל"
+                disabled={!settings || savingSettings}
+                value={settings?.effectiveSendAccountId || ''}
+                onChange={(e) => saveSendAccount(e.target.value)}
+                className="w-full max-w-sm rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+              >
+                {!settings && <option value="">טוען…</option>}
+                {(settings?.accounts || []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label}
+                    {a.connected ? '' : ' (מנותק)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {settings && (
+              <p className="mt-2 text-[12px] text-gray-600">
+                הודעות למדריכים ייצאו מ־<b className="text-gray-900">{accountLabel(settings.effectiveSendAccountId)}</b>
+                {savingSettings ? <span className="text-gray-400"> · שומר…</span> : null}
+                <span className="text-gray-400"> · אפשר לשנות לשליחה בודדת במחבר, בלי לשנות את ההגדרה כאן</span>
+              </p>
+            )}
+            {effectiveAccount && !effectiveAccount.connected && (
+              <p className="mt-1 text-[11.5px] font-medium text-amber-700">
+                ⚠ המספר הזה מנותק כרגע. הודעות ימתינו בתור עד שיתחבר — המערכת לא תשלח מהמספר השני.
+              </p>
+            )}
+            <p className="mt-2 text-[11px] text-gray-400">
+              הגדרה זו אינה קשורה למספר השליחה של התשובה האוטומטית לליד חדש — זו זרימה אחרת עם הגדרה משלה.
+            </p>
+          </section>
+
           <p className="mb-3 text-[12.5px] leading-relaxed text-gray-500">
             ניסוחים לשימוש חוזר בהודעות למדריכים. בבחירת תבנית המערכת ממלאת את הפרטים
             (שם המדריך, מתי היה הסיור, הלקוח) — והטקסט נפתח לעריכה חופשית לפני השליחה.
@@ -415,13 +434,6 @@ export default function GuideTemplatesDialog({ open, onClose }) {
                       <span className={item.hasEn ? 'text-emerald-700' : 'text-gray-300'}>
                         {item.hasEn ? '● English' : '○ English'}
                       </span>
-                      {/* The sending number, visible on the row itself —
-                          "which number does this go from" should never require
-                          opening the editor. */}
-                      <span className={item.sendAccountId ? 'text-gray-600' : 'text-gray-400'}>
-                        · דרך {accountLabel(item.effectiveSendAccountId)}
-                        {item.sendAccountId ? '' : ' (ברירת מחדל)'}
-                      </span>
                       {!item.isActive && <span className="text-gray-400">· לא פעילה</span>}
                     </p>
                   </div>
@@ -458,7 +470,6 @@ export default function GuideTemplatesDialog({ open, onClose }) {
           initial={editing}
           variables={meta.variables}
           categories={meta.categories}
-          meta={meta}
           onClose={() => setEditing(null)}
           onSubmit={async (data) => {
             if (editing.id) await api.whatsappTemplates.update(editing.id, data);

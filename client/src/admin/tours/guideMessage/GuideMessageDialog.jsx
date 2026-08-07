@@ -162,10 +162,10 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
-  // The account is a PER-SEND choice seeded from the template. `accountTouched`
-  // separates "the operator picked this number for this message" from "the
-  // template suggested it", so switching template re-suggests but a deliberate
-  // pick is never silently replaced. Nothing here ever writes the template.
+  // The account is a PER-SEND choice seeded from the FLOW setting
+  // (הגדרות כלליות → שליחה דרך כברירת מחדל). `accountTouched` marks that the
+  // operator chose a number for THIS message; that choice is never written
+  // back to the setting, and reopening the composer returns to the default.
   const accountTouched = useRef(false);
   // Keyed for the same reason as the state above: "already auto-loaded" must
   // mean "for THIS card", never "for whichever card was open before".
@@ -331,19 +331,6 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     applyChoice(nextTemplateId, nextLang);
   }
 
-  // Which of OUR numbers a template says it goes from. Applied whenever a
-  // template is chosen — including the automatic load — UNLESS the operator
-  // already picked a number for this message. A configured number that is no
-  // longer in the canonical list is NOT substituted: the selector is left
-  // empty and the warning below names the problem.
-  function applyTemplateAccount(t) {
-    if (!t || accountTouched.current) return;
-    const wanted = t.effectiveSendAccountId || '';
-    if (!wanted) return;
-    const exists = (subject?.accounts || []).some((a) => a.id === wanted);
-    setAccountId(exists ? wanted : '');
-  }
-
   function applyChoice(nextTemplateId, nextLang) {
     const t = (templates || []).find((x) => x.id === nextTemplateId) || null;
     // NEVER ask for a language this template does not have. The guide's own
@@ -358,7 +345,6 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
     setLangSwitched(switched ? { from: nextLang, to: openLang } : null);
     setOutcome(null);
     setSendError(null);
-    applyTemplateAccount(t);
     if (nextTemplateId) resolve(nextTemplateId, openLang, personRefId);
     else {
       // "no template" is a legitimate choice: an empty editor to write in.
@@ -540,20 +526,21 @@ export default function GuideMessageDialog({ open, tourEventId = null, reviewIte
                       </option>
                     ))}
                   </select>
-                  {selected && !accountTouched.current && accountId ? (
+                  {!accountTouched.current && accountId ? (
                     <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
-                      לפי התבנית
+                      ברירת מחדל
                     </span>
                   ) : null}
                 </label>
               </div>
 
-              {/* The configured number is gone from the system. NOT swapped for
-                  another one — the operator chooses, or the send waits. */}
-              {selected && !accountId && selected.effectiveSendAccountId ? (
+              {/* The configured flow number is gone from the system. NOT
+                  swapped for another one — the operator chooses, or nothing
+                  is sent. */}
+              {!accountId && subject.accountSetting?.accountId ? (
                 <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
-                  המספר שמוגדר לתבנית הזו כבר לא זמין במערכת. בחרו מספר שליחה לפני השליחה —
-                  המערכת לא תחליף אותו בשקט במספר אחר.
+                  מספר ברירת המחדל להודעות למדריכים כבר לא זמין במערכת. בחרו מספר שליחה לפני השליחה —
+                  המערכת לא תחליף אותו בשקט במספר אחר. אפשר לעדכן את ברירת המחדל ב״עריכת תבניות״.
                 </p>
               ) : null}
               {/* Configured, present, but its bridge is down. The queue holds

@@ -748,6 +748,13 @@ export const api = {
   // assignment rule; `send` hands the message to the canonical WhatsApp queue
   // and answers with that row's REAL state, never a blanket success.
   guideMessage: {
+    // Flow-level settings ("הגדרות כלליות") — ONE default sending number for
+    // the whole guide-message flow. Deliberately not per template, and
+    // deliberately not the customer new-lead account, which is a different
+    // flow with its own setting.
+    settings: () => request('/api/guide-message/settings'),
+    saveSettings: (body) =>
+      request('/api/guide-message/settings', { method: 'PUT', body: JSON.stringify(body) }),
     subject: ({ tourEventId, reviewItemId } = {}) =>
       request(`/api/guide-message/subject${qs({ tourEventId, reviewItemId })}`),
     resolve: (body) =>

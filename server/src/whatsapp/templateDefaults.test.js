@@ -3,13 +3,9 @@ import assert from 'node:assert/strict';
 import {
   setAudienceDefault,
   clearAudienceDefault,
-  setTemplateSendAccount,
   getAudienceDefault,
-  templateSendAccountId,
-  resolveComposerAccount,
   audienceSupportsDefault,
   activePatch,
-  AUDIENCE_DEFAULT_ACCOUNT,
   DEFAULTABLE_AUDIENCES,
   TemplateDefaultError,
 } from './templateDefaults.js';
@@ -105,60 +101,7 @@ test('getAudienceDefault ignores an inactive row even if the flag survived', asy
   assert.equal(await getAudienceDefault(db, 'customer'), null, 'customer has no composer default');
 });
 
-// ── The sending account ──────────────────────────────────────────────────────
-
-test('a guide template with no account inherits שירות לקוחות — by ID, never by label', () => {
-  assert.equal(AUDIENCE_DEFAULT_ACCOUNT.guide, 'office');
-  assert.equal(templateSendAccountId({ audience: 'guide', sendAccountId: null }), 'office');
-  assert.equal(templateSendAccountId({ audience: 'guide', sendAccountId: 'main' }), 'main');
-  // Customer templates have no audience default here — their new-lead account
-  // is a separate, untouched setting.
-  assert.equal(templateSendAccountId({ audience: 'customer', sendAccountId: null }), null);
-});
-
-const ACCOUNTS = [
-  { id: 'main', label: 'מכירות', connected: true },
-  { id: 'office', label: 'שירות לקוחות', connected: true },
-];
-
-test('the composer preselects the template account and says where it came from', () => {
-  const own = resolveComposerAccount({ audience: 'guide', sendAccountId: 'main' }, ACCOUNTS);
-  assert.deepEqual(own, { accountId: 'main', source: 'template', available: true, connected: true });
-  const inherited = resolveComposerAccount({ audience: 'guide', sendAccountId: null }, ACCOUNTS);
-  assert.deepEqual(inherited, { accountId: 'office', source: 'audience_default', available: true, connected: true });
-});
-
-test('a DISCONNECTED account is reported, never swapped for the other number', () => {
-  const down = [{ id: 'main', label: 'מכירות', connected: true }, { id: 'office', label: 'שירות לקוחות', connected: false }];
-  const r = resolveComposerAccount({ audience: 'guide', sendAccountId: 'office' }, down);
-  assert.equal(r.accountId, 'office', 'still the configured number');
-  assert.equal(r.available, true);
-  assert.equal(r.connected, false, 'and the caller is told it cannot send right now');
-});
-
-test('a RETIRED account is reported as unavailable — no silent fallback', () => {
-  const r = resolveComposerAccount({ audience: 'guide', sendAccountId: 'gone' }, ACCOUNTS);
-  assert.equal(r.accountId, 'gone');
-  assert.equal(r.available, false);
-  assert.equal(r.connected, false);
-  assert.notEqual(r.accountId, 'office', 'the audience default did NOT quietly take over');
-});
-
-test('any template may carry an account — unlike the new-lead one, which needs the star', async () => {
-  const db = fakeDb([{ id: 'a' }]);
-  await setTemplateSendAccount(db, 'a', 'main', ['main', 'office']);
-  assert.equal(db.store[0].sendAccountId, 'main');
-});
-
-test('an unknown account id is refused rather than stored', async () => {
-  const db = fakeDb([{ id: 'a' }]);
-  await assert.rejects(() => setTemplateSendAccount(db, 'a', 'ghost', ['main', 'office']), (e) => e.code === 'unknown_account');
-  assert.equal(db.store[0].sendAccountId, null);
-});
-
-test('an empty account CLEARS the choice, falling back to the audience default', async () => {
-  const db = fakeDb([{ id: 'a', sendAccountId: 'main' }]);
-  await setTemplateSendAccount(db, 'a', '', ['main', 'office']);
-  assert.equal(db.store[0].sendAccountId, null);
-  assert.equal(templateSendAccountId(db.store[0]), 'office');
-});
+// The sending account used to live here. It moved to the FLOW settings
+// (whatsapp/guideMessageSettings.js) on the owner's decision that "which number
+// do we write to guides from" is one office-wide answer, not one per wording.
+// Its rules are tested there.
