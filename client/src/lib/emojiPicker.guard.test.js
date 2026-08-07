@@ -64,3 +64,18 @@ test('every emoji surface renders the shared panel', () => {
     assert.match(src, /<EmojiPickerPanel/, `${rel} renders the shared picker`);
   }
 });
+
+test('no WhatsApp surface prefixes the profile name with the word "WhatsApp"', () => {
+  // The identity line is "[CRM name] [flag] ~ [WhatsApp name]" — the tilde does
+  // the whole job. Kept next to the picker guard because both are the same
+  // rule: one presentation of a shared idea, in one place.
+  const WA = path.join(SRC, 'admin', 'whatsapp');
+  const offenders = [];
+  for (const file of walk(WA)) {
+    const src = readFileSync(file, 'utf8');
+    if (/WhatsApp:\s*\{/.test(src) || /WhatsApp:\s*\{waName\}/.test(src)) {
+      offenders.push(path.relative(SRC, file));
+    }
+  }
+  assert.deepEqual(offenders, [], 'a labelled WhatsApp name came back');
+});

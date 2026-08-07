@@ -112,16 +112,30 @@ export default function ChatPeekCard({ anchorRef, chat, open, onClose, onMouseEn
       onMouseLeave={onMouseLeave}
       panelClassName="rounded-xl p-0"
     >
+      {/* Same identity treatment as the list row: the CRM name leads, the
+          WhatsApp name follows after a bare "~". One rule, so the card and the
+          row it came from never describe the same person differently. */}
       <div className="border-b border-gray-100 px-3 py-2">
-        <p className="truncate text-[13px] font-semibold text-gray-900 text-right" dir="auto">
-          {chat.displayName || formatPhoneDisplay(chat.phoneNumber) || 'לא מזוהה'}
+        <p
+          data-identity="cluster"
+          className="flex items-baseline justify-end gap-1.5 truncate text-right"
+          dir="auto"
+        >
+          <span className="min-w-0 shrink truncate text-[13px] font-semibold text-gray-900">
+            {chat.displayName || formatPhoneDisplay(chat.phoneNumber) || 'לא מזוהה'}
+          </span>
+          {waName && (
+            <>
+              <span className="shrink-0 text-[11px] text-gray-300" aria-hidden>
+                ~
+              </span>
+              <span className="min-w-0 shrink truncate text-[11.5px] font-normal text-gray-400">
+                {waName}
+              </span>
+            </>
+          )}
         </p>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10.5px] text-gray-400">
-          {waName && (
-            <span className="truncate" dir="auto">
-              WhatsApp: {waName}
-            </span>
-          )}
           {!isGroup && chat.phoneNumber && <span dir="ltr">{formatPhoneDisplay(chat.phoneNumber)}</span>}
           {isGroup && <span>👥 קבוצה</span>}
         </div>
