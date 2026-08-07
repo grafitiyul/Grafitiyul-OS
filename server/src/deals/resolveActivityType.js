@@ -29,6 +29,8 @@
 // system commits to a working answer AND admits it chose it — it never silently
 // classifies a customer's business.
 
+import { emitTimelineEvent } from '../timeline/events.js';
+
 /** Payment/WON causes that PROVE money actually arrived (Deal.wonActor.cause). */
 const PAID_CAUSES = new Set(['card_payment', 'icount_payment', 'cardcom_payment', 'woo_order']);
 
@@ -55,6 +57,43 @@ export function resolveActivityType(deal, { groupSlotSelected = false } = {}) {
     return { activityType: 'business', assumed: true, reason: 'organization_linked' };
   }
   return { activityType: 'private', assumed: true, reason: 'default_private' };
+}
+
+/**
+ * Persist a resolution and its audit trail — THE single writer, so no entry
+ * point can invent its own version of "the system chose this".
+ *
+ * Every path that can meet a deal with no activityType calls this: payment
+ * settlement, and the post-payment recovery (complete-tour-setup). They used to
+ * be able to disagree — recovery simply refused with a 422 while settlement
+ * resolved and carried on, which meant the answer to "what is this deal?"
+ * depended on which button happened to run first. One rule, one record.
+ *
+ * No-op when nothing was assumed, so callers can invoke it unconditionally.
+ * Runs inside the caller's transaction.
+ *
+ * @returns the deal fields to merge locally (or null when nothing changed)
+ */
+export async function persistAssumedActivityType(tx, { dealId, resolved, origin = null }) {
+  if (!resolved?.assumed) return null;
+  const assumedAt = new Date();
+  await tx.deal.update({
+    where: { id: dealId },
+    data: { activityType: resolved.activityType, activityTypeAssumedAt: assumedAt },
+  });
+  await emitTimelineEvent(tx, {
+    subjectType: 'deal',
+    subjectId: dealId,
+    kind: 'tour',
+    body: `🏷️ סוג הפעילות הושלם אוטומטית כדי לא לעכב את הסגירה — ${ASSUMPTION_REASON_HE[resolved.reason]}. נדרש אישור.`,
+    data: {
+      event: 'activity_type_assumed',
+      activityType: resolved.activityType,
+      reason: resolved.reason,
+    },
+    origin,
+  });
+  return { activityType: resolved.activityType, activityTypeAssumedAt: assumedAt };
 }
 
 /** Hebrew wording for the assumption, rendered verbatim in the review card. */

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { settleDealWonFromPayment } from './paymentWon.js';
-import { resolveActivityType, settledPaymentStateFor } from './resolveActivityType.js';
+import {
+  resolveActivityType,
+  settledPaymentStateFor,
+  persistAssumedActivityType,
+} from './resolveActivityType.js';
 import { syncDealRegistration, stampSettledRegistration } from '../tours/registrations.js';
 
 // The rule under test: TAKING PAYMENT IS NEVER BLOCKED, and nothing the system
@@ -201,6 +205,49 @@ test('settledPaymentStateFor only trusts causes that PROVE money moved', () => {
   assert.equal(settledPaymentStateFor({ wonActor: { cause: 'manual' } }), null);
   assert.equal(settledPaymentStateFor({ wonActor: { cause: 'historical_correction' } }), null);
   assert.equal(settledPaymentStateFor({}), null);
+});
+
+// ── the ONE writer: every path must leave the identical record ───────────────
+
+test('persistAssumedActivityType is a no-op when the operator already chose', async () => {
+  const c = makeStore({ deals: { d1: { id: 'd1', activityType: 'business' } } });
+  const patch = await persistAssumedActivityType(c, {
+    dealId: 'd1',
+    resolved: resolveActivityType({ activityType: 'business' }),
+  });
+  assert.equal(patch, null, 'nothing to persist');
+  assert.equal(c._s.deals.d1.activityTypeAssumedAt, undefined);
+  assert.equal(c._s.timeline.length, 0, 'no audit noise for a human decision');
+});
+
+test('persistAssumedActivityType writes value + marker + audit together', async () => {
+  const c = makeStore({ deals: { d1: { id: 'd1', activityType: null } } });
+  const patch = await persistAssumedActivityType(c, {
+    dealId: 'd1',
+    resolved: resolveActivityType({ activityType: null, organizationId: null }),
+  });
+  assert.equal(patch.activityType, 'private');
+  assert.ok(patch.activityTypeAssumedAt instanceof Date);
+  assert.equal(c._s.deals.d1.activityType, 'private');
+  assert.ok(c._s.deals.d1.activityTypeAssumedAt, 'the marker is inseparable from the value');
+  const ev = tl(c, 'activity_type_assumed');
+  assert.ok(ev, 'the audit entry is written by the SAME call — it cannot be forgotten');
+  assert.equal(ev.data.reason, 'default_private');
+});
+
+test('every entry point resolves an identical deal identically', () => {
+  // The invariant: settlement, manual WON, and complete-tour-setup all call the
+  // same resolver with the same signal, so "what kind of deal is this?" can
+  // never depend on which button ran first.
+  const shapes = [
+    { deal: { activityType: null, organizationId: null }, ctx: {}, want: 'private' },
+    { deal: { activityType: null, organizationId: 'o1' }, ctx: {}, want: 'business' },
+    { deal: { activityType: null }, ctx: { groupSlotSelected: true }, want: 'group' },
+    { deal: { activityType: 'private', organizationId: 'o1' }, ctx: {}, want: 'private' },
+  ];
+  for (const { deal, ctx, want } of shapes) {
+    assert.equal(resolveActivityType(deal, ctx).activityType, want);
+  }
 });
 
 // ── Scenario A — operator/phone payment on a deal with no activityType ───────

@@ -45,7 +45,11 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
-import { settledPaymentStateFor } from '../deals/resolveActivityType.js';
+import {
+  settledPaymentStateFor,
+  resolveActivityType,
+  persistAssumedActivityType,
+} from '../deals/resolveActivityType.js';
 import { stampSettledRegistration } from '../tours/registrations.js';
 import { clearPostPaymentCompletion } from '../deals/postPaymentReview.js';
 import { duplicateDeal } from '../deals/duplicateDeal.js';
@@ -891,16 +895,32 @@ router.put(
       }
     }
 
+    // The ONE resolution of a missing activityType, shared with payment
+    // settlement and post-payment recovery. The operator pressing WON is not a
+    // reason to interpret an empty classification differently from the webhook
+    // that closes the same deal a minute later — they resolve identically, and
+    // the operator confirms (or corrects) it right after, on the deal.
+    const wonSlot = wonTransition && b.tourEventId
+      ? await prisma.tourEvent.findUnique({ where: { id: b.tourEventId }, select: { kind: true } })
+      : null;
+    const wonResolvedType = wonTransition
+      ? resolveActivityType({ ...existing, ...data }, { groupSlotSelected: wonSlot?.kind === 'group_slot' })
+      : null;
+
     if (wonTransition) {
       // NO draft tours: WON is refused while required fields are missing. The
       // list is declarative (requiredFields.js) — merged over this same save so
-      // "fill field + WON" in one request works.
-      const gate = wonGate({ ...existing, ...data }, b.tourEventId);
+      // "fill field + WON" in one request works. activityType is absent from
+      // that list by construction now: it is resolved, never demanded.
+      const gate = wonGate(
+        { ...existing, ...data, activityType: wonResolvedType.activityType },
+        b.tourEventId,
+      );
       if (gate.missing.length) {
         return res.status(422).json({
           error: 'won_requirements_missing',
           missing: gate.missing,
-          activityType: data.activityType ?? existing.activityType ?? null,
+          activityType: wonResolvedType.activityType,
         });
       }
       if (gate.needsSlot) {
@@ -954,6 +974,17 @@ router.put(
               lostNotes: null,
               lostReason: null,
             };
+            // Same writer, same audit trail as every other path. Re-resolved
+            // from the just-saved row so a type set in THIS save wins and
+            // nothing is assumed over it.
+            const assumedPatch = await persistAssumedActivityType(tx, {
+              dealId: req.params.id,
+              resolved: resolveActivityType(updated, {
+                groupSlotSelected: wonSlot?.kind === 'group_slot',
+              }),
+              origin,
+            });
+            if (assumedPatch) updated = { ...updated, ...assumedPatch };
             // First WON creates (private/business) or joins (group) the tour.
             const { dealSync } = await createTourForWonDeal(tx, updated, {
               targetTourEventId: b.tourEventId,
@@ -1292,7 +1323,18 @@ router.post(
     if (before.status !== 'won') return res.status(409).json({ error: 'deal_not_won' });
 
     const targetTourEventId = req.body?.tourEventId ? String(req.body.tourEventId) : null;
-    const gate = wonGate(before, targetTourEventId);
+    // ONE interpretation of a missing activityType, whichever path got here.
+    // This endpoint used to refuse with a 422 while payment settlement resolved
+    // and carried on — so the answer to "what kind of deal is this?" depended on
+    // which button ran first. Recovery now resolves identically and never
+    // blocks tour creation over a classification the system can determine.
+    // Group is still only ever taken from a REAL selected slot.
+    const targetTour = targetTourEventId
+      ? await prisma.tourEvent.findUnique({ where: { id: targetTourEventId }, select: { kind: true } })
+      : null;
+    const groupSlotSelected = targetTour?.kind === 'group_slot';
+    const preflight = resolveActivityType(before, { groupSlotSelected });
+    const gate = wonGate({ ...before, activityType: preflight.activityType }, targetTourEventId);
     if (gate.missing.length) {
       return res.status(422).json({ error: 'won_requirements_missing', missing: gate.missing });
     }
@@ -1304,7 +1346,17 @@ router.post(
       created = await prisma.$transaction(async (tx) => {
         const existing = await activeBookingFor(tx, req.params.id);
         if (existing) return { tourEventId: existing.tourEventId, already: true, after: null };
-        const full = await tx.deal.findUnique({ where: { id: req.params.id } });
+        const row = await tx.deal.findUnique({ where: { id: req.params.id } });
+        // Re-resolved from the row INSIDE the transaction, not from the
+        // pre-flight read: if an operator set the type in between, that choice
+        // wins and nothing is assumed. TourEvent.kind comes from this value.
+        const resolved = resolveActivityType(row, { groupSlotSelected });
+        const assumedPatch = await persistAssumedActivityType(tx, {
+          dealId: req.params.id,
+          resolved,
+          origin,
+        });
+        const full = assumedPatch ? { ...row, ...assumedPatch } : row;
         const { tourEvent, dealSync } = await createTourForWonDeal(tx, full, {
           targetTourEventId,
           origin,

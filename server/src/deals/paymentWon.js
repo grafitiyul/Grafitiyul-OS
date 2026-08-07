@@ -6,7 +6,7 @@ import { recordDealChanges } from '../timeline/dealChangelog.js';
 import { publicOrigin } from '../communication/context.js';
 import { reportOpenTourParticipant } from '../adminReports/openTourParticipantEvent.js';
 import { transitionDealToWon, emitWonTransitionEffects } from './wonTransition.js';
-import { resolveActivityType, ASSUMPTION_REASON_HE } from './resolveActivityType.js';
+import { resolveActivityType, persistAssumedActivityType } from './resolveActivityType.js';
 import { stampSettledRegistration } from '../tours/registrations.js';
 import { raisePostPaymentCompletion } from './postPaymentReview.js';
 
@@ -113,27 +113,12 @@ export async function settleDealWon(
     const resolvedType = resolveActivityType(deal, {
       groupSlotSelected: targetTour?.kind === 'group_slot',
     });
-    let effective = deal;
-    if (resolvedType.assumed) {
-      const assumedAt = new Date();
-      await tx.deal.update({
-        where: { id: dealId },
-        data: { activityType: resolvedType.activityType, activityTypeAssumedAt: assumedAt },
-      });
-      effective = { ...deal, activityType: resolvedType.activityType, activityTypeAssumedAt: assumedAt };
-      await emitTimelineEvent(tx, {
-        subjectType: 'deal',
-        subjectId: dealId,
-        kind: 'tour',
-        body: `🏷️ סוג הפעילות הושלם אוטומטית כדי לא לעכב את הסגירה — ${ASSUMPTION_REASON_HE[resolvedType.reason]}. נדרש אישור.`,
-        data: {
-          event: 'activity_type_assumed',
-          activityType: resolvedType.activityType,
-          reason: resolvedType.reason,
-        },
-        origin: runOrigin,
-      });
-    }
+    const assumedPatch = await persistAssumedActivityType(tx, {
+      dealId,
+      resolved: resolvedType,
+      origin: runOrigin,
+    });
+    const effective = assumedPatch ? { ...deal, ...assumedPatch } : deal;
 
     const gate = wonGate(effective, tourEventId);
     const tourReady = gate.missing.length === 0 && !gate.needsSlot;
