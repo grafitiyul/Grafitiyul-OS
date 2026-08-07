@@ -88,9 +88,9 @@ function finalize(hit) {
   return { ...dto, reasons: formatReasons(dto.reasons), score: hit.score };
 }
 
-async function runCategory(category, q, pq, limit, todayIso, db) {
+async function runCategory(category, q, pq, limit, todayIso, db, opts = {}) {
   const provider = PROVIDERS[category];
-  const { hits, truncated } = await provider(q, pq, limit, todayIso, db);
+  const { hits, truncated } = await provider(q, pq, limit, todayIso, db, opts);
   const sorted = hits.sort(compareHits);
   return {
     category,
@@ -107,7 +107,16 @@ async function runCategory(category, q, pq, limit, todayIso, db) {
 // search({ q, category }) → { query, category, groups: [...] }
 //
 // category: one of CATEGORIES, or 'all' to group across every entity type.
-export async function search({ q, category = DEFAULT_CATEGORY, db = prisma, now = new Date() } = {}) {
+//
+// `excludeIds` / `activeOnly` are pass-through provider options used by callers
+// that need a NARROWER candidate set from the same canonical search — today the
+// Deal Merge wizard, which must never offer the current deal or a deal already
+// retired by an earlier merge. They are deliberately options here rather than a
+// second search service: how a deal is FOUND has exactly one implementation.
+export async function search({
+  q, category = DEFAULT_CATEGORY, db = prisma, now = new Date(),
+  excludeIds = [], activeOnly = false,
+} = {}) {
   const query = String(q ?? '').trim();
   const cat = category === 'all' || CATEGORIES.includes(category) ? category : DEFAULT_CATEGORY;
 
@@ -117,14 +126,15 @@ export async function search({ q, category = DEFAULT_CATEGORY, db = prisma, now 
 
   const pq = phoneQuery(query);
   const todayIso = todayIsoUtc(now);
+  const opts = { excludeIds, activeOnly };
 
   if (cat !== 'all') {
-    const group = await runCategory(cat, query, pq, LIMIT_SINGLE, todayIso, db);
+    const group = await runCategory(cat, query, pq, LIMIT_SINGLE, todayIso, db, opts);
     return { query, category: cat, groups: [group] };
   }
 
   const groups = await Promise.all(
-    CATEGORIES.map((c) => runCategory(c, query, pq, LIMIT_PER_CATEGORY_IN_ALL, todayIso, db)),
+    CATEGORIES.map((c) => runCategory(c, query, pq, LIMIT_PER_CATEGORY_IN_ALL, todayIso, db, opts)),
   );
   return { query, category: cat, groups: groups.filter((g) => g.results.length) };
 }

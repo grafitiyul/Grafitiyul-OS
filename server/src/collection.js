@@ -1,4 +1,5 @@
 import { DOC_TYPE_LABELS } from './icountDocs.js';
+import { lineageIdsFor, lineageIdsForMany, activeDealWhere } from './deals/mergeLineage.js';
 
 // Collection (גבייה) — the SINGLE source of truth for a deal's financial
 // collection status. Everything that shows paid/balance/status (the Deal גבייה
@@ -301,9 +302,31 @@ function groupBy(rows, key) {
   return m;
 }
 
+// ── Merge lineage ────────────────────────────────────────────────────────────
+// When two deals are merged, the retired deal's financial evidence STAYS ON IT.
+// Re-parenting issued tax documents is not something this system does: their
+// (dealId, doctype, docnum) identity is unique per deal, they are immutable
+// customer-facing records, and audit requires the money to remain attributable
+// to the order number it was issued against.
+//
+// The survivor's money picture is therefore the union of its own evidence and
+// everything retired into it — resolved HERE, in the one module that owns the
+// question, so every financial surface inherits it without knowing merges
+// exist. Asking a RETIRED deal for its collection still returns only its own
+// evidence, which is the honest answer about that historical order.
+
 // Single-deal summary — what the Deal גבייה card renders.
-export async function dealCollection(prisma, deal) {
-  const { documents, evidence } = await loadEvidence(prisma, [deal.id]);
+//
+// Lineage is resolved HERE rather than by the caller, deliberately: every
+// existing surface that asks this module for a deal's money becomes correct
+// after a merge without changing a line, and no future caller can forget. The
+// cost is one indexed lookup on Deal.mergedIntoDealId.
+//
+// `includeMerged: false` asks the honest deal-only question — used by the
+// integrity detector, which must be able to see each side separately.
+export async function dealCollection(prisma, deal, { includeMerged = true } = {}) {
+  const ids = includeMerged ? await lineageIdsFor(prisma, deal.id) : [deal.id];
+  const { documents, evidence } = await loadEvidence(prisma, ids);
   return computeCollection(deal, documents, evidence);
 }
 
@@ -313,12 +336,28 @@ export async function dealCollection(prisma, deal) {
 // query themselves: doing so is how a surface quietly starts ignoring manual
 // payments or counting cancelled documents.
 // `deals` must carry id + valueMinor + currency + collectionReview.
-export async function collectionSummariesFor(prisma, deals) {
+//
+// Merge lineage is resolved in ONE bounded sweep for the whole batch (not per
+// deal), so a page of 50 deals still costs a fixed number of queries.
+export async function collectionSummariesFor(prisma, deals, { includeMerged = true } = {}) {
   const list = deals || [];
   if (!list.length) return new Map();
-  const { documents, evidence } = await loadEvidence(prisma, list.map((d) => d.id));
-  const docsByDeal = groupBy(documents, 'dealId');
-  const evByDeal = groupBy(evidence, 'dealId');
+  const lineage = includeMerged ? await lineageIdsForMany(prisma, list.map((d) => d.id)) : null;
+  // The id set to LOAD is the union of every deal's lineage; the id each loaded
+  // row is ATTRIBUTED to is its lineage root. One extra map, no extra query.
+  const attributeTo = new Map();
+  const loadIds = [];
+  for (const d of list) {
+    const ids = lineage?.get(d.id) || [d.id];
+    for (const id of ids) {
+      loadIds.push(id);
+      attributeTo.set(id, d.id);
+    }
+  }
+  const { documents, evidence } = await loadEvidence(prisma, [...new Set(loadIds)]);
+  const rootOf = (row) => attributeTo.get(row.dealId) || row.dealId;
+  const docsByDeal = groupBy(documents.map((d) => ({ ...d, dealId: d.dealId, _root: rootOf(d) })), '_root');
+  const evByDeal = groupBy(evidence.map((e) => ({ ...e, _root: rootOf(e) })), '_root');
   return new Map(
     list.map((d) => [d.id, computeCollection(d, docsByDeal.get(d.id) || [], evByDeal.get(d.id) || [])]),
   );
@@ -357,7 +396,16 @@ export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {})
       where: { status: 'active', currency },
       select: { direction: true, amountMinor: true },
     }),
-    prisma.deal.findMany({ where: { status: 'won', currency }, select: { valueMinor: true } }),
+    // Retired deals are excluded from the company's AGREED-VALUE total: after a
+    // merge the surviving deal carries the single merged total, so counting the
+    // retired deal's own valueMinor as well would invent revenue that was never
+    // agreed twice. The DOCUMENTS above are deliberately NOT filtered — the
+    // money really did arrive, whichever order number it arrived against, and
+    // dedupe-by-identity already prevents counting any of it twice.
+    prisma.deal.findMany({
+      where: activeDealWhere({ status: 'won', currency }),
+      select: { valueMinor: true },
+    }),
   ]);
 
   // Dedupe by DOCUMENT IDENTITY. A document with no number (should not happen,
@@ -437,10 +485,13 @@ export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {})
 // picture, exactly as before this filter existed.
 export async function collectionDeals(prisma, { reviewStatus = null } = {}) {
   const deals = await prisma.deal.findMany({
-    where: {
+    // A deal retired by a merge is not a collection target: its money is
+    // already counted on the survivor's row (lineage), and chasing it would
+    // ask the office to collect the same balance twice.
+    where: activeDealWhere({
       status: 'won',
       ...(reviewStatus ? { collectionReviewStatus: reviewStatus } : {}),
-    },
+    }),
     orderBy: { wonAt: 'desc' },
     include: {
       organization: { select: { id: true, name: true } },

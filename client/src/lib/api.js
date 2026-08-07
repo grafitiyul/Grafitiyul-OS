@@ -388,7 +388,17 @@ export const api = {
   // Global header search — the ONE cross-entity search endpoint. Any new
   // search surface calls this rather than growing its own query logic.
   search: {
-    query: ({ q, category }) => request(`/api/search${qs({ q, category })}`),
+    // `excludeIds` (comma-joined) and `activeOnly` narrow the SAME canonical
+    // search for callers that need a subset — the Deal Merge wizard, which must
+    // never offer the current deal or one already retired by an earlier merge.
+    // Global search passes neither. There is one notion of how a deal is found.
+    query: ({ q, category, excludeIds, activeOnly }) =>
+      request(`/api/search${qs({
+        q,
+        category,
+        excludeIds: excludeIds?.length ? excludeIds.join(',') : undefined,
+        activeOnly: activeOnly ? '1' : undefined,
+      })}`),
     // Hover payload for a Contact / Organization named INSIDE a result row.
     // A pure read: looking at a name opens nothing and writes nothing.
     peek: (type, id) => request(`/api/search/peek${qs({ type, id })}`),
@@ -508,6 +518,18 @@ export const api = {
     // Server-side commercial-template copy (contacts, Builder, plan included;
     // never payments/history) — always born OPEN at the first stage.
     duplicate: (id) => request(`/api/deals/${id}/duplicate`, { method: 'POST' }),
+    // ── Deal MERGE ("איחוד דילים") ────────────────────────────────────────
+    // Two deals turn out to be ONE real transaction. `mergePreview` is a PURE
+    // READ — it writes nothing, ever, so the wizard may call it on every
+    // decision and closing it half-way leaves both deals byte-identical.
+    // `merge` is the only writer; it re-evaluates every blocker inside its own
+    // transaction and re-parents bookings/seats, so it goes through
+    // tourMutation like every tour-affecting call. `opId` is minted once per
+    // operator intent and makes a double click / refresh / retry idempotent.
+    mergePreview: (id, body) =>
+      request(`/api/deals/${id}/merge/preview`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    merge: (id, body) =>
+      tourMutation(request(`/api/deals/${id}/merge`, { method: 'POST', body: JSON.stringify(body || {}) })),
     update: (id, data) => {
       const p = request(`/api/deals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
       // A deal status change (WON creates/joins a tour · LOST cancels it ·

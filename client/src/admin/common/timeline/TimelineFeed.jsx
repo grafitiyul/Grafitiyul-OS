@@ -788,8 +788,19 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                         entry={entry}
                         expanded={isExpanded(entry.id)}
                         onToggleExpand={() => toggleExpand(entry.id)}
-                        readOnly={historyOnly || (aggregate && !direct)}
-                        source={aggregate && !direct ? { type: entry.sourceType, label: entry.sourceLabel } : null}
+                        readOnly={historyOnly || (aggregate && !direct) || !!entry.mergedFrom}
+                        // Provenance, in priority order: a row that came from a
+                        // deal MERGED into this one says so ("במקור מדיל #…"),
+                        // otherwise the contact/organization aggregate badge.
+                        // Merged rows stay fully readable but never editable —
+                        // they belong to the deal that was retired.
+                        source={
+                          entry.mergedFrom
+                            ? { type: 'merged_deal', label: entry.mergedFrom.labelHe }
+                            : aggregate && !direct
+                              ? { type: entry.sourceType, label: entry.sourceLabel }
+                              : null
+                        }
                         {...actions}
                       />
                     </li>

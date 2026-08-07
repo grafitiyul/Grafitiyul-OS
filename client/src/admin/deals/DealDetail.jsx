@@ -20,6 +20,8 @@ import PriceBuilderDialog from './PriceBuilderDialog.jsx';
 import HistoricalPricingDialog from './HistoricalPricingDialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import GroupRegistrationModal from './GroupRegistrationModal.jsx';
+import DealMergeWizard from './merge/DealMergeWizard.jsx';
+import DealMergeTombstone from './merge/DealMergeTombstone.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
@@ -182,6 +184,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // and pre-aim the dialog at the side the operator chose to fix).
   const [conversionOpen, setConversionOpen] = useState(false);
   const [conversionTarget, setConversionTarget] = useState(null);
+  // "איחוד דילים" — two deals that are one real transaction. Nothing is written
+  // until the wizard's final confirmation.
+  const [mergeOpen, setMergeOpen] = useState(false);
   // שכפל דיל re-entry guard (ref, not state — no re-render needed).
   const dupBusyRef = useRef(false);
   // The accounting document a "שלח ללקוח" action targets (timeline entry).
@@ -1357,6 +1362,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           <BackButton {...listReturn} />
         </div>
       )}
+      {/* Merge lineage — ABOVE everything, deliberately. A deal retired by a
+          merge opens and reads normally (its history is real), but it must
+          never look like a deal someone can still work on; and a survivor says
+          plainly which deals were absorbed into it. */}
+      <DealMergeTombstone deal={deal} />
+
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
@@ -1522,13 +1533,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                   <div className="text-[11px] text-gray-500">תיקון היסטורי — בלי מיילים והתראות</div>
                 </button>
               )}
+              {/* Two deals turn out to be ONE real transaction. Destructive
+                  enough to live here rather than on the page, and staged enough
+                  that nothing is written until the final confirmation — the
+                  wizard's preview is a pure read. */}
               <button
-                disabled
-                title="בקרוב"
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
+                onClick={() => { setMenuOpen(false); setMergeOpen(true); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
               >
-                <span>איחוד דילים</span>
-                <span className="text-[10px] rounded bg-gray-100 px-1.5 py-0.5">בקרוב</span>
+                <div>איחוד דילים</div>
+                <div className="text-[11px] text-gray-500">שני דילים שהם אותה עסקה — לדיל אחד</div>
               </button>
               <div className="my-1 border-t border-gray-100" />
               <button
@@ -1626,6 +1640,23 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             // the existing preview with the NEW operational state so the
             // operator approves what the customer will actually receive.
             if (opts?.sendConfirmation) setConfirmEmailOpen(true);
+          }}
+        />
+      )}
+
+      {/* "איחוד דילים" — mounted only while open, so its wizard state is minted
+          fresh every time and a previous merge's answers can never leak into
+          the next. On success the operator lands on the SURVIVING deal, which
+          may or may not be this one. */}
+      {mergeOpen && (
+        <DealMergeWizard
+          open={mergeOpen}
+          deal={deal}
+          onClose={() => setMergeOpen(false)}
+          onDone={(res) => {
+            setMergeOpen(false);
+            if (res?.survivorDealId && res.survivorDealId !== deal.id) navigate(res.survivorPath);
+            else refresh();
           }}
         />
       )}

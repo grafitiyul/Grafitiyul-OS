@@ -48,6 +48,7 @@
 import { prisma } from '../db.js';
 import { touchDealActivity } from '../timeline/events.js';
 import { israelToday, addDays, compareDates } from '../lib/israelDate.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 import { collectionSummariesFor, requiresCollection } from '../collection.js';
 
 const RECENT_TOUR_DAYS = 14;
@@ -192,7 +193,9 @@ async function unpaidWonDealIds(deals, db) {
 export async function selectActivityDealForContact(contactId, db = prisma, { now = Date.now() } = {}) {
   if (!contactId) return null;
   const deals = await db.deal.findMany({
-    where: { contacts: { some: { contactId } } },
+    // Retired deals never win the ladder: the surviving deal is where this
+    // conversation's activity belongs.
+    where: activeDealWhere({ contacts: { some: { contactId } } }),
     select: LADDER_SELECT,
   });
   if (!deals.length) return null;

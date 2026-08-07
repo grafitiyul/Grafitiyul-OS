@@ -3,6 +3,7 @@ import { registerDetector } from '../sweepWorker.js';
 import { raiseIssue, resolveMissing } from '../issueService.js';
 import { resolveDeliveries } from '../../email/deliveryState.js';
 import { deliverySummaryHe } from '../../../../shared/emailDelivery.mjs';
+import { activeDealWhere } from '../../deals/mergeLineage.js';
 
 // Confirmation email failed AFTER the queue accepted it — the last silent gap
 // in the WON chain. Pre-queue blocks raise a confirmation review card
@@ -83,9 +84,14 @@ export async function runConfirmationDeliverySweep(client) {
     }
   }
 
+  // Retired-by-merge deals are excluded here, which is also what SUPPRESSES the
+  // card: a deal missing from this lookup is skipped below. Its confirmation
+  // history stays on it and is visible through the survivor's merged timeline —
+  // but an operator can no longer act on it, so a card demanding action would
+  // be a task nobody can complete.
   const deals = verdicts.size
     ? await client.deal.findMany({
-      where: { id: { in: [...verdicts.keys()] } },
+      where: activeDealWhere({ id: { in: [...verdicts.keys()] } }),
       select: { id: true, orderNo: true },
     })
     : [];
@@ -93,6 +99,7 @@ export async function runConfirmationDeliverySweep(client) {
 
   const present = new Set();
   for (const [dealId, { send, delivery }] of verdicts) {
+    if (!orderNoById.has(dealId)) continue;
     present.add(dedupeKey(dealId));
     const orderNo = orderNoById.get(dealId) ?? null;
     const recipient = send.recipientSnapshot?.name || send.recipientSnapshot?.email || '';

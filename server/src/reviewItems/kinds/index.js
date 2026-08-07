@@ -10,3 +10,4 @@ import './wooOrderAttention.js';
 import './postPaymentCompletion.js';
 import './conversionOverpayment.js';
 import './conversionRecovery.js';
+import './dealMergeOverpayment.js';

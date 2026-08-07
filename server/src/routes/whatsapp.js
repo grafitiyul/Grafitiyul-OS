@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { ownAccountPhoneSet, isInternalRemote, jidDigits } from '../whatsapp/selfIdentity.js';
@@ -880,7 +881,9 @@ router.get(
       const dealIds = [...new Set(links.map((l) => l.dealId))];
       const deals = dealIds.length
         ? await prisma.deal.findMany({
-            where: { id: { in: dealIds } },
+            // Retired-by-merge deals never surface as a chat's deal context —
+            // the survivor is where this conversation belongs now.
+            where: activeDealWhere({ id: { in: dealIds } }),
             select: {
               id: true,
               title: true,

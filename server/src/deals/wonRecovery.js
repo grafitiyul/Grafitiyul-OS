@@ -24,6 +24,7 @@ import { wonGate } from '../tours/tourFromDeal.js';
 import { CONFIRMATION_EMAIL_REVIEW_KIND } from '../reviewItems/kinds/confirmationEmailReview.js';
 import { autoSendFailureReasonHe } from '../confirmation/failureReason.js';
 import { israelToday } from '../lib/israelDate.js';
+import { ACTIVE_DEAL_FILTER } from './mergeLineage.js';
 
 // LIVE obligation — the ONE scoping rule shared by the banner and the בקרה
 // detector (won-deal-without-tour): a missing tour is actionable when its date
@@ -47,6 +48,11 @@ export function liveWonObligationWhere(nowMs = Date.now()) {
   return {
     status: 'won',
     bookings: { none: { status: 'active' } },
+    // A deal retired by a merge owes nothing: its obligation, if any, moved to
+    // the survivor along with its booking. Raising a recovery card here would
+    // ask the office to build a tour for a deal that no longer exists actively.
+    // Both halves of the shared rule carry it (see isLiveWonObligation below).
+    ...ACTIVE_DEAL_FILTER,
     ...NOT_HISTORICALLY_CORRECTED,
     OR: [
       { tourDate: { gte: israelToday(nowMs) } },
@@ -57,6 +63,7 @@ export function liveWonObligationWhere(nowMs = Date.now()) {
 
 /** JS version of the same rule (deal-DTO banner resolver). */
 export function isLiveWonObligation(deal, nowMs = Date.now()) {
+  if (deal.mergedIntoDealId) return false;
   if (deal.historicalWonAt) return false;
   if (deal.tourDate) return String(deal.tourDate) >= israelToday(nowMs);
   const wonAt = deal.wonAt ? new Date(deal.wonAt).getTime() : null;

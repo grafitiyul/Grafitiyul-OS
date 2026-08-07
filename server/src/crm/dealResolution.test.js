@@ -26,8 +26,13 @@ test('dealsForContact filters ONLY by the canonical DealContact relation', async
   await dealsForContact('c1', db);
   assert.equal(db.calls.findMany.length, 1);
   const args = db.calls.findMany[0];
-  // Exactly the relation filter — no name/phone/email/organization matching.
-  assert.deepEqual(args.where, { contacts: { some: { contactId: 'c1' } } });
+  // Exactly the relation filter — no name/phone/email/organization matching —
+  // plus the retired-by-merge exclusion, which every "which deal is this
+  // conversation about" surface carries (deals/mergeLineage.js).
+  assert.deepEqual(args.where, {
+    contacts: { some: { contactId: 'c1' } },
+    mergedIntoDealId: null,
+  });
   assert.equal(args.select, CONTACT_DEALS_SELECT);
 });
 

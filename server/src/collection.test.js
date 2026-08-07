@@ -399,6 +399,10 @@ test('opening the Collection panel is a PURE READ — the resolver never writes'
   const db = {
     icountDocument: { findMany: async () => [doc('invrec', 90_000, { docnum: '38523' })], create: forbid, update: forbid, updateMany: forbid, delete: forbid },
     dealCollectionEvidence: { findMany: async () => [], create: forbid, update: forbid, updateMany: forbid, delete: forbid },
+    // Merge lineage: dealCollection resolves the deals retired INTO this one so
+    // the survivor's money picture is complete, and that lookup must also be a
+    // pure read (create/update are forbidden here for exactly that reason).
+    deal: { findMany: async () => [], create: forbid, update: forbid, updateMany: forbid, delete: forbid },
   };
   const s = await dealCollection(db, deal(90_000, { id: 'd1' }));
   assert.equal(s.paidMinor, 90_000);

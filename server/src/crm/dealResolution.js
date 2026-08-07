@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 
 // Shared "which Deal does this conversation belong to?" logic — ONE source of
 // truth used by both the WhatsApp inbox and the Email inbox. Deterministic when
@@ -47,7 +48,10 @@ export const CONTACT_DEALS_SELECT = {
 
 export async function dealsForContact(contactId, db = prisma) {
   const rows = await db.deal.findMany({
-    where: { contacts: { some: { contactId } } },
+    // A deal retired by a merge is never a candidate for "which deal does this
+    // conversation belong to" — the survivor now represents that transaction,
+    // and stamping the retired one would file the message where nobody looks.
+    where: activeDealWhere({ contacts: { some: { contactId } } }),
     select: CONTACT_DEALS_SELECT,
     orderBy: { createdAt: 'desc' },
   });

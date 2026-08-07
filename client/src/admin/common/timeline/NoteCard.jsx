@@ -176,7 +176,12 @@ export default function NoteCard({
         )}
         {source && source.label && (
           <span className="rounded bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none truncate max-w-[12rem]">
-            {SOURCE_PREFIX[source.type] || 'מקור'}: {source.label}
+            {/* A merge-provenance label already reads as a full sentence
+                ("במקור מדיל #27100") — prefixing it would produce
+                "מקור: במקור מדיל…". Every other source type keeps its prefix. */}
+            {source.type === 'merged_deal'
+              ? source.label
+              : `${SOURCE_PREFIX[source.type] || 'מקור'}: ${source.label}`}
           </span>
         )}
         {entry.isPinned && (

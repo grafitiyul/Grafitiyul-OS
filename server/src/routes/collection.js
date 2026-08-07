@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { dealCollection, collectionDeals, companyCollectionTotals } from '../collection.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 import { listQueue, queueCounts, resolveQueueItem } from '../collectionReviewQueue.js';
 import { COLLECTION_REVIEW_STATUS, COLLECTION_REVIEW_STATUS_VALUES } from '../collectionWorkQueue.js';
 import {
@@ -203,7 +204,13 @@ collectionRouter.get(
       collectionDeals(prisma, { reviewStatus }),
       // Counts across the WHOLE queue, so the tabs are honest about what is
       // hidden — computed from the persisted field, not from the money.
-      prisma.deal.groupBy({ by: ['collectionReviewStatus'], where: { status: 'won' }, _count: { _all: true } }),
+      // Same population the work queue lists (collectionDeals) — retired deals
+      // excluded, or the tab counts would promise rows the list never shows.
+      prisma.deal.groupBy({
+        by: ['collectionReviewStatus'],
+        where: activeDealWhere({ status: 'won' }),
+        _count: { _all: true },
+      }),
     ]);
     // Two different true numbers, and the tab must show the one that matches
     // what is on screen. `counts` is how many deals CARRY each classification;

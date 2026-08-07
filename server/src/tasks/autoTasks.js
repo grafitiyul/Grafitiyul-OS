@@ -24,6 +24,7 @@
 import { prisma } from '../db.js';
 import { israelToday, israelDateOf, startOfDayUtc } from '../lib/israelDate.js';
 import { emitTasksChanged } from './events.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 
 export const FIRST_CALL_TYPE_KEY = 'first_call';
 export const FOLLOW_UP_TYPE_KEY = 'follow_up';
@@ -176,7 +177,9 @@ export async function runMissingTaskSweep({
   }
 
   const openDeals = await db.deal.findMany({
-    where: { status: 'open' },
+    // Never create work on a deal retired by a merge: the survivor carries the
+    // transaction now, and a follow-up task there would be invisible.
+    where: activeDealWhere({ status: 'open' }),
     select: { id: true, orderNo: true, ownerUserId: true },
   });
   const stats = {

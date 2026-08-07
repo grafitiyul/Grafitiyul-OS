@@ -31,8 +31,16 @@ router.get(
     const raw = String(req.query.category ?? DEFAULT_CATEGORY);
     const category = raw === 'all' || CATEGORIES.includes(raw) ? raw : DEFAULT_CATEGORY;
 
+    // Narrowing options for callers that need a SUBSET of the same canonical
+    // search rather than a search of their own — today the Deal Merge wizard,
+    // which must never offer the current deal or one already retired by an
+    // earlier merge. Ordinary global search passes neither and is unchanged.
+    const excludeIds = String(req.query.excludeIds ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20);
+    const activeOnly = String(req.query.activeOnly ?? '') === '1';
+
     const started = Date.now();
-    const result = await search({ q, category });
+    const result = await search({ q, category, excludeIds, activeOnly });
     res.json({ ...result, tookMs: Date.now() - started });
   }),
 );

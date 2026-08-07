@@ -78,6 +78,11 @@ import { sendWhatsAppText } from '../whatsapp/send.js';
 import { resolveForOperator } from '../whatsapp/senderAccount.js';
 import { registerDealOrderNoParam } from './dealParam.js';
 import { ensureInitialCallTask } from '../tasks/autoTasks.js';
+// The retired-deal WRITE BLOCK is not mounted here: it lives inside
+// registerDealOrderNoParam (routes/dealParam.js), the ONE resolver every
+// deal-scoped router already calls — so a router added tomorrow gets it too.
+import { ACTIVE_DEAL_FILTER, resolveSurvivor } from '../deals/mergeLineage.js';
+import { previewMerge, mergeDeals, runMergeEffects, MergeError } from '../deals/dealMerge.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -394,7 +399,11 @@ registerDealOrderNoParam(router, 'id');
 // the paginated list and the status-card summary, so both honour the same
 // filters and can never diverge.
 function dealFilterWhere(query = {}) {
-  const where = {};
+  // A deal retired by a merge is not one of "the deals we are working on": it
+  // has no independent life, its money and history already read through the
+  // survivor, and listing it would show the same transaction twice. It stays
+  // fully readable at its own URL (the tombstone) and fully findable in search.
+  const where = { ...ACTIVE_DEAL_FILTER };
   if (query.organizationId) where.organizationId = String(query.organizationId);
   if (query.stageId) where.dealStageId = String(query.stageId);
   const minVal = Number(query.minVal);
@@ -559,7 +568,7 @@ router.get(
 
     // Legacy full-array path (pickers / cross-refs). Unchanged shape: honours
     // only status + organizationId, exactly as before.
-    const legacyWhere = {};
+    const legacyWhere = { ...ACTIVE_DEAL_FILTER };
     if (req.query.status && VALID_STATUS.includes(String(req.query.status))) legacyWhere.status = String(req.query.status);
     if (req.query.organizationId) legacyWhere.organizationId = String(req.query.organizationId);
     const deals = await prisma.deal.findMany({ where: legacyWhere, orderBy: { updatedAt: 'desc' }, include: listRelations });
@@ -579,7 +588,140 @@ router.get(
     // than prisma.deal.update, whose @updatedAt would fire. Fire-and-forget:
     // a read is never delayed or failed by view bookkeeping.
     void stampDealViewed(deal.id, req.adminAuth?.userId);
-    res.json(withTourUpdatePending(deal));
+
+    // ── Merge lineage on the deal DTO ──────────────────────────────────────
+    // A RETIRED deal still loads in full and still renders its whole history —
+    // it is history, and history must stay readable. `mergeTombstone` is what
+    // tells the client to present it as retired and point at the survivor,
+    // rather than as a deal someone can still work on. A SURVIVOR carries the
+    // list of deals absorbed into it, so its header can say so.
+    const [survivorInfo, absorbed] = await Promise.all([
+      deal.mergedIntoDealId ? resolveSurvivor(prisma, deal) : null,
+      // merge-lineage-query: this one is ABOUT retired deals — it lists what
+      // was absorbed into this deal, so the exclusion would empty it.
+      prisma.deal.findMany({
+        where: { mergedIntoDealId: deal.id },
+        select: { id: true, orderNo: true, title: true, mergedAt: true },
+        orderBy: { mergedAt: 'asc' },
+      }),
+    ]);
+
+    res.json({
+      ...withTourUpdatePending(deal),
+      mergeTombstone: survivorInfo
+        ? {
+          survivorDealId: survivorInfo.survivor.id,
+          survivorOrderNo: survivorInfo.survivor.orderNo,
+          survivorTitle: survivorInfo.survivor.title,
+          survivorPath: `/admin/crm/deals/${survivorInfo.survivor.orderNo || survivorInfo.survivor.id}`,
+          mergedAt: deal.mergedAt,
+          // The full chain, when a merge was itself later merged onward.
+          hops: survivorInfo.hops,
+          messageHe: `דיל #${deal.orderNo} אוחד לתוך דיל #${survivorInfo.survivor.orderNo}`,
+        }
+        : null,
+      mergedFrom: absorbed.map((d) => ({
+        dealId: d.id, orderNo: d.orderNo, title: d.title, mergedAt: d.mergedAt,
+        path: `/admin/crm/deals/${d.orderNo || d.id}`,
+      })),
+    });
+  }),
+);
+
+// ── Deal MERGE ("איחוד דילים") ──────────────────────────────────────────────
+//
+// preview writes NOTHING and is safe to call on every keystroke of the wizard;
+// the confirm endpoint is the only writer, and it re-evaluates every blocker
+// inside its own transaction. See deals/dealMerge.js.
+
+function mergeErrorStatus(code) {
+  // 409 = "the deals are not in a state where this can happen" (the operator
+  // can fix it and retry); 422 = "the request itself does not make sense".
+  if (code === 'merge_blocked') return 409;
+  if (code === 'not_found') return 404;
+  return 422;
+}
+
+router.post(
+  '/:id/merge/preview',
+  handle(async (req, res) => {
+    const otherDealId = String(req.body?.otherDealId || '').trim();
+    if (!otherDealId) return res.status(422).json({ error: 'other_deal_required' });
+    try {
+      const preview = await previewMerge(prisma, {
+        dealAId: req.params.id,
+        dealBId: otherDealId,
+        decisions: req.body?.decisions || {},
+      });
+      res.json(preview);
+    } catch (e) {
+      if (e instanceof MergeError) {
+        return res.status(mergeErrorStatus(e.code)).json({ error: e.code, ...(e.details || {}) });
+      }
+      throw e;
+    }
+  }),
+);
+
+router.post(
+  '/:id/merge',
+  handle(async (req, res) => {
+    const otherDealId = String(req.body?.otherDealId || '').trim();
+    const opId = String(req.body?.opId || '').trim();
+    if (!otherDealId) return res.status(422).json({ error: 'other_deal_required' });
+    if (!opId) return res.status(422).json({ error: 'merge_op_id_required' });
+
+    const actor = req.adminAuth?.userId
+      ? await prisma.adminUser.findUnique({
+        where: { id: req.adminAuth.userId },
+        select: { username: true },
+      })
+      : null;
+
+    try {
+      const result = await mergeDeals(
+        {
+          dealAId: req.params.id,
+          dealBId: otherDealId,
+          decisions: req.body?.decisions || {},
+          opId,
+          actorUserId: req.adminAuth?.userId || null,
+          actorName: actor?.username || null,
+          origin: await userOrigin(req.adminAuth?.userId),
+        },
+        { db: prisma },
+      );
+
+      // External effects run AFTER the transaction committed and never throw:
+      // the merge really happened, so a calendar or Woo hiccup must not report
+      // it as failed. Re-running them is always safe.
+      const effects = await runMergeEffects(
+        {
+          survivorDealId: result.survivorDealId,
+          retiredDealId: result.retiredDealId,
+          survivorOrderNo: result.survivorOrderNo,
+          retiredOrderNo: result.retiredOrderNo,
+          touchedTourEventIds: result.touchedTourEventIds || [],
+          mergedTotalMinor: result.mergedTotalMinor,
+          combinedPaidMinor: result.combinedPaidMinor,
+          wonTransition: result.wonTransition,
+          actorUserId: req.adminAuth?.userId || null,
+          tasksChanged: !!(result.outcome?.tasksMoved || result.outcome?.tasksClosed),
+        },
+        { db: prisma },
+      );
+
+      res.json({
+        ...result,
+        effects,
+        survivorPath: `/admin/crm/deals/${result.survivorOrderNo || result.survivorDealId}`,
+      });
+    } catch (e) {
+      if (e instanceof MergeError) {
+        return res.status(mergeErrorStatus(e.code)).json({ error: e.code, ...(e.details || {}) });
+      }
+      throw e;
+    }
   }),
 );
 

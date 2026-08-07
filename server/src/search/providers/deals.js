@@ -38,9 +38,18 @@ const INCLUDE = {
     select: {
       isPrimary: true,
       contactId: true,
-      contact: { select: CONTACT_REF_SELECT },
+      contact: {
+        select: {
+          ...CONTACT_REF_SELECT,
+          // Identification detail for the result row (see contactChannels).
+          phones: { select: { value: true, isPrimary: true } },
+          emails: { select: { value: true, isPrimary: true } },
+        },
+      },
     },
   },
+  // A retired deal points at its survivor so the row can say where it went.
+  mergedInto: { select: { id: true, orderNo: true } },
   // Deal↔TourEvent goes ONLY through Booking (schema forbids a direct
   // tourEventId). Superseded tours are hidden everywhere else, so exclude them
   // from ranking too.
@@ -173,6 +182,19 @@ function tourInfo(deal, todayIso) {
   };
 }
 
+// The primary phone / email of the deal's primary contact — identification
+// detail, not a communication channel. Rendered only where a row needs to prove
+// WHICH customer it is (the merge candidate list); the global-search row shows
+// what it always did.
+function contactChannels(c) {
+  if (!c) return { phone: null, email: null };
+  const pick = (list) => {
+    const arr = list || [];
+    return (arr.find((x) => x.isPrimary) || arr[0] || null)?.value || null;
+  };
+  return { phone: pick(c.phones), email: pick(c.emails) };
+}
+
 function toDto(deal, reasons, groupRank, todayIso) {
   const primary =
     (deal.contacts || []).find((c) => c.isPrimary) || (deal.contacts || [])[0] || null;
@@ -180,6 +202,7 @@ function toDto(deal, reasons, groupRank, todayIso) {
   const tour = tourInfo(deal, todayIso);
   const product = deal.product?.nameHe || deal.product?.nameEn || null;
   const variant = deal.productVariant?.location?.nameHe || null;
+  const channels = contactChannels(c);
   return {
     type: 'deal',
     id: deal.id,
@@ -187,6 +210,25 @@ function toDto(deal, reasons, groupRank, todayIso) {
     path: `/admin/crm/deals/${deal.orderNo ?? deal.id}`,
     title: deal.title,
     contactName: c ? fullNameHe(c) || fullNameEn(c) : null,
+    // ── Deal IDENTIFICATION fields ─────────────────────────────────────────
+    // Price, participants and the contact's channels belong to the SHARED DTO,
+    // not to a merge-specific one: "how do I tell these two deals apart" is the
+    // same question in global search and in the merge candidate list, and a
+    // second answer to it would be a second search. valueMinor is serialized as
+    // a Number — it is a display amount here, never the basis of a calculation
+    // (collection.js owns every sum).
+    valueMinor: Number(deal.valueMinor ?? 0),
+    currency: deal.currency || 'ILS',
+    participants: deal.participants ?? null,
+    contactPhone: channels.phone,
+    contactEmail: channels.email,
+    createdAt: deal.createdAt,
+    updatedAt: deal.updatedAt,
+    // Retired-by-merge rows stay FINDABLE (searching the old order number must
+    // keep working forever) and say so, pointing at the deal that replaced them.
+    mergedIntoDealId: deal.mergedIntoDealId || null,
+    mergedIntoOrderNo: deal.mergedInto?.orderNo ?? null,
+    isRetired: !!deal.mergedIntoDealId,
     organizationName: deal.organization?.name || null,
     unitName: deal.organizationUnit?.name || null,
     // The interactive halves of the two names above: hover peeks, click opens
@@ -208,7 +250,13 @@ function toDto(deal, reasons, groupRank, todayIso) {
   };
 }
 
-export async function searchDeals(q, pq, limit, todayIso, db) {
+// `opts.excludeIds` removes specific deals from the candidate set, and
+// `opts.activeOnly` removes every deal retired by a merge. Both serve the merge
+// wizard (a deal is never its own merge candidate, and a retired deal cannot be
+// merged again) and neither changes ordinary global search, which passes
+// neither. Deliberately options on the CANONICAL provider rather than a second
+// search: there is one notion of how a deal is found.
+export async function searchDeals(q, pq, limit, todayIso, db, opts = {}) {
   const trimmed = q.trim();
   const orderNo =
     /^\d+$/.test(trimmed) && Number(trimmed) <= INT4_MAX ? Number(trimmed) : null;
@@ -225,6 +273,7 @@ export async function searchDeals(q, pq, limit, todayIso, db) {
   const legacyByDeal = new Map(legacyRows.map((r) => [r.entityId, r.cardData]));
   const dealNoIds = new Set(dealNoIdList);
 
+  const excludeIds = (opts.excludeIds || []).filter(Boolean);
   const where = {
     OR: buildOr(q, {
       orderNo,
@@ -234,6 +283,8 @@ export async function searchDeals(q, pq, limit, todayIso, db) {
       legacyIds: [...legacyByDeal.keys()],
       dealNoIds: dealNoIdList,
     }),
+    ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
+    ...(opts.activeOnly ? { mergedIntoDealId: null } : {}),
   };
 
   const rows = await db.deal.findMany({

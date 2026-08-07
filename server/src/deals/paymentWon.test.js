@@ -27,6 +27,10 @@ function makeStore(init = {}) {
     $transaction: async (fn) => fn(client),
     deal: {
       findUnique: async ({ where }) => s.deals[where.id] || null,
+      // Merge lineage: the collection resolver asks which deals were retired
+      // INTO this one so the money picture is complete. No merges in this
+      // fixture, so the honest answer is an empty list.
+      findMany: async () => [],
       update: async ({ where, data }) => Object.assign(s.deals[where.id], data),
       // The canonical transition's atomic race guard: status must still differ.
       updateMany: async ({ where, data }) => {

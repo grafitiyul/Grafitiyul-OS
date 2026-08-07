@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { emailFeedItemsForDeal, emailFeedItemsForContact } from '../email/timelineMerge.js';
 import { attachDeliveryToTimeline } from '../email/deliveryState.js';
 import { touchDealActivity } from '../timeline/events.js';
+import { dealFeedItems } from '../timeline/lineageFeed.js';
 
 // Reusable Timeline / Activity-Feed API. Every item is a TimelineEntry scoped to
 // a subject via (subjectType, subjectId) — so the SAME endpoints serve Deals,
@@ -69,30 +70,24 @@ router.get(
     if (!VALID_SUBJECTS.includes(subjectType) || !subjectId) {
       return res.status(400).json({ error: 'invalid_subject' });
     }
+    // A DEAL feed is assembled by the canonical lineage-aware builder: after a
+    // merge the surviving deal's history is its own PLUS everything retired
+    // into it, interleaved by real timestamp and tagged with provenance. Rows
+    // are never copied — see timeline/lineageFeed.js. Delivery state and the
+    // read-time email merge live inside it, so both surfaces stay identical.
+    if (subjectType === 'deal') {
+      return res.json(await dealFeedItems(subjectId, { db: prisma }));
+    }
     const entries = await prisma.timelineEntry.findMany({
       where: { subjectType, subjectId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: ENTRY_INCLUDE,
     });
     // Outgoing-email entries carry the INTENT frozen at queue time. The truth
-    // lives on the queue row, so delivery state is resolved at READ time —
-    // same philosophy as the email merge below. Without this a queued-then-
-    // failed confirmation reads as "נשלח מייל" forever (#27099/#27100).
-    const withDelivery = await attachDeliveryToTimeline(entries);
-    // Emails merge in at READ time (kind='email' pseudo-entries) — EmailMessage
-    // stays the single source of truth, so linking/unlinking a thread is
-    // reflected instantly with no copied rows. Chronology uses the mail's
-    // sentAt.
-    if (subjectType === 'deal') {
-      const emailItems = await emailFeedItemsForDeal(subjectId);
-      if (emailItems.length) {
-        const merged = [...withDelivery, ...emailItems].sort(
-          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
-        );
-        return res.json(merged);
-      }
-    }
-    res.json(withDelivery);
+    // lives on the queue row, so delivery state is resolved at READ time.
+    // Without this a queued-then-failed confirmation reads as "נשלח מייל"
+    // forever (#27099/#27100).
+    res.json(await attachDeliveryToTimeline(entries));
   }),
 );
 

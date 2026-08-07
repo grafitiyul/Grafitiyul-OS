@@ -184,9 +184,17 @@ export const MESSAGE_SELECT = {
 };
 
 // Deal history: messages of threads linked to this deal.
+// `dealId` accepts ONE id or a list. The list form serves merge lineage: a
+// surviving deal's mail history is its own plus every deal retired into it, and
+// the messages are still read from their real threads — nothing is copied,
+// nothing is re-linked, and the Gmail thread identity each row carries is
+// unchanged, so opening one from the merged deal opens the same canonical
+// thread modal it always did.
 export async function emailFeedItemsForDeal(dealId) {
+  const ids = Array.isArray(dealId) ? dealId.filter(Boolean) : [dealId].filter(Boolean);
+  if (!ids.length) return [];
   const messages = await prisma.emailMessage.findMany({
-    where: { thread: { linkedDealId: dealId } },
+    where: { thread: { linkedDealId: { in: ids } } },
     select: MESSAGE_SELECT,
     orderBy: { sentAt: 'desc' },
     take: 200,
@@ -196,7 +204,7 @@ export async function emailFeedItemsForDeal(dealId) {
     toFeedItem(m, { engagement: m.engagement, username: names.get(m.createdByUserId) }),
   );
   // …plus anything still on its way out (or that failed on the way).
-  return [...sent, ...(await scheduledFeedItems({ dealId }))];
+  return [...sent, ...(await scheduledFeedItems({ dealId: { in: ids } }))];
 }
 
 // Contact aggregate: messages of threads matched to this contact. Tagged so the

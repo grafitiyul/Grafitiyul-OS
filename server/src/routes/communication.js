@@ -37,6 +37,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { activeDealWhere } from '../deals/mergeLineage.js';
 import { parseListQuery } from './listPagination.js';
 import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
@@ -1084,12 +1085,14 @@ router.get('/deals-search', handle(async (req, res) => {
   if (!q) return res.json([]);
   const orderNo = /^\d+$/.test(q) && Number(q) <= 2147483647 ? Number(q) : null;
   const rows = await prisma.deal.findMany({
-    where: {
+    // A retired deal is never a preview/test context: nothing will ever be sent
+    // for it again.
+    where: activeDealWhere({
       OR: [
         { title: { contains: q, mode: 'insensitive' } },
         ...(orderNo != null ? [{ orderNo }] : []),
       ],
-    },
+    }),
     orderBy: { updatedAt: 'desc' },
     take: 15,
     select: { id: true, orderNo: true, title: true, status: true, activityType: true, tourDate: true },

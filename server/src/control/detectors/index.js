@@ -17,6 +17,7 @@ import './bookingIntegrity.js';
 import './wonWithoutTour.js';
 import './confirmationDelivery.js';
 import './activityMismatch.js';
+import './dealMergeIntegrity.js';
 // Register the canonical tour-change impact issue type at startup (event-emitted
 // by rule/exception edits; no sweep detector).
 import '../../tours/changeImpact.js';
