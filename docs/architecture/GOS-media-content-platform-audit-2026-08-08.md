@@ -377,6 +377,74 @@ code does not:
    same as the tour gallery today (derivatives are produced client-side by
    design; there is no server image pipeline).
 
+## 12d. Part B — Content Library (shipped 2026-08-08, commit `41d2a439`)
+
+Module at `/admin/content-library`, registered in `MODULE_REGISTRY` as a
+management module (`defaultInNav: false`, like every other one — an
+administrator pins it from ניהול התפריט; shipping it visible would have
+rewritten every existing user's nav rail).
+
+**Server** — `media/library.js`, `media/transcripts.js`, `media/imports.js`,
+`media/serviceAuth.js`, `media/worker.js`, `media/providers/{youtube,vimeo}.js`,
+`media/transcription/openai.js`, `routes/contentLibrary.js`, `routes/contentApi.js`.
+
+**Client** — `admin/content/{ContentLibraryPage,ContentItemView,ContentImportPage,CategoriesPanel,ConnectionsPanel,contentLabels}`.
+
+### Decisions worth remembering
+
+- **Transcription is size-refused, not silently truncated.** The recruitment
+  system's code documents that Whisper transcribes only the first ~60s of a long
+  concatenated stream and drops the rest. GOS media is one finished R2 object,
+  not client-recorded segments, and there is no ffmpeg in this deployment — so a
+  file over the 25 MB API limit is REFUSED with a reason rather than sent as a
+  fragment whose partial result would look complete.
+- **`verbose_json` from day one**, so timestamps/segments/speakers can be added
+  later without re-transcribing the archive. (Recruitment used plain `text`,
+  which is why it can never add them retroactively.)
+- **An empty transcript is a failure**, not a success — silent audio and wrong
+  formats both return `""`.
+- **Vimeo mirroring is capability-gated by a LIVE probe.** `capabilities()`
+  reads `/oauth/verify` for the `video_files` scope AND inspects a real video for
+  `download`/`files`. `canMirrorToR2` is true only when an actual file link was
+  observed — never from a plan name or documentation, because a token can hold
+  the scope while the plan exposes nothing.
+- **Import writes `external_reference` even when mirroring was requested**; the
+  strategy flips to `mirrored_to_r2` only when bytes actually land in R2.
+- **Duplicate identity is `(provider, externalId)`**, enforced by the DB unique
+  constraint, never by title.
+- **Consumers never get an object key.** The Content API returns
+  `storageStrategy` but not `objectKey`, and playback is a fresh presigned URL
+  per request, so revoking a token actually revokes access.
+
+### Production verification (2026-08-08, controlled QA records only)
+
+| Check | Result |
+|---|---|
+| `/api/content` unauthenticated / bad token | ✅ 401, no detail leaked |
+| `/api/content-library` without admin session | ✅ 401 |
+| Primary (GOS) token sees its item | ✅ |
+| **Non-primary workspace cannot see it (list)** | ✅ 0 results |
+| **Non-primary workspace cannot fetch it by id** | ✅ 404 |
+| Search matches a word present ONLY in the transcript | ✅ 1 match |
+| Re-transcribe keeps history, exactly one current | ✅ 2 versions, 1 current |
+| Grant enforcement (`canTranscribe` absent) | ✅ 403 |
+| Transcribe WITH grant but no `OPENAI_API_KEY` | ✅ 503 `transcription_not_configured` |
+| YouTube reference playback | ✅ embed, never a file URL |
+| QA teardown by captured id; prod state restored | ✅ |
+
+### Known gaps
+
+1. **A >25 MB audio/video cannot be transcribed at all.** Fix = an audio
+   extraction/segmentation step (ffmpeg in the deploy, or a provider that
+   accepts larger files). Today it fails honestly.
+2. **No thumbnail worker.** `MediaJob.kind = 'thumbnail'` exists and is unused;
+   derivatives are still client-generated at upload, as in the gallery.
+3. **Vimeo mirroring is untested against a real account** — no token exists yet.
+   The path is built and unit-tested; its first real run will be the first proof.
+4. **`ExternalSourceConnection` is unused.** YouTube channel selection is via
+   `YOUTUBE_CHANNEL_ID` / a typed handle; the table is there for when several
+   named connections per provider are needed.
+
 ## 12c. The MediaFile convergence path (do not skip)
 
 Owner decision (2026-08-08): `MediaFile` is NOT migrated in this project.
