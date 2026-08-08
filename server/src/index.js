@@ -98,6 +98,7 @@ import tourContentRouter from './routes/tourContent.js';
 import toursRouter from './routes/tours.js';
 import openToursRouter from './routes/openTours.js';
 import tourGalleryRouter from './routes/tourGallery.js';
+import mediaGalleriesRouter from './routes/mediaGalleries.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
@@ -520,6 +521,10 @@ app.use('/api/open-tours', requireAdminAuth, openToursRouter);
 // objects are private (presigned GETs only). The public customer gallery is a
 // separate token-derived router mounted with the other public routes.
 app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
+// Standalone media galleries ("תיקיות תמונות וסרטונים") — the same engine as
+// the tour gallery above, without a TourEvent. Managed from CRM Settings; the
+// public customer view shares the token-derived /api/gallery router.
+app.use('/api/media/galleries', requireAdminAuth, mediaGalleriesRouter);
 // Guide Portal permissions — the server-backed singleton behind Settings →
 // Tours → הרשאות מדריכים. Enforced by the /api/portal guide routes.
 app.use('/api/guide-portal-settings', requireAdminAuth, guidePortalSettingsRouter);
