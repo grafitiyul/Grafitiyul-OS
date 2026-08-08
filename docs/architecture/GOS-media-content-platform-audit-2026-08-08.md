@@ -317,6 +317,91 @@ Postgres-blob `MediaAsset` should be retired on its own schedule anyway.
 
 ---
 
+## 12b. Delivery status (2026-08-08)
+
+### Shipped and verified in production
+
+Commits `ff3074a5` (see §14 note), `6edc337a`, `81b64fdd`. Migration
+`20261016090000_media_content_platform` applied at 09:45 UTC.
+
+- Schema generalisation + 12 new tables, fully additive.
+- `server/src/media/` — keys, galleries, access, audit, usage, jobs, uploads.
+- Admin API `/api/media/galleries`, generic public surface on `/api/gallery/:token`.
+- Operator UI (Settings → CRM → תיקיות תמונות וסרטונים) + bilingual public viewer.
+- 46 new tests; 4355 server + 1010 client tests green.
+
+Production verification performed against real data:
+
+| Check | Result |
+|---|---|
+| Migration applied, 12 tables created, workspace seeded | ✅ |
+| Existing data: 24 tour galleries, 470 live media, 26 links | ✅ unchanged |
+| **Generic key builder vs 200 real production media rows** | ✅ **200/200 byte-identical** for both `objectKey` and `thumbKey` |
+| Public standalone gallery, He default | ✅ |
+| `?lang=en` switches title + subtitle | ✅ |
+| `internalName` never appears in the public payload | ✅ 0 occurrences |
+| Disable → 404, Enable → 200 **on the same URL** | ✅ |
+| Rotate → old token 404, new token 200 | ✅ |
+| `extCanView=false` → 404 (server-side enforcement) | ✅ |
+| Archived → 404 | ✅ |
+| Audit trail records every mutation in order | ✅ |
+| QA teardown by captured id; prod state restored | ✅ |
+
+### Not built yet (Part B and the remainder)
+
+Honest status — the schema and service seams exist for all of these, but the
+code does not:
+
+- Content Library service/routes/UI (`LibraryItem`, `LibraryCategory` tables exist).
+- YouTube + Vimeo connectors and the import screen (`ExternalSourceConnection`,
+  `TourMedia.source*` and the duplicate-protection unique index exist).
+- Transcription provider + worker (`MediaTranscript`, `MediaJob` exist; job
+  claim/retry/failure-reason service is written and tested).
+- External Content API + service-token auth (`ContentServiceToken`,
+  `LibraryItemWorkspace` exist).
+- Thumbnail/mirror workers — no `MediaJob` worker is registered in `index.js` yet.
+
+### Known gaps in what DID ship
+
+1. **"Download all" is refused for standalone galleries** (`409
+   export_not_supported_for_gallery`, button hidden). The ZIP archive's expiry
+   is keyed on `tourEventId`; enabling it before re-keying on `galleryId` would
+   write archives nothing ever purges. Fix = generalise `exports.js` +
+   `TourGalleryExport` and the cleanup worker.
+2. **Reordering has no drag-and-drop UI yet.** `sortOrder`, the reorder service
+   and `POST /media/reorder` all work and are respected by the public viewer;
+   only the drag interaction is missing.
+3. **`GalleryItem` (cross-gallery reuse) has no UI.** The table, service and
+   reference-aware delete are in place and used by the read path.
+4. **No thumbnails for office uploads without a client-generated derivative** —
+   same as the tour gallery today (derivatives are produced client-side by
+   design; there is no server image pipeline).
+
+## 12c. The MediaFile convergence path (do not skip)
+
+Owner decision (2026-08-08): `MediaFile` is NOT migrated in this project.
+Temporary coexistence is accepted; **permanent duplication is not.** The path,
+recorded so it cannot quietly become permanent:
+
+1. `MediaFile.sizeBytes Int` → `BigInt` (additive widen) — it currently caps at
+   ~2 GB, which is wrong for video and is the one change that cannot wait
+   indefinitely.
+2. Add `MediaUsage` rows for every existing `MediaFile` consumer, so the
+   "is it still referenced?" question has one answer across both models.
+3. Introduce `TourMedia.legacyMediaFileId` (nullable) and backfill one
+   `TourMedia` row per `MediaFile`, `storageStrategy='r2_native'`.
+4. Repoint the 8 relations (ProductVariant, Location, QuoteImage, SharedContent,
+   TourStation, TourBlockAsset, QuoteDocumentRender, ProductVariantImage) one at
+   a time, each behind its own migration + test.
+5. Retire `MediaFile` only once no relation points at it.
+
+Also outstanding, and deliberately deferred as cosmetic-but-risky: the Prisma
+models are still named `TourGallery` / `TourMedia` even though they now hold
+non-tour data. Renaming them (with `@@map` to the existing tables, so zero SQL
+runs) touches ~88 call sites across 11 files plus test stubs on a live
+customer-facing system. It is worth doing as its own separately-verifiable
+change, and worth nothing bundled into a feature.
+
 ## 13. Decisions required before implementation
 
 1. **Gallery engine strategy** — generalise the live tour engine (one engine,
