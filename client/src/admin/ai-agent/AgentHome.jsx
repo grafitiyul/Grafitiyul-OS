@@ -46,7 +46,14 @@ export default function AgentHome() {
   return (
     <div className="mx-auto max-w-5xl p-4">
       {/* ── 1. Status headline ─────────────────────────────────────────── */}
-      <StatusHeadline headline={safety.headline} providerConfigured={providerConfigured} />
+      {/* The safety facts ride WITH the headline, not only in the panel below:
+          the onboarding card is tall, and "can this thing message my customers"
+          must be answerable in the first screenful — never after a scroll. */}
+      <StatusHeadline
+        headline={safety.headline}
+        providerConfigured={providerConfigured}
+        facts={safety.facts}
+      />
 
       {/* ── Onboarding, only while it is genuinely unfinished ───────────── */}
       {!onboarding.configured && <OnboardingCard onboarding={onboarding} />}
@@ -148,7 +155,12 @@ export default function AgentHome() {
   );
 }
 
-function StatusHeadline({ headline, providerConfigured }) {
+// The three facts that decide whether an operator should worry, surfaced in the
+// headline itself. Same derived data as the full panel — never a duplicate
+// source, so it cannot disagree with it.
+const HEADLINE_FACTS = ['analyses', 'auto_send', 'auto_action'];
+
+function StatusHeadline({ headline, providerConfigured, facts }) {
   if (!providerConfigured) {
     return (
       <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-4">
@@ -167,6 +179,9 @@ function StatusHeadline({ headline, providerConfigured }) {
     live: { box: 'border-rose-300 bg-rose-50', title: 'text-rose-950', body: 'text-rose-900', dot: 'bg-rose-500' },
   };
   const t = tones[headline.tone] || tones.off;
+  const chips = HEADLINE_FACTS
+    .map((k) => (facts || []).find((f) => f.key === k))
+    .filter(Boolean);
   return (
     <div className={`mb-4 rounded-xl border p-4 ${t.box}`}>
       <div className="flex items-center gap-2">
@@ -174,6 +189,26 @@ function StatusHeadline({ headline, providerConfigured }) {
         <h1 className={`gos-title text-[18px] ${t.title}`}>{headline.titleHe}</h1>
       </div>
       <p className={`gos-detail mt-1 ${t.body}`}>{headline.bodyHe}</p>
+      {chips.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          {chips.map((f) => {
+            const good = f.negative ? !f.yes : f.yes;
+            return (
+              <span key={f.key} className="inline-flex items-center gap-1">
+                <span
+                  aria-hidden
+                  className={`text-[13px] font-bold ${good ? 'text-emerald-600' : 'text-rose-600'}`}
+                >
+                  {f.yes ? '✓' : '✕'}
+                </span>
+                <span className={`gos-detail ${good ? t.body : 'font-semibold text-rose-800'}`}>
+                  {f.textHe}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

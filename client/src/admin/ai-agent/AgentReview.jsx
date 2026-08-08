@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ProposalCard from './ProposalCard.jsx';
 
@@ -17,7 +18,12 @@ const FILTERS = [
 // WhatsApp conversation, where the operator already is. This is the catch-up
 // view for whoever works a backlog, and the place escalations surface.
 export default function AgentReview() {
-  const [filter, setFilter] = useState('open');
+  // The filter is URL-owned, so a link from the home screen ("1 ממתינות
+  // לאישור", "ראה מה הסוכן היה עונה") actually lands on that filtered view —
+  // and so the back button and a refresh keep it.
+  const [params, setParams] = useSearchParams();
+  const filter = FILTERS.some((f) => f.key === params.get('status')) ? params.get('status') : 'open';
+  const setFilter = (key) => setParams(key === 'open' ? {} : { status: key }, { replace: true });
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
 
