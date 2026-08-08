@@ -330,6 +330,13 @@ export default function CustomerGalleryPage() {
             <div className="mb-3 flex justify-center">
               <button
                 type="button"
+                // The switch deliberately shows the OTHER language's own name
+                // ("English" while in Hebrew, "עברית" while in English) — the
+                // standard convention, and the one place a visitor should see
+                // the other script. Marked so the i18n verifier can exclude it
+                // from its "no stray Hebrew on the English page" assertion.
+                data-lang-switch="1"
+                aria-label={uiLang === 'en' ? 'עבור לעברית' : 'Switch to English'}
                 onClick={() => setLang(uiLang === 'en' ? 'he' : 'en')}
                 className="rounded-full border border-gray-300 px-3 py-1 text-[13px] font-medium text-gray-600 transition hover:border-gray-400 hover:text-gray-900"
               >
