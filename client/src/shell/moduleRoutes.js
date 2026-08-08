@@ -176,6 +176,22 @@ export const MODULE_REGISTRY = [
     management: true,
     description: 'כרטיסי אנשי הצוות, צוותים, הכשרה והרשאות.',
   },
+  // ספריית תוכן — the shared content/media library. Day-to-day work, so it is a
+  // module of its own rather than a Settings screen (its categories and source
+  // connections are configured inside it, where the work happens).
+  {
+    key: 'content-library',
+    to: '/admin/content-library',
+    label: 'ספריית תוכן',
+    glyph: '🎬',
+    railGroup: 'utility',
+    // Ships unpinned, like every other management module — an administrator
+    // adds it to the rail from ניהול התפריט. Shipping it visible would change
+    // the navigation of every existing user without anyone asking for it.
+    defaultInNav: false,
+    management: true,
+    description: 'סרטונים, הקלטות, מסמכים ותמונות לשימוש חוזר — עם קטגוריות, תמלול וייבוא מיוטיוב ווימאו.',
+  },
   {
     key: 'site-pages',
     to: '/admin/site-pages',

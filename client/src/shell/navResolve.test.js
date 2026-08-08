@@ -88,7 +88,8 @@ test('the real registry ships the intended default rail', () => {
     settingsModules(r).map((m) => m.key),
     [
       // The management modules lead — Settings is their home…
-      'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people', 'site-pages',
+      'users', 'questionnaires', 'procedures', 'documents', 'tour-content', 'people',
+      'content-library', 'site-pages',
       'ai-agent',
       // …then every operational module, which also gets a permanent card.
       'control', 'management-tasks', 'crm', 'tours', 'whatsapp', 'email', 'finance',

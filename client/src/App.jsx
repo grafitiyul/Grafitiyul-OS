@@ -123,6 +123,9 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
 import MediaGalleriesPage from './admin/media/MediaGalleriesPage.jsx';
+import ContentLibraryPage from './admin/content/ContentLibraryPage.jsx';
+import ContentItemView from './admin/content/ContentItemView.jsx';
+import ContentImportPage from './admin/content/ContentImportPage.jsx';
 import MediaGalleryWorkspace from './admin/media/MediaGalleryWorkspace.jsx';
 import ConfirmationEmailSettings from './admin/crm/settings/ConfirmationEmailSettings.jsx';
 import ConfirmationSnapshotView from './admin/confirmation/ConfirmationSnapshotView.jsx';
@@ -368,6 +371,11 @@ export default function App() {
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
+        {/* ספריית תוכן — a first-class module. The import screen is registered
+            BEFORE the :id route so "import" is never read as an item id. */}
+        <Route path="content-library" element={<ContentLibraryPage />} />
+        <Route path="content-library/import" element={<ContentImportPage />} />
+        <Route path="content-library/:id" element={<ContentItemView />} />
         <Route path="settings/crm/media-galleries" element={<MediaGalleriesPage />} />
         <Route path="settings/crm/media-galleries/:id" element={<MediaGalleryWorkspace />} />
         {/* Confirmation Email (מייל אישור) — dedicated module settings. */}

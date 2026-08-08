@@ -1616,6 +1616,91 @@ export const api = {
 
   // Tour Gallery — per-TourEvent media on R2 (staff surface). Uploads go
   // DIRECTLY to R2; these endpoints only authorize/record/verify.
+  // ספריית תוכן — the Content Library module.
+  contentLibrary: {
+    meta: () => request('/api/content-library/meta'),
+
+    listItems: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) {
+        if (v != null && v !== '' && v !== false) q.set(k, String(v));
+      }
+      const qs = q.toString();
+      return request(`/api/content-library/items${qs ? `?${qs}` : ''}`);
+    },
+    getItem: (id) => request(`/api/content-library/items/${id}`),
+    createItem: (data) =>
+      request('/api/content-library/items', { method: 'POST', body: JSON.stringify(data) }),
+    updateItem: (id, data) =>
+      request(`/api/content-library/items/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    setItemArchived: (id, archived) =>
+      request(`/api/content-library/items/${id}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived }),
+      }),
+    deleteItem: (id, { deleteAsset = false } = {}) =>
+      request(`/api/content-library/items/${id}${deleteAsset ? '?deleteAsset=true' : ''}`, {
+        method: 'DELETE',
+      }),
+
+    listCategories: (includeArchived = false) =>
+      request(`/api/content-library/categories${includeArchived ? '?includeArchived=true' : ''}`),
+    createCategory: (data) =>
+      request('/api/content-library/categories', { method: 'POST', body: JSON.stringify(data) }),
+    updateCategory: (id, data) =>
+      request(`/api/content-library/categories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    deleteCategory: (id) =>
+      request(`/api/content-library/categories/${id}`, { method: 'DELETE' }),
+
+    initiateUpload: (file) =>
+      request('/api/content-library/uploads', { method: 'POST', body: JSON.stringify({ file }) }),
+    uploadUrls: (mediaId, body) =>
+      request(`/api/content-library/uploads/${mediaId}/urls`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    completeUpload: (mediaId, body) =>
+      request(`/api/content-library/uploads/${mediaId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+
+    youtubeVideos: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v) q.set(k, String(v));
+      const qs = q.toString();
+      return request(`/api/content-library/sources/youtube/videos${qs ? `?${qs}` : ''}`);
+    },
+    vimeoVideos: (page = 1) =>
+      request(`/api/content-library/sources/vimeo/videos?page=${page}`),
+    vimeoCapabilities: () => request('/api/content-library/sources/vimeo/capabilities'),
+    import: (data) =>
+      request('/api/content-library/import', { method: 'POST', body: JSON.stringify(data) }),
+
+    transcribe: (id) =>
+      request(`/api/content-library/items/${id}/transcribe`, { method: 'POST', body: '{}' }),
+    getTranscript: (id) => request(`/api/content-library/items/${id}/transcript`),
+    restoreTranscript: (id, transcriptId) =>
+      request(`/api/content-library/items/${id}/transcript/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ transcriptId }),
+      }),
+    archiveTranscript: (id) =>
+      request(`/api/content-library/items/${id}/transcript`, { method: 'DELETE' }),
+
+    listServiceTokens: () => request('/api/content-library/service-tokens'),
+    createServiceToken: (data) =>
+      request('/api/content-library/service-tokens', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    revokeServiceToken: (id) =>
+      request(`/api/content-library/service-tokens/${id}/revoke`, { method: 'POST', body: '{}' }),
+  },
+
   // Standalone media galleries ("תיקיות תמונות וסרטונים"). Same engine as
   // tourGallery below, without a TourEvent — see server/src/media/.
   mediaGalleries: {

@@ -99,6 +99,9 @@ import toursRouter from './routes/tours.js';
 import openToursRouter from './routes/openTours.js';
 import tourGalleryRouter from './routes/tourGallery.js';
 import mediaGalleriesRouter from './routes/mediaGalleries.js';
+import contentLibraryRouter from './routes/contentLibrary.js';
+import contentApiRouter from './routes/contentApi.js';
+import { startMediaWorker } from './media/worker.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
@@ -525,6 +528,13 @@ app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
 // the tour gallery above, without a TourEvent. Managed from CRM Settings; the
 // public customer view shares the token-derived /api/gallery router.
 app.use('/api/media/galleries', requireAdminAuth, mediaGalleriesRouter);
+// ספריית תוכן — the operator surface for the Content Library.
+app.use('/api/content-library', requireAdminAuth, contentLibraryRouter);
+// THE canonical Content API for external consumers (Challenge / Recruitment).
+// Authenticated by service token, NOT by the admin session — deliberately
+// mounted outside requireAdminAuth so it carries its own workspace-scoped
+// identity rather than borrowing an operator's.
+app.use('/api/content', contentApiRouter);
 // Guide Portal permissions — the server-backed singleton behind Settings →
 // Tours → הרשאות מדריכים. Enforced by the /api/portal guide routes.
 app.use('/api/guide-portal-settings', requireAdminAuth, guidePortalSettingsRouter);
@@ -778,6 +788,11 @@ app.listen(port, () => {
   // Tour Gallery R2 purge (cancelled/deleted tours) + abandoned-upload sweep —
   // claim-based 60s tick; verifies the prefix is empty before marking done.
   startTourGalleryCleanupWorker(console);
+
+  // Media processing — transcription + Vimeo→R2 mirroring. Starts regardless of
+  // provider configuration so queued jobs are still claimed and settled with an
+  // honest "not configured" reason instead of sitting in `queued` forever.
+  startMediaWorker(console);
   // Tours → Google Calendar mirror — 60s tick; reconciles pending tours to
   // the org account's calendar (TourEvent stays the SSOT). No-op until the
   // Google account is connected with the calendar scope.
