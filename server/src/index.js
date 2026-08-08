@@ -735,9 +735,24 @@ app.get('*', (req, res, next) => {
 // (which would make Railway return 502 until the next restart).
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
-  console.error('[server error]', err);
   res.set('Cache-Control', 'no-store');
   if (res.headersSent) return;
+
+  // A DELIBERATE client error carries its own 4xx status and a stable code as
+  // its message (e.g. 'category_world_mismatch', 'internal_name_required').
+  // Those are answers, not faults: flattening them to 500 'internal_error'
+  // loses the code the client needs to explain the problem, and logs a
+  // successful validation as if the server had broken.
+  const status = Number(err?.status);
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return res.status(status).json({
+      error: err.message || 'request_error',
+      ...(err.detail ? { detail: err.detail } : {}),
+    });
+  }
+
+  // Anything else is a genuine fault: log it and keep the process alive.
+  console.error('[server error]', err);
   res.status(500).json({
     error: 'internal_error',
     message: err?.message || 'unknown error',
