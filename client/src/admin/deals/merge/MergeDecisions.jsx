@@ -297,12 +297,14 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
                       onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'survivor' } })}
                       text={<FieldValue display={f.survivorDisplay} long={f.survivorDisplay?.long} />}
                       sub={`מדיל #${preview.survivor.orderNo}`}
+                      title={fullValueTitle(f.survivorDisplay)}
                     />
                     <MiniChoice
                       on={answered === 'other'}
                       onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'other' } })}
                       text={<FieldValue display={f.otherDisplay} long={f.otherDisplay?.long} />}
                       sub={`מדיל #${preview.other.orderNo}`}
+                      title={fullValueTitle(f.otherDisplay)}
                     />
                   </div>
                 </div>
@@ -481,11 +483,21 @@ function Choice({ on, onClick, title, body }) {
   );
 }
 
-function MiniChoice({ on, onClick, text, sub }) {
+// A truncated value must still be INSPECTABLE, and hovering anywhere on the
+// card is the discoverable place to do it — not just the few characters of
+// text. Undefined for short values, so no tooltip repeats what is on screen.
+function fullValueTitle(display) {
+  if (!display?.long || !display.label) return undefined;
+  const text = String(display.label);
+  return text.length > 60 ? text : undefined;
+}
+
+function MiniChoice({ on, onClick, text, sub, title }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={`rounded-lg border px-2 py-1.5 text-right transition ${
         on ? 'border-gray-800 bg-gray-50 ring-1 ring-gray-800' : 'border-gray-300 bg-white hover:bg-gray-50'
       }`}
