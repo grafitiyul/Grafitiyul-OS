@@ -5,7 +5,13 @@ import { useFileDrop } from '../common/useFileDrop.js';
 import { createGalleryUploader, getGalleryUploader } from '../../lib/galleryUpload.js';
 import CategoriesPanel from './CategoriesPanel.jsx';
 import ConnectionsPanel from './ConnectionsPanel.jsx';
-import { CONTENT_TYPE_LABELS, TRANSCRIPT_LABELS, typeGlyph } from './contentLabels.js';
+import {
+  CONTENT_TYPE_LABELS,
+  TRANSCRIPT_LABELS,
+  contentTypeLabel,
+  sourceLabel,
+  typeGlyph,
+} from './contentLabels.js';
 
 // ספריית תוכן — the module's home. Three surfaces, because they are three
 // different jobs: the content itself, the categories that organise it, and the
@@ -427,17 +433,13 @@ export default function ContentLibraryPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {CONTENT_TYPE_LABELS[it.contentType] || it.contentType}
+                        {contentTypeLabel(it.contentType)}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
                         {it.categories.length ? it.categories.map((c) => c.nameHe).join(', ') : '—'}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {it.media?.sourceProvider
-                          ? CONTENT_TYPE_LABELS[it.media.sourceProvider] || it.media.sourceProvider
-                          : it.media
-                            ? 'אחסון שלנו'
-                            : '—'}
+                        {it.media ? sourceLabel(it.media) : '—'}
                       </td>
                       <td className="px-4 py-3 text-gray-500" dir="ltr">
                         {it.media?.durationSeconds

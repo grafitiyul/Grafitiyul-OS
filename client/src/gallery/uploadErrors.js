@@ -1,40 +1,59 @@
-// Human-readable upload failure reasons — one mapper for every surface
-// (staff workspace, guide portal, customer page). The raw code stays
-// available for QA (UploadQueuePanel puts it in the row's title attribute);
-// the user sees WHAT went wrong in plain Hebrew, not 'upload_http_403'.
+import { mediaStrings } from './i18n.js';
 
-const EXACT = {
-  unsupported_type: 'סוג הקובץ לא נתמך (רק תמונות וסרטונים)',
-  file_too_large: 'הקובץ גדול מדי',
-  invalid_size: 'גודל הקובץ לא תקין',
-  // XHR status 0: offline, connection dropped mid-file, or the browser
-  // blocked the request because the storage bucket has no CORS policy.
-  network_error: 'החיבור לאחסון נכשל — בעיית רשת או חסימת אבטחה (CORS)',
-  aborted: 'ההעלאה בוטלה',
-  object_missing: 'ההעלאה לא הושלמה — נסו שוב',
-  invalid_content: 'האימות נכשל — תוכן הקובץ אינו תואם את סוגו',
-  no_parts_uploaded: 'לא נקלטו חלקים מהקובץ — נסו שוב',
-  upload_not_found: 'סשן ההעלאה פג — נסו שוב',
-  not_pending: 'הקובץ כבר הועלה',
-  tour_cancelled: 'הסיור בוטל — לא ניתן להעלות אליו מדיה',
-  uploads_disabled: 'העלאת קבצים כבויה בגלריה זו',
-  r2_not_configured: 'אחסון הקבצים אינו מוגדר בשרת',
-  too_many_files_per_call: 'יותר מדי קבצים בבקשה אחת',
-  not_allowed: 'אין הרשאה לפעולה זו',
-  not_found: 'הפריט לא נמצא',
-  no_files: 'לא נבחרו קבצים',
-  rejected: 'הקובץ נדחה',
+// Human-readable upload failure reasons — ONE mapper for every surface (staff
+// workspace, guide portal, public customer gallery). The raw code stays
+// available for QA (UploadQueuePanel puts it in the row's title attribute); the
+// user sees WHAT went wrong, not 'upload_http_403'.
+//
+// Bilingual by parameter, not by duplication: the wording lives in the media
+// registry (i18n.js) and this file only maps a CODE to a registry key. The
+// Hebrew-only admin surfaces call it with no argument and keep working
+// unchanged; the public gallery passes the visitor's strings.
+
+// Raw code → registry key. Codes are the server/transport vocabulary and are
+// deliberately NOT renamed to match the registry — they are a wire contract.
+const CODE_TO_KEY = {
+  unsupported_type: 'unsupported_type',
+  file_too_large: 'file_too_large',
+  invalid_size: 'invalid_size',
+  // XHR status 0: offline, connection dropped mid-file, or the browser blocked
+  // the request because the storage bucket has no CORS policy.
+  network_error: 'network',
+  aborted: 'canceled',
+  object_missing: 'incomplete',
+  invalid_content: 'verification_failed',
+  no_parts_uploaded: 'no_parts',
+  upload_not_found: 'session_expired',
+  not_pending: 'not_pending',
+  already_ready: 'already_ready',
+  tour_cancelled: 'tour_cancelled',
+  uploads_disabled: 'uploads_disabled',
+  gallery_archived: 'gallery_archived',
+  r2_not_configured: 'r2_not_configured',
+  too_many_files_per_call: 'too_many_files_per_call',
+  not_allowed: 'forbidden',
+  not_found: 'not_found',
+  no_files: 'no_files',
+  rejected: 'rejected',
   // Server-side 5xx — the request never reached storage. Retryable.
-  internal_error: 'תקלה זמנית בשרת — נסו שוב בעוד רגע',
+  internal_error: 'server',
 };
 
-export function uploadErrorLabel(code) {
+/**
+ * @param {string} code raw failure code
+ * @param {object} [t] media strings; defaults to Hebrew for the admin surfaces
+ */
+export function uploadErrorLabel(code, t = mediaStrings('he')) {
   if (!code) return '';
+  const e = t.uploadErrors;
   const c = String(code);
-  if (EXACT[c]) return EXACT[c];
-  if (c.startsWith('upload_http_403')) return 'האחסון דחה את הבקשה — ייתכן שקישור ההעלאה פג (403)';
-  if (c.startsWith('upload_http_4')) return `האחסון דחה את הבקשה (${c.replace('upload_http_', '')})`;
-  if (c.startsWith('upload_http_5')) return `תקלת אחסון זמנית (${c.replace('upload_http_', '')}) — נסו שוב`;
-  if (c.startsWith('HTTP ')) return `שגיאת שרת (${c.slice(5).trim()})`;
-  return `שגיאה: ${c}`;
+  const key = CODE_TO_KEY[c];
+  if (key && e[key]) return e[key];
+  if (c.startsWith('upload_http_403')) return e.storage_forbidden;
+  if (c.startsWith('upload_http_4')) return e.storageRejected(c.replace('upload_http_', ''));
+  if (c.startsWith('upload_http_5')) return e.storageTemporary(c.replace('upload_http_', ''));
+  if (c.startsWith('HTTP ')) return e.storageRejected(c.slice(5).trim());
+  // Unknown code: show the generic wording rather than leaking a raw
+  // implementation string to a customer.
+  return e.generic;
 }

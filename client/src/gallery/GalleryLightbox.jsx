@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { formatBytes, uploaderLabel } from './galleryFormat.js';
+import { mediaStrings } from './i18n.js';
 
 // Fullscreen viewer shared by all gallery surfaces. Originals load HERE only
 // (the grid never touches them). Keyboard: ←/→ navigate (RTL-aware), Esc
@@ -27,6 +28,11 @@ export default function GalleryLightbox({
   showUploader = false,
   dir = 'rtl',
   labels = DEFAULT_LABELS,
+  // Media registry for the strings this component resolves itself (uploader
+  // enum). Hebrew default keeps the admin/portal callers unchanged.
+  strings = mediaStrings('he'),
+  // The caption language to display, when the surface shows captions at all.
+  captionLang = null,
 }) {
   const m = media[index];
   const [touchStartX, setTouchStartX] = useState(null);
@@ -79,9 +85,9 @@ export default function GalleryLightbox({
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-white/50">
             <span dir="ltr" className="tabular-nums">{index + 1} / {media.length}</span>
             {m.byteSize > 0 && <span dir="ltr">{formatBytes(m.byteSize)}</span>}
-            {showUploader && uploaderLabel(m) && (
+            {showUploader && uploaderLabel(m, strings) && (
               <span>
-                {labels.uploadedBy}: {uploaderLabel(m)}
+                {labels.uploadedBy}: {uploaderLabel(m, strings)}
               </span>
             )}
           </div>
@@ -144,6 +150,21 @@ export default function GalleryLightbox({
           </button>
         )}
       </div>
+
+      {/* Caption — authored per language and shown verbatim. NO cross-language
+          fallback here: showing the Hebrew caption to an English reader would
+          be presenting untranslated content as if it were the translation.
+          A missing caption simply shows nothing. */}
+      {captionLang && (captionLang === 'en' ? m.captionEn : m.captionHe) && (
+        <div className="shrink-0 px-4 pb-4 text-center">
+          <p
+            dir={captionLang === 'en' ? 'ltr' : 'rtl'}
+            className="mx-auto max-w-2xl text-[13.5px] leading-relaxed text-white/80"
+          >
+            {captionLang === 'en' ? m.captionEn : m.captionHe}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

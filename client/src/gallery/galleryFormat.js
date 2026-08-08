@@ -1,5 +1,11 @@
+import { mediaStrings } from './i18n.js';
+
 // Small formatting helpers shared by every gallery surface (admin workspace,
 // guide portal, public customer page).
+//
+// Byte and duration formatting is deliberately language-NEUTRAL: digits, ':'
+// and the SI units (B/KB/MB/GB) read the same in both languages, so translating
+// them would add drift for no reader benefit.
 
 export function formatBytes(n) {
   const v = Number(n);
@@ -22,14 +28,14 @@ export function formatDuration(seconds) {
   return `${m}:${String(rest).padStart(2, '0')}`;
 }
 
-export const UPLOADER_TYPE_LABELS = {
-  office: 'משרד',
-  guide: 'מדריך',
-  customer: 'לקוח',
-};
-
-export function uploaderLabel(media) {
-  const type = UPLOADER_TYPE_LABELS[media.uploadedByType] || '';
-  if (media.uploadedByLabel && type) return `${type} · ${media.uploadedByLabel}`;
-  return media.uploadedByLabel || type || '';
+// Uploader type is a stored ENUM ('office' | 'guide' | 'customer'). It is never
+// rendered raw — the words come from the media registry, so the same three
+// concepts read identically in the admin, the guide portal and the public
+// gallery, in whichever language that surface is showing.
+//
+// The Hebrew default keeps every existing admin caller working unchanged.
+export function uploaderLabel(media, t = mediaStrings('he')) {
+  const type = t.uploader[media?.uploadedByType] || '';
+  if (media?.uploadedByLabel && type) return `${type}${t.uploadQueue.separator}${media.uploadedByLabel}`;
+  return media?.uploadedByLabel || type || '';
 }

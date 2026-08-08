@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import BilingualField from '../common/BilingualField.jsx';
 
 // Flat categories (V1 — no folders). Deleting one that is in USE archives it
 // instead, so the history of everything filed under it stays readable; an
@@ -77,33 +78,29 @@ export default function CategoriesPanel({ onChanged }) {
 
   return (
     <div className="max-w-3xl">
-      <form onSubmit={add} className="mb-6 flex flex-wrap items-end gap-2">
-        <label className="block">
-          <span className="text-sm font-medium text-gray-700">קטגוריה חדשה</span>
-          <input
-            value={nameHe}
-            onChange={(e) => setNameHe(e.target.value)}
-            placeholder="למשל: הדרכת מדריכים"
-            className="mt-1.5 w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
-          />
-        </label>
-        <label className="block" dir="ltr">
-          <span className="block text-right text-sm font-medium text-gray-700" dir="rtl">
-            אנגלית (רשות)
-          </span>
-          <input
-            value={nameEn}
-            onChange={(e) => setNameEn(e.target.value)}
-            className="mt-1.5 w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={!nameHe.trim()}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-        >
-          הוסף
-        </button>
+      {/* A category name reaches EXTERNAL consumers through the Content API
+          (Challenge/Recruitment may render it in an English UI), so it is a
+          genuine He/En pair and gets the shared translate action. */}
+      <form onSubmit={add} className="mb-6 rounded-2xl border border-gray-200 p-4">
+        <h3 className="mb-3 text-[15px] font-semibold text-gray-900">קטגוריה חדשה</h3>
+        <BilingualField
+          label="שם הקטגוריה"
+          he={nameHe}
+          en={nameEn}
+          onHe={setNameHe}
+          onEn={setNameEn}
+          placeholderHe="למשל: הדרכת מדריכים"
+          placeholderEn="e.g. Guide Training"
+        />
+        <div className="mt-3 flex justify-end">
+          <button
+            type="submit"
+            disabled={!nameHe.trim()}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            הוסף
+          </button>
+        </div>
       </form>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
@@ -119,25 +116,23 @@ export default function CategoriesPanel({ onChanged }) {
           {rows.map((r) => (
             <li key={r.id} className="flex items-center gap-3 px-4 py-3">
               {editing?.id === r.id ? (
-                <>
-                  <input
-                    value={editing.nameHe}
-                    onChange={(e) => setEditing({ ...editing, nameHe: e.target.value })}
-                    className="w-48 rounded border border-gray-300 px-2 py-1 text-sm"
+                <div className="flex-1">
+                  <BilingualField
+                    label="שם הקטגוריה"
+                    he={editing.nameHe}
+                    en={editing.nameEn || ''}
+                    onHe={(v) => setEditing({ ...editing, nameHe: v })}
+                    onEn={(v) => setEditing({ ...editing, nameEn: v })}
                   />
-                  <input
-                    dir="ltr"
-                    value={editing.nameEn || ''}
-                    onChange={(e) => setEditing({ ...editing, nameEn: e.target.value })}
-                    className="w-48 rounded border border-gray-300 px-2 py-1 text-sm"
-                  />
-                  <button onClick={saveEdit} className="text-sm font-medium text-gray-900">
-                    שמור
-                  </button>
-                  <button onClick={() => setEditing(null)} className="text-sm text-gray-500">
-                    ביטול
-                  </button>
-                </>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button onClick={() => setEditing(null)} className="text-sm text-gray-500">
+                      ביטול
+                    </button>
+                    <button onClick={saveEdit} className="text-sm font-medium text-gray-900">
+                      שמור
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <>
                   <span className={`flex-1 text-sm ${r.archived ? 'text-gray-400' : 'text-gray-900'}`}>

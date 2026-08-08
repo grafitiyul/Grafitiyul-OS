@@ -12,6 +12,8 @@ import UploadPrimaryButton, {
   BRAND_TEAL,
   UploadCloudIcon,
 } from './UploadPrimaryButton.jsx';
+import { mediaDir, mediaStrings, normalizeMediaLanguage } from './i18n.js';
+import { GalleryLanguageProvider } from './GalleryLanguage.jsx';
 
 // PUBLIC customer gallery — /g/:token. Design direction (2026-07 polish):
 // premium, minimal, branded — photos are the hero. A slim dark-navy brand
@@ -25,27 +27,15 @@ import UploadPrimaryButton, {
 // floating upload pill once the header scrolls away. Permissions/security
 // are untouched: the token is the credential, customers never delete/manage.
 
-// Customers never see internal CRM classifications (פרטי/עסקי). The ONLY
-// badge is "קבוצתי" — a group tour genuinely has no single customer.
-const KIND_LABELS = { group_slot: 'קבוצתי' };
+// Customers never see internal CRM classifications (פרטי/עסקי). The ONLY tour
+// kind that earns a badge is a group slot — it genuinely has no single
+// customer. The kind is a stored enum; the WORD comes from the registry, so it
+// is never rendered raw.
+const BADGED_KINDS = new Set(['group_slot']);
 
-// Every visible string of a STANDALONE gallery, in both languages. The media is
-// shared between them — only the wording changes. Tour galleries are Hebrew by
-// design and never read this.
-const GALLERY_UI_TEXT = {
-  he: {
-    switchTo: 'English',
-    switchLabel: 'עברית',
-    itemCount: (n) => `${n} תמונות וסרטונים`,
-    empty: 'אין עדיין מדיה בתיקייה.',
-  },
-  en: {
-    switchTo: 'עברית',
-    switchLabel: 'English',
-    itemCount: (n) => `${n} photos and videos`,
-    empty: 'Nothing here yet.',
-  },
-};
+// Every visible string comes from the media registry (i18n.js) — this file
+// holds no user-facing literal of its own. The media itself is shared between
+// languages; only the wording changes.
 
 // ONE brand band background — header and footer share it verbatim so the
 // page always reads as wrapped by the brand (they can never drift apart).
@@ -103,9 +93,9 @@ function fmtDate(ymd) {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : '';
 }
 
-function CenteredNote({ emoji, title, sub }) {
+function CenteredNote({ emoji, title, sub, dir = 'rtl' }) {
   return (
-    <div dir="rtl" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 px-6 text-center">
+    <div dir={dir} className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 px-6 text-center">
       <div className="text-4xl" aria-hidden>{emoji}</div>
       <h1 className="text-lg font-bold text-gray-900">{title}</h1>
       {sub && <p className="max-w-sm text-[14px] leading-relaxed text-gray-500">{sub}</p>}
@@ -160,7 +150,9 @@ export default function CustomerGalleryPage() {
       const d = await jsonFetch(lang ? `${base}?lang=${lang}` : base);
       setData(d);
       setPhase('ready');
-      document.title = `${d.title} · גרפיטיול`;
+      // Brand name follows the payload language, so an English visitor does
+      // not get a Hebrew browser tab.
+      document.title = `${d.title} · ${mediaStrings(d.lang).common.brand}`;
     } catch (e) {
       setPhase(e.status === 404 ? 'gone' : 'error');
     }
@@ -198,12 +190,20 @@ export default function CustomerGalleryPage() {
     return () => obs.disconnect();
   }, [phase]);
 
+  // These three states render BEFORE the payload exists, so the gallery's own
+  // default language is unknown. The visitor's own choice still applies when
+  // they have made one — switching to English and then hitting an error must
+  // not drop them back into Hebrew.
+  const earlyLang = normalizeMediaLanguage(lang);
+  const t0 = mediaStrings(earlyLang);
+  const earlyDir = mediaDir(earlyLang);
+
   if (phase === 'loading') {
     return (
-      <div dir="rtl" className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div dir={earlyDir} className="flex min-h-screen items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-3">
           <span className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" aria-hidden />
-          <span className="text-[13px] text-gray-400">טוען את הגלריה…</span>
+          <span className="text-[13px] text-gray-400">{t0.gallery.loadingGallery}</span>
         </div>
       </div>
     );
@@ -211,14 +211,22 @@ export default function CustomerGalleryPage() {
   if (phase === 'gone') {
     return (
       <CenteredNote
+        dir={earlyDir}
         emoji="🔍"
-        title="הגלריה אינה זמינה"
-        sub="ייתכן שהקישור הוחלף או שהגלריה הוסרה. פנו אלינו לקבלת קישור מעודכן."
+        title={t0.gallery.unavailableTitle}
+        sub={t0.gallery.unavailableSub}
       />
     );
   }
   if (phase === 'error') {
-    return <CenteredNote emoji="⚠️" title="שגיאה בטעינת הגלריה" sub="נסו לרענן את העמוד." />;
+    return (
+      <CenteredNote
+        dir={earlyDir}
+        emoji="⚠️"
+        title={t0.gallery.errorTitle}
+        sub={t0.gallery.errorSub}
+      />
+    );
   }
 
   const media = data.media || [];
@@ -228,16 +236,45 @@ export default function CustomerGalleryPage() {
   // A standalone gallery carries its OWN bilingual text and has no tour
   // metadata (no product, date, time or location) — so it renders a quieter
   // header: title, optional subtitle, item count, and the language switch.
+  // A TOUR gallery has no language switch — its headline is derived from tour
+  // data that GOS maintains in Hebrew — so it stays Hebrew by design.
   const isStandalone = data.kind === 'standalone';
-  const uiLang = isStandalone ? data.lang || 'he' : 'he';
-  const t = GALLERY_UI_TEXT[uiLang];
+  const uiLang = isStandalone ? normalizeMediaLanguage(data.lang) : 'he';
+  const t = mediaStrings(uiLang);
+  // Tour galleries have always allowed downloading and do not send the flag;
+  // a standalone gallery decides per gallery. Absent === allowed keeps the
+  // existing tour behaviour byte-for-byte.
+  const canDownload = data.canDownload !== false;
 
   // Headline per product rule: organization name when one exists, otherwise
   // the customer's name (customerLabel resolves that server-side).
   const headline = isStandalone
     ? data.title
     : [data.productName || data.title, data.customerLabel].filter(Boolean).join(' · ');
-  const kindLabel = isStandalone ? null : KIND_LABELS[data.kind] || null;
+  const kindLabel = !isStandalone && BADGED_KINDS.has(data.kind) ? t.gallery.groupBadge : null;
+  const uploadButtonLabel = t.actions.upload;
+
+  // The shared queue panel takes its wording as one object so the admin, the
+  // guide portal and this page can each pass their own registry.
+  const queueLabels = {
+    states: {
+      preparing: t.uploadQueue.preparing,
+      queued: t.uploadQueue.waiting,
+      uploading: t.uploadQueue.uploading,
+      processing: t.uploadQueue.verifying,
+      done: t.uploadQueue.done,
+      failed: t.uploadQueue.failed,
+      rejected: t.uploadQueue.rejected,
+      canceled: t.uploadQueue.canceled,
+    },
+    doneOf: t.uploadQueue.doneOf,
+    uploadingN: t.uploadQueue.uploadingN,
+    queuedN: t.uploadQueue.queuedN,
+    failedN: t.uploadQueue.failedN,
+    rejectedN: t.uploadQueue.rejectedN,
+    retryAllFailed: t.uploadQueue.retryAllFailed,
+    cancelAria: t.uploadQueue.cancel,
+  };
 
   // Reading order the customer expects: where → when (date, time) → how much.
   const metaParts = isStandalone
@@ -245,7 +282,7 @@ export default function CustomerGalleryPage() {
         hasMedia && {
           key: 'count',
           icon: <PhotosIcon className="h-4 w-4" />,
-          text: t.itemCount(media.length),
+          text: t.gallery.itemCount(media.length),
         },
       ].filter(Boolean)
     : [
@@ -273,10 +310,13 @@ export default function CustomerGalleryPage() {
     },
   ].filter(Boolean);
 
-  const uploadButton = () => <UploadPrimaryButton onClick={() => fileInputRef.current?.click()} />;
+  const uploadButton = () => (
+    <UploadPrimaryButton onClick={() => fileInputRef.current?.click()} label={uploadButtonLabel} />
+  );
 
   return (
-    <div dir={uiLang === 'en' ? 'ltr' : 'rtl'} className="min-h-screen bg-gray-50">
+    <GalleryLanguageProvider lang={uiLang}>
+    <div dir={mediaDir(uiLang)} className="min-h-screen bg-gray-50">
       {/* Brand band — slim, dark navy, the official white lockup. Part of the
           brand, not a hero: the page's real content starts right below. */}
       <div className="flex justify-center px-4 py-5 sm:py-6" style={{ background: BRAND_BAND_BG }}>
@@ -293,7 +333,7 @@ export default function CustomerGalleryPage() {
                 onClick={() => setLang(uiLang === 'en' ? 'he' : 'en')}
                 className="rounded-full border border-gray-300 px-3 py-1 text-[13px] font-medium text-gray-600 transition hover:border-gray-400 hover:text-gray-900"
               >
-                {t.switchTo}
+                {t.common.switchLanguage}
               </button>
             </div>
           )}
@@ -336,8 +376,9 @@ export default function CustomerGalleryPage() {
                 a standalone gallery has no way to clean one up yet. The server
                 refuses it; offering a button that always fails would be worse
                 than not offering it. Individual downloads still work. */}
-            {hasMedia && !isStandalone && (
+            {hasMedia && !isStandalone && canDownload && (
               <DownloadAllButton
+                strings={t}
                 className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-3 text-[13.5px] font-semibold text-gray-600 transition hover:bg-gray-100 disabled:opacity-60"
                 endpoints={{
                   request: () => jsonFetch(`${base}/export`, { method: 'POST', body: '{}' }),
@@ -354,22 +395,33 @@ export default function CustomerGalleryPage() {
       <main className="mx-auto max-w-6xl px-3 pb-24 pt-4 sm:px-5 sm:pt-5">
         {queueSnap?.totals?.total > 0 && (
           <div className="mb-4">
-            <UploadQueuePanel snapshot={queueSnap} uploader={uploader} />
+            <UploadQueuePanel
+              snapshot={queueSnap}
+              uploader={uploader}
+              dir={mediaDir(uiLang)}
+              strings={t}
+              labels={queueLabels}
+            />
           </div>
         )}
 
         {!hasMedia ? (
           <div className="mx-auto mt-6 max-w-md rounded-2xl border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
             <div className="text-3xl" aria-hidden>🖼️</div>
-            <h2 className="mt-3 text-[16px] font-bold text-gray-900">הגלריה עדיין ריקה</h2>
+            <h2 className="mt-3 text-[16px] font-bold text-gray-900">{t.gallery.emptyTitle}</h2>
             <p className="mt-1.5 text-[13.5px] leading-relaxed text-gray-500">
-              התמונות והסרטונים מהסיור יופיעו כאן.
-              {data.canUpload && ' יש לכם תמונות משלכם? הוסיפו אותן עכשיו.'}
+              {t.gallery.emptyBody}
+              {data.canUpload && ` ${t.gallery.emptyUploadHint}`}
             </p>
             {data.canUpload && <div className="mt-5">{uploadButton()}</div>}
           </div>
         ) : (
-          <GalleryGrid media={media} onOpen={(i) => setLightboxIndex(i)} />
+          <GalleryGrid
+            media={media}
+            onOpen={(i) => setLightboxIndex(i)}
+            emptyText={t.gallery.emptyGrid}
+            coverLabel={t.gallery.coverBadge}
+          />
         )}
       </main>
 
@@ -379,7 +431,7 @@ export default function CustomerGalleryPage() {
       <footer style={{ background: BRAND_BAND_BG }}>
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-5 px-4 py-9 sm:px-6 sm:py-10">
           <BrandLogo logoUrl={data.logoUrl} height={48} />
-          <div className="text-[15px] font-semibold text-white">להזמנת פעילויות דומות:</div>
+          <div className="text-[15px] font-semibold text-white">{t.footer.contactTitle}</div>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-0">
             <a
               href={CONTACT.siteHref}
@@ -415,7 +467,7 @@ export default function CustomerGalleryPage() {
               <span dir="ltr" className="tabular-nums">{CONTACT.whatsappDisplay}</span>
             </a>
           </div>
-          <div className="text-[12px] text-white/40">גרפיטיול · סיורי גרפיטי ואמנות רחוב</div>
+          <div className="text-[12px] text-white/40">{t.footer.tagline}</div>
         </div>
       </footer>
 
@@ -429,7 +481,7 @@ export default function CustomerGalleryPage() {
             className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-bold text-white shadow-xl shadow-teal-900/25 active:scale-[0.98]"
           >
             <UploadCloudIcon className="h-5 w-5" />
-            העלאת תמונות
+            {t.actions.uploadPill}
           </button>
         </div>
       )}
@@ -452,16 +504,32 @@ export default function CustomerGalleryPage() {
           index={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onNavigate={setLightboxIndex}
+          dir={mediaDir(uiLang)}
+          strings={t}
+          captionLang={isStandalone ? uiLang : null}
+          labels={{
+            itemAria: t.common.media,
+            uploadedBy: t.actions.uploadShort,
+            closeAria: t.common.close,
+            prevAria: t.common.previous,
+            nextAria: t.common.next,
+          }}
           actions={
-            <a
-              href={`${base}/media/${lightboxMedia.id}/download`}
-              className="rounded-lg bg-white/10 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-white/20"
-            >
-              ⬇ הורדה
-            </a>
+            // Only offered when the gallery actually permits downloading —
+            // the server enforces it either way, but a button that always
+            // 403s is worse than no button.
+            canDownload ? (
+              <a
+                href={`${base}/media/${lightboxMedia.id}/download`}
+                className="rounded-lg bg-white/10 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-white/20"
+              >
+                ⬇ {t.actions.download}
+              </a>
+            ) : null
           }
         />
       )}
     </div>
+    </GalleryLanguageProvider>
   );
 }

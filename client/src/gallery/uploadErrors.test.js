@@ -36,8 +36,21 @@ test('R2 HTTP rejections keep the status visible for QA', () => {
   assert.match(uploadErrorLabel('upload_http_503'), /503/);
 });
 
-test('unknown codes degrade readably instead of vanishing', () => {
-  assert.match(uploadErrorLabel('something_new'), /שגיאה/);
+test('unknown codes degrade readably WITHOUT leaking the raw code to a customer', () => {
+  // The label is customer-facing. An unknown code must read as a sentence, not
+  // as 'שגיאה: something_new' — the raw code stays available for QA in the
+  // row's title attribute (see UploadQueuePanel), which is where it belongs.
+  const label = uploadErrorLabel('something_new');
+  assert.ok(label.length > 0);
+  assert.ok(!label.includes('something_new'), 'the raw code must not reach the customer');
   assert.equal(uploadErrorLabel(''), '');
   assert.equal(uploadErrorLabel(null), '');
+});
+
+test('the same failure reads in the visitor\'s language', async () => {
+  const { mediaStrings } = await import('./i18n.js');
+  assert.equal(uploadErrorLabel('file_too_large'), 'הקובץ גדול מדי');
+  assert.equal(uploadErrorLabel('file_too_large', mediaStrings('en')), 'The file is too large');
+  // Interpolated codes carry the status number in both languages.
+  assert.match(uploadErrorLabel('upload_http_503', mediaStrings('en')), /503/);
 });

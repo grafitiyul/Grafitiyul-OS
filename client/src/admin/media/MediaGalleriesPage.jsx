@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import SettingsShell from '../settings/SettingsShell.jsx';
+import BilingualField from '../common/BilingualField.jsx';
 
 // "תיקיות תמונות וסרטונים" — the operator's list of customer-facing media
 // folders. Creating one asks for the minimum that makes it real (an internal
@@ -72,27 +73,16 @@ function CreateDialog({ onClose, onCreated }) {
           />
         </label>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">כותרת ללקוח (עברית)</span>
-            <input
-              value={titleHe}
-              onChange={(e) => setTitleHe(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-[15px] focus:border-gray-900 focus:outline-none"
-              placeholder="תמונות מהפעילות"
-            />
-          </label>
-          <label className="block" dir="ltr">
-            <span className="block text-sm font-medium text-gray-700 text-right" dir="rtl">
-              כותרת ללקוח (אנגלית)
-            </span>
-            <input
-              value={titleEn}
-              onChange={(e) => setTitleEn(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-[15px] focus:border-gray-900 focus:outline-none"
-              placeholder="Activity Photos"
-            />
-          </label>
+        <div className="mt-4">
+          <BilingualField
+            label="כותרת ללקוח"
+            he={titleHe}
+            en={titleEn}
+            onHe={setTitleHe}
+            onEn={setTitleEn}
+            placeholderHe="תמונות מהפעילות"
+            placeholderEn="Activity Photos"
+          />
         </div>
 
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}

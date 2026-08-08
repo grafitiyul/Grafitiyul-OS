@@ -34,11 +34,20 @@ router.use(requireServiceToken);
 function itemDto(item, { transcript = undefined } = {}) {
   return {
     id: item.id,
+    // The operator's own label. Exposed because a consumer needs SOMETHING to
+    // show when no public title has been authored, and it is a name rather
+    // than commentary.
     internalName: item.internalName,
     contentType: item.contentType,
-    description: item.description,
     language: item.language,
+    // Localized, customer-safe text only.
+    //
+    // `LibraryItem.description` is deliberately NOT here: the schema marks it
+    // "Internal notes — never customer-facing", and it was being returned in
+    // this position until the 2026-08-08 bilingual audit. Consumers get the
+    // localized public description instead, which is what the field is for.
     title: { he: item.publicTitleHe, en: item.publicTitleEn },
+    description: { he: item.publicDescriptionHe, en: item.publicDescriptionEn },
     archived: item.archived,
     updatedAt: item.updatedAt,
     categories: (item.categories || []).map((c) => ({
@@ -210,9 +219,15 @@ router.patch(
     const item = await scopedItem(req, req.params.id);
     if (!item) return res.status(404).json({ error: 'not_found' });
     // Consumers may describe content, never re-point it at other storage or
-    // change who else can see it.
+    // change who else can see it. They also cannot write the INTERNAL notes —
+    // those belong to the GOS operator, not to a consuming system.
     const data = {};
-    for (const k of ['description', 'publicTitleHe', 'publicTitleEn']) {
+    for (const k of [
+      'publicTitleHe',
+      'publicTitleEn',
+      'publicDescriptionHe',
+      'publicDescriptionEn',
+    ]) {
       if (k in (req.body || {})) data[k] = String(req.body[k] || '').trim() || null;
     }
     if (Object.keys(data).length === 0) return res.status(422).json({ error: 'nothing_to_update' });

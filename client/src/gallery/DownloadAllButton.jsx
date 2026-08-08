@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { mediaStrings } from './i18n.js';
 
 // "Download all" — honest async UX over the export job. Click → the server
 // queues (or reuses) a ZIP build → we poll until ready → the browser
@@ -12,7 +13,13 @@ import { useEffect, useRef, useState } from 'react';
 
 const POLL_MS = 3000;
 
-export default function DownloadAllButton({ endpoints, className = '', readyAutoDownload = true }) {
+export default function DownloadAllButton({
+  endpoints,
+  className = '',
+  readyAutoDownload = true,
+  // Media registry; Hebrew default keeps the tour-gallery callers unchanged.
+  strings = mediaStrings('he'),
+}) {
   const [job, setJob] = useState(null);
   const [phase, setPhase] = useState('idle'); // idle | preparing | ready | failed
   const timerRef = useRef(null);
@@ -68,14 +75,15 @@ export default function DownloadAllButton({ endpoints, className = '', readyAuto
     }
   }
 
+  const a = strings.actions;
   const label =
     phase === 'preparing'
-      ? 'מכינים את הקובץ…'
+      ? a.preparingArchive
       : phase === 'ready'
-        ? '⬇ הקובץ מוכן — הורדה'
+        ? a.downloadReady
         : phase === 'failed'
-          ? 'ההכנה נכשלה — נסו שוב'
-          : '⬇ הורדת הכול (ZIP)';
+          ? a.archiveFailed
+          : a.downloadAll;
 
   return (
     <button type="button" onClick={start} disabled={phase === 'preparing'} className={className}>

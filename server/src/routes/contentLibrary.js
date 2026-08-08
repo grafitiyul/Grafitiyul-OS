@@ -97,6 +97,8 @@ function itemDto(item) {
     language: item.language,
     publicTitleHe: item.publicTitleHe,
     publicTitleEn: item.publicTitleEn,
+    publicDescriptionHe: item.publicDescriptionHe,
+    publicDescriptionEn: item.publicDescriptionEn,
     archived: item.archived,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,

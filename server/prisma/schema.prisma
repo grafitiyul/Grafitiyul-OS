@@ -5877,8 +5877,15 @@ model LibraryItem {
   // Public-facing localized fields, used only if an item is ever surfaced
   // publicly. internalName is an operator label and must never be overloaded
   // for this.
-  publicTitleHe String?
-  publicTitleEn String?
+  // Customer/consumer-facing localized text. `description` above is INTERNAL
+  // notes and must never be shown outside GOS — these are the fields an
+  // external consumer (Challenge / Recruitment) may render. Added 2026-08-08
+  // after the bilingual audit found the Content API returning the internal
+  // notes because no public description existed to return instead.
+  publicTitleHe       String?
+  publicTitleEn       String?
+  publicDescriptionHe String?
+  publicDescriptionEn String?
   archived      Boolean    @default(false)
   createdById   String? // AdminUser.id (loose)
   updatedById   String? // AdminUser.id (loose)

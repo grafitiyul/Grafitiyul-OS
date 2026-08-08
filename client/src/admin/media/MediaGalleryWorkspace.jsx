@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { createGalleryUploader, getGalleryUploader } from '../../lib/galleryUpload.js';
 import { useFileDrop } from '../common/useFileDrop.js';
 import SettingsShell from '../settings/SettingsShell.jsx';
+import BilingualField from '../common/BilingualField.jsx';
 
 // One media folder. A workspace, not a form: the operator spends real time here
 // uploading, arranging and deciding what the customer may do, so the surfaces
@@ -138,6 +139,77 @@ function LinkPanel({ gallery, onChanged, onError }) {
   );
 }
 
+// Per-item bilingual caption. Captions are shown to the customer in the
+// language they are viewing, so they are a genuine He/En pair and get the
+// shared translate action — exactly like the gallery's own title.
+function CaptionDialog({ galleryId, media, onClose, onSaved }) {
+  const [he, setHe] = useState(media.captionHe || '');
+  const [en, setEn] = useState(media.captionEn || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.mediaGalleries.updateMedia(galleryId, media.id, {
+        captionHe: he,
+        captionEn: en,
+      });
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setError(e?.payload?.error || 'שמירה נכשלה');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/40 p-4">
+      <div dir="rtl" className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-bold text-gray-900">כיתוב לפריט</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          הכיתוב מוצג ללקוח בשפה שהוא צופה בה. אם אין נוסח בשפה מסוימת — לא יוצג כיתוב, ולא
+          יוצג הנוסח בשפה השנייה.
+        </p>
+        <div className="mt-4 flex items-start gap-4">
+          {(media.thumbUrl || media.posterUrl) && (
+            <img
+              src={media.thumbUrl || media.posterUrl}
+              alt=""
+              className="h-24 w-24 shrink-0 rounded-lg object-cover"
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <BilingualField
+              label="כיתוב"
+              render="textarea"
+              rows={3}
+              he={he}
+              en={en}
+              onHe={setHe}
+              onEn={setEn}
+            />
+          </div>
+        </div>
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">
+            ביטול
+          </button>
+          <button
+            onClick={save}
+            disabled={busy}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            {busy ? 'שומר…' : 'שמור כיתוב'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MediaGalleryWorkspace() {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -145,6 +217,7 @@ export default function MediaGalleryWorkspace() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [uploadState, setUploadState] = useState(null);
+  const [captionFor, setCaptionFor] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -357,6 +430,17 @@ export default function MediaGalleryWorkspace() {
                     >
                       הסר
                     </button>
+                    <button
+                      onClick={() => setCaptionFor(m)}
+                      title="כיתוב"
+                      className={`absolute right-1.5 top-1.5 rounded-full bg-white/90 px-2 py-1 text-xs font-medium shadow ${
+                        m.captionHe || m.captionEn
+                          ? 'text-emerald-700'
+                          : 'hidden text-gray-600 group-hover:block'
+                      }`}
+                    >
+                      {m.captionHe || m.captionEn ? '✎ כיתוב' : 'כיתוב'}
+                    </button>
                   </figure>
                 ))}
               </div>
@@ -368,36 +452,31 @@ export default function MediaGalleryWorkspace() {
         <div className="space-y-6">
           <section className="space-y-4 rounded-2xl border border-gray-200 p-5">
             <h2 className="text-[15px] font-semibold text-gray-900">מה הלקוח רואה</h2>
+            {/* Internal name is ONE field, deliberately. It is an operator
+                label, not customer-facing content, so it gets no English twin
+                and no translate action. */}
             <Field
               label="שם פנימי (לא מוצג ללקוח)"
               value={draft.internalName}
               onChange={(v) => setDraft({ ...draft, internalName: v })}
             />
-            <Field
-              label="כותרת — עברית"
-              value={draft.titleHe}
-              onChange={(v) => setDraft({ ...draft, titleHe: v })}
-              placeholder="תמונות מהפעילות"
+            <BilingualField
+              label="כותרת"
+              he={draft.titleHe}
+              en={draft.titleEn}
+              onHe={(v) => setDraft({ ...draft, titleHe: v })}
+              onEn={(v) => setDraft({ ...draft, titleEn: v })}
+              placeholderHe="תמונות מהפעילות"
+              placeholderEn="Activity Photos"
             />
-            <Field
-              label="כותרת — אנגלית"
-              dir="ltr"
-              value={draft.titleEn}
-              onChange={(v) => setDraft({ ...draft, titleEn: v })}
-              placeholder="Activity Photos"
-            />
-            <Field
-              label="תת-כותרת — עברית"
-              textarea
-              value={draft.subtitleHe}
-              onChange={(v) => setDraft({ ...draft, subtitleHe: v })}
-            />
-            <Field
-              label="תת-כותרת — אנגלית"
-              dir="ltr"
-              textarea
-              value={draft.subtitleEn}
-              onChange={(v) => setDraft({ ...draft, subtitleEn: v })}
+            <BilingualField
+              label="תת-כותרת"
+              render="textarea"
+              rows={2}
+              he={draft.subtitleHe}
+              en={draft.subtitleEn}
+              onHe={(v) => setDraft({ ...draft, subtitleHe: v })}
+              onEn={(v) => setDraft({ ...draft, subtitleEn: v })}
             />
             <label className="block">
               <span className="block text-sm font-medium text-gray-700">שפת ברירת מחדל</span>
@@ -446,6 +525,15 @@ export default function MediaGalleryWorkspace() {
           </section>
         </div>
       </div>
+
+      {captionFor && (
+        <CaptionDialog
+          galleryId={id}
+          media={captionFor}
+          onClose={() => setCaptionFor(null)}
+          onSaved={load}
+        />
+      )}
     </SettingsShell>
   );
 }

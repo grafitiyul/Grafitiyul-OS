@@ -1,6 +1,17 @@
-// Business language for the Content Library. Internal identifiers
-// ('mirrored_to_r2', 'external_reference', 'queued') never reach the screen —
-// operators read about content, not about storage strategies.
+import { MEDIA_VOCABULARY_HE } from '../../gallery/i18n.js';
+
+// Business language for the Content Library (a Hebrew-only internal admin).
+//
+// Internal identifiers ('mirrored_to_r2', 'external_reference', 'queued')
+// never reach the screen — operators read about content, not about storage
+// strategies. Every stored enum this module can render has an entry here, and
+// resolution always goes through a helper that falls back to a WORD, never to
+// the raw value.
+//
+// Shared concepts (download / upload / delete / edit) come from the ONE media
+// vocabulary the public gallery also uses, so the same idea cannot be worded
+// two different ways across the two modules.
+export const SHARED = MEDIA_VOCABULARY_HE.actions;
 
 export const CONTENT_TYPE_LABELS = {
   video: 'וידאו',
@@ -27,6 +38,41 @@ const GLYPHS = {
 
 export function typeGlyph(type) {
   return GLYPHS[type] || '📦';
+}
+
+// Where the bytes actually live. A stored enum — shown as a phrase, never raw.
+export const STORAGE_STRATEGY_LABELS = {
+  r2_native: 'באחסון שלנו',
+  external_reference: 'הפניה למקור חיצוני',
+  mirrored_to_r2: 'הועתק לאחסון שלנו',
+};
+
+/**
+ * Resolve any stored enum to a human phrase.
+ *
+ * The fallback is deliberately a neutral WORD and not the raw value: leaking
+ * 'mirrored_to_r2' onto a screen is exactly the failure this module exists to
+ * prevent, and a new enum value shipped by the server must degrade to
+ * something readable rather than to implementation vocabulary.
+ */
+export function enumLabel(map, value, fallback = 'לא ידוע') {
+  if (!value) return '—';
+  return map[value] || fallback;
+}
+
+export function contentTypeLabel(type) {
+  return enumLabel(CONTENT_TYPE_LABELS, type, 'סוג אחר');
+}
+
+export function storageStrategyLabel(strategy) {
+  return enumLabel(STORAGE_STRATEGY_LABELS, strategy, 'אחסון אחר');
+}
+
+export function sourceLabel(media) {
+  if (!media) return '—';
+  // Provider names (YouTube / Vimeo) are proper nouns and stay untranslated.
+  if (media.sourceProvider) return enumLabel(CONTENT_TYPE_LABELS, media.sourceProvider, media.sourceProvider);
+  return CONTENT_TYPE_LABELS.r2;
 }
 
 // Processing state, worded honestly. "queued" and "processing" are their own

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatBytes } from './galleryFormat.js';
 import { uploadErrorLabel } from './uploadErrors.js';
+import { mediaStrings } from './i18n.js';
 
 // Live view of the shared upload queue (lib/galleryUpload.js snapshots) —
 // same component on desktop admin, guide portal and the customer page. The
@@ -49,6 +50,9 @@ export default function UploadQueuePanel({
   uploader,
   dir = 'rtl',
   labels = DEFAULT_LABELS,
+  // Media registry for the strings this component resolves itself (failure
+  // reasons). Hebrew default keeps the admin/portal callers unchanged.
+  strings = mediaStrings('he'),
 }) {
   const [open, setOpen] = useState(false);
   const { items, totals } = snapshot || { items: [], totals: { total: 0 } };
@@ -127,7 +131,7 @@ export default function UploadQueuePanel({
                   // Readable reason for the user; the raw code stays in the
                   // tooltip so QA can report the exact failure.
                   <div className="mt-0.5 text-[11px] text-red-600" title={it.error || ''}>
-                    {uploadErrorLabel(it.error)}
+                    {uploadErrorLabel(it.error, strings)}
                   </div>
                 )}
               </div>
@@ -140,7 +144,9 @@ export default function UploadQueuePanel({
                       : 'text-gray-500'
                 }`}
               >
-                {labels.states[it.status] || it.status}
+                {/* Never the raw enum: an unknown status shows neutral wording
+                    rather than leaking 'processing_v2' to a customer. */}
+                {labels.states[it.status] || strings.uploadQueue.unknownState}
               </span>
               {it.status === 'failed' && (
                 <button

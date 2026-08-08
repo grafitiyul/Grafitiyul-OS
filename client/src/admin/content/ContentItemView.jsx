@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BilingualField from '../common/BilingualField.jsx';
 import {
   CONTENT_TYPE_LABELS,
+  contentTypeLabel,
+  sourceLabel,
+  storageStrategyLabel,
   TRANSCRIPT_LABELS,
   fmtBytes,
   fmtDuration,
@@ -192,6 +196,10 @@ export default function ContentItemView() {
         internalName: it.internalName,
         description: it.description || '',
         language: it.language || '',
+        publicTitleHe: it.publicTitleHe || '',
+        publicTitleEn: it.publicTitleEn || '',
+        publicDescriptionHe: it.publicDescriptionHe || '',
+        publicDescriptionEn: it.publicDescriptionEn || '',
         categoryIds: it.categories.map((c) => c.id),
         workspaceIds: it.workspaces.map((w) => w.id),
       });
@@ -342,6 +350,35 @@ export default function ContentItemView() {
             </label>
           </section>
 
+          {/* Customer/consumer-facing text. Separate from the internal fields
+              above on purpose: these are the only ones that ever leave GOS
+              (the Content API serves them to Challenge / Recruitment), so they
+              are a real He/En pair with the shared translate action. */}
+          <section className="rounded-2xl border border-gray-200 p-5">
+            <h2 className="text-[15px] font-semibold text-gray-900">טקסט ללקוח / למערכות אחרות</h2>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500">
+              רק הטקסט הזה נחשף החוצה. ההערות הפנימיות למעלה נשארות בתוך GOS.
+            </p>
+            <div className="mt-4 space-y-4">
+              <BilingualField
+                label="כותרת"
+                he={draft.publicTitleHe}
+                en={draft.publicTitleEn}
+                onHe={(v) => setDraft({ ...draft, publicTitleHe: v })}
+                onEn={(v) => setDraft({ ...draft, publicTitleEn: v })}
+              />
+              <BilingualField
+                label="תיאור"
+                render="textarea"
+                rows={3}
+                he={draft.publicDescriptionHe}
+                en={draft.publicDescriptionEn}
+                onHe={(v) => setDraft({ ...draft, publicDescriptionHe: v })}
+                onEn={(v) => setDraft({ ...draft, publicDescriptionEn: v })}
+              />
+            </div>
+          </section>
+
           <section className="rounded-2xl border border-gray-200 p-5">
             <h2 className="text-[15px] font-semibold text-gray-900">קטגוריות</h2>
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -403,17 +440,13 @@ export default function ContentItemView() {
             <dl className="mt-3 space-y-1.5 text-sm">
               <div className="flex justify-between gap-3">
                 <dt className="text-gray-500">סוג</dt>
-                <dd className="text-gray-900">{CONTENT_TYPE_LABELS[item.contentType] || item.contentType}</dd>
+                <dd className="text-gray-900">{contentTypeLabel(item.contentType)}</dd>
               </div>
               {m && (
                 <>
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">מקור</dt>
-                    <dd className="text-gray-900">
-                      {m.sourceProvider
-                        ? CONTENT_TYPE_LABELS[m.sourceProvider] || m.sourceProvider
-                        : 'אחסון שלנו'}
-                    </dd>
+                    <dd className="text-gray-900">{sourceLabel(m)}</dd>
                   </div>
                   {m.sourceTitle && (
                     <div className="flex justify-between gap-3">
@@ -421,6 +454,10 @@ export default function ContentItemView() {
                       <dd className="truncate text-gray-900" title={m.sourceTitle}>{m.sourceTitle}</dd>
                     </div>
                   )}
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-gray-500">אחסון</dt>
+                    <dd className="text-gray-900">{storageStrategyLabel(m.storageStrategy)}</dd>
+                  </div>
                   <div className="flex justify-between gap-3">
                     <dt className="text-gray-500">אורך</dt>
                     <dd className="text-gray-900" dir="ltr">{fmtDuration(m.durationSeconds)}</dd>

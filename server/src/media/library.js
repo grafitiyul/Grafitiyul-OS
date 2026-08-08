@@ -139,6 +139,8 @@ export async function createItem(client, data, { actorId = null } = {}) {
       language: data.language || null,
       publicTitleHe: String(data.publicTitleHe || '').trim() || null,
       publicTitleEn: String(data.publicTitleEn || '').trim() || null,
+      publicDescriptionHe: String(data.publicDescriptionHe || '').trim() || null,
+      publicDescriptionEn: String(data.publicDescriptionEn || '').trim() || null,
       createdById: actorId,
       updatedById: actorId,
     },
@@ -162,7 +164,13 @@ export async function updateItem(client, id, patch, { actorId = null } = {}) {
     must(CONTENT_TYPES.includes(patch.contentType), 'invalid_content_type');
     data.contentType = patch.contentType;
   }
-  for (const k of ['description', 'publicTitleHe', 'publicTitleEn']) {
+  for (const k of [
+    'description',
+    'publicTitleHe',
+    'publicTitleEn',
+    'publicDescriptionHe',
+    'publicDescriptionEn',
+  ]) {
     if (k in patch) data[k] = String(patch[k] || '').trim() || null;
   }
   if ('language' in patch) data.language = patch.language || null;
