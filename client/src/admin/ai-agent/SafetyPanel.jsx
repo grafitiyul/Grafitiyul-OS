@@ -15,23 +15,33 @@ export default function SafetyPanel({ safety, compact = false }) {
 
       <ul className="space-y-1.5">
         {safety.facts.map((f) => {
-          // A "yes" on a negative fact (can send by itself) is a WARNING, not a
-          // success. Colour follows meaning, never the boolean.
-          const good = f.negative ? !f.yes : f.yes;
+          // Colour follows MEANING, never the boolean:
+          //   negative fact + yes  → a real warning (it can send by itself)
+          //   neutral fact         → grey either way; it is informational, and
+          //                          alarming on it would devalue the red marks
+          //                          that genuinely matter
+          //   otherwise            → yes is good
+          const tone = f.neutral ? 'neutral' : (f.negative ? !f.yes : f.yes) ? 'good' : 'bad';
+          const icon = {
+            good: 'bg-emerald-100 text-emerald-700',
+            bad: 'bg-rose-100 text-rose-700',
+            neutral: 'bg-gray-100 text-gray-500',
+          }[tone];
+          const label = {
+            good: 'text-gray-800',
+            bad: 'text-rose-800 font-semibold',
+            neutral: 'text-gray-600',
+          }[tone];
           return (
             <li key={f.key} className="flex items-start gap-2">
               <span
                 aria-hidden
-                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${
-                  good ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-                }`}
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${icon}`}
               >
                 {f.yes ? '✓' : '✕'}
               </span>
               <span className="min-w-0">
-                <span className={`gos-detail ${good ? 'text-gray-800' : 'text-rose-800 font-semibold'}`}>
-                  {f.textHe}
-                </span>
+                <span className={`gos-detail ${label}`}>{f.textHe}</span>
                 {f.detailHe && <span className="gos-meta block">{f.detailHe}</span>}
               </span>
             </li>

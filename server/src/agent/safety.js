@@ -52,6 +52,10 @@ export function safetySummary(settings, matrix) {
     {
       key: 'shows_for_approval',
       yes: enabled && proposing.length > 0,
+      // Neither good nor bad: having no capability at approval is the CORRECT
+      // shadow state, not a fault. Rendering it as an alarm would train the
+      // operator to ignore the red marks that do matter.
+      neutral: true,
       textHe: 'מציג לך הצעות לאישור בתוך השיחה',
       detailHe: proposing.length
         ? proposing.map((c) => c.labelHe).join(', ')

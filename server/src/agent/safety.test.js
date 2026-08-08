@@ -74,6 +74,16 @@ test('the negative facts are rendered as negatives, so a "yes" reads as a warnin
   }
 });
 
+test('"shows for approval" is neutral — shadow-only is correct, not a fault', () => {
+  // Painting the correct starting state red would train the operator to ignore
+  // the red marks that actually matter.
+  const s = safetySummary({ enabled: true }, matrixWith());
+  const fact = factOf(s, 'shows_for_approval');
+  assert.equal(fact.yes, false);
+  assert.equal(fact.neutral, true);
+  assert.notEqual(fact.negative, true, 'it is not a danger either');
+});
+
 test('no write tool can execute without approval in the current configuration', () => {
   const s = safetySummary({ enabled: true }, matrixWith({ meeting_point: 'auto' }));
   assert.equal(s.canExecuteWithoutApproval, false);
