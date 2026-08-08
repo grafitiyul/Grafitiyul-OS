@@ -47,8 +47,10 @@ export default function AgentReview() {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h1 className="gos-title text-[18px]">לאישור</h1>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        {/* Matches the tab label — an operator should never wonder whether the
+            tab they clicked and the page they landed on are the same thing. */}
+        <h1 className="gos-title text-[18px]">הצעות</h1>
         <div className="ms-auto flex items-center gap-1">
           {FILTERS.map((f) => (
             <button
@@ -64,6 +66,11 @@ export default function AgentReview() {
           ))}
         </div>
       </div>
+
+      <p className="gos-meta mb-4 max-w-3xl">
+        <strong>ממתין לאישור</strong> = הסוכן מחכה להחלטה שלך, ושום דבר לא נשלח בלעדיה.
+        {' '}<strong>נרשם בצל</strong> = מה שהוא היה עונה, לרישום בלבד — לא הוצע ולא נשלח.
+      </p>
 
       {error && <div className="mb-3 rounded bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{error}</div>}
 
