@@ -533,7 +533,13 @@ app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
 // Standalone media galleries ("תיקיות תמונות וסרטונים") — the same engine as
 // the tour gallery above, without a TourEvent. Managed from CRM Settings; the
 // public customer view shares the token-derived /api/gallery router.
-app.use('/api/media/galleries', requireAdminAuth, mediaGalleriesRouter);
+// NOT '/api/media/galleries': the legacy asset router at '/api/media' owns a
+// GET '/:id', so that path was swallowed as mediaAsset id "galleries" and the
+// list endpoint answered 404 in production while every other verb worked.
+// A sibling path removes the ambiguity structurally instead of depending on
+// mount ORDER, which a later edit could silently undo. Sibling of
+// '/api/media-files'. Guarded by routeMounts.test.js.
+app.use('/api/media-galleries', requireAdminAuth, mediaGalleriesRouter);
 // ספריית תוכן — the operator surface for the Content Library.
 app.use('/api/content-library', requireAdminAuth, contentLibraryRouter);
 // THE canonical Content API for external consumers (Challenge / Recruitment).
