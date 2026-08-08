@@ -79,6 +79,12 @@ export default function CrmSettingsHome() {
           description="תוכן תפעולי לשימוש חוזר — נקודות מפגש/סיום ועוד — מקור אמת אחד, בהפניה."
         />
         <CategoryCard
+          to="/admin/settings/crm/media-galleries"
+          icon="🖼️"
+          title="תיקיות תמונות וסרטונים"
+          description="תיקיות מדיה ללקוח — קישור ציבורי, כותרות בעברית ובאנגלית, והרשאות צפייה/הורדה/העלאה."
+        />
+        <CategoryCard
           to="/admin/settings/crm/confirmation-email"
           icon="📧"
           title="מייל אישור"

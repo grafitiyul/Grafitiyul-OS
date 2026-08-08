@@ -29,6 +29,24 @@ import UploadPrimaryButton, {
 // badge is "קבוצתי" — a group tour genuinely has no single customer.
 const KIND_LABELS = { group_slot: 'קבוצתי' };
 
+// Every visible string of a STANDALONE gallery, in both languages. The media is
+// shared between them — only the wording changes. Tour galleries are Hebrew by
+// design and never read this.
+const GALLERY_UI_TEXT = {
+  he: {
+    switchTo: 'English',
+    switchLabel: 'עברית',
+    itemCount: (n) => `${n} תמונות וסרטונים`,
+    empty: 'אין עדיין מדיה בתיקייה.',
+  },
+  en: {
+    switchTo: 'עברית',
+    switchLabel: 'English',
+    itemCount: (n) => `${n} photos and videos`,
+    empty: 'Nothing here yet.',
+  },
+};
+
 // ONE brand band background — header and footer share it verbatim so the
 // page always reads as wrapped by the brand (they can never drift apart).
 const BRAND_BAND_BG = `linear-gradient(180deg, #141b2d 0%, ${BRAND_NAVY} 100%)`;
@@ -101,6 +119,11 @@ export default function CustomerGalleryPage() {
 
   const [data, setData] = useState(null);
   const [phase, setPhase] = useState('loading'); // loading | ready | gone | error
+  // Visitor-chosen language for a STANDALONE gallery. Tour galleries keep
+  // deriving their Hebrew headline from the tour and ignore this entirely.
+  // Starts null so the gallery's own default wins on first paint; once the
+  // visitor chooses, their choice sticks for the session.
+  const [lang, setLang] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [queueSnap, setQueueSnap] = useState(null);
   const [headerAway, setHeaderAway] = useState(false);
@@ -134,14 +157,14 @@ export default function CustomerGalleryPage() {
 
   const load = useCallback(async () => {
     try {
-      const d = await jsonFetch(base);
+      const d = await jsonFetch(lang ? `${base}?lang=${lang}` : base);
       setData(d);
       setPhase('ready');
       document.title = `${d.title} · גרפיטיול`;
     } catch (e) {
       setPhase(e.status === 404 ? 'gone' : 'error');
     }
-  }, [base]);
+  }, [base, lang]);
 
   useEffect(() => {
     load();
@@ -202,15 +225,30 @@ export default function CustomerGalleryPage() {
   const lightboxMedia = lightboxIndex != null ? media[lightboxIndex] : null;
   const hasMedia = media.length > 0;
 
+  // A standalone gallery carries its OWN bilingual text and has no tour
+  // metadata (no product, date, time or location) — so it renders a quieter
+  // header: title, optional subtitle, item count, and the language switch.
+  const isStandalone = data.kind === 'standalone';
+  const uiLang = isStandalone ? data.lang || 'he' : 'he';
+  const t = GALLERY_UI_TEXT[uiLang];
+
   // Headline per product rule: organization name when one exists, otherwise
   // the customer's name (customerLabel resolves that server-side).
-  const headline = [data.productName || data.title, data.customerLabel]
-    .filter(Boolean)
-    .join(' · ');
-  const kindLabel = KIND_LABELS[data.kind] || null;
+  const headline = isStandalone
+    ? data.title
+    : [data.productName || data.title, data.customerLabel].filter(Boolean).join(' · ');
+  const kindLabel = isStandalone ? null : KIND_LABELS[data.kind] || null;
 
   // Reading order the customer expects: where → when (date, time) → how much.
-  const metaParts = [
+  const metaParts = isStandalone
+    ? [
+        hasMedia && {
+          key: 'count',
+          icon: <PhotosIcon className="h-4 w-4" />,
+          text: t.itemCount(media.length),
+        },
+      ].filter(Boolean)
+    : [
     data.locationName && {
       key: 'loc',
       icon: <Icon name="pin" className="h-4 w-4" />,
@@ -238,7 +276,7 @@ export default function CustomerGalleryPage() {
   const uploadButton = () => <UploadPrimaryButton onClick={() => fileInputRef.current?.click()} />;
 
   return (
-    <div dir="rtl" className="min-h-screen bg-gray-50">
+    <div dir={uiLang === 'en' ? 'ltr' : 'rtl'} className="min-h-screen bg-gray-50">
       {/* Brand band — slim, dark navy, the official white lockup. Part of the
           brand, not a hero: the page's real content starts right below. */}
       <div className="flex justify-center px-4 py-5 sm:py-6" style={{ background: BRAND_BAND_BG }}>
@@ -248,9 +286,25 @@ export default function CustomerGalleryPage() {
       {/* Header — tour headline + ONE metadata row + actions. */}
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto max-w-6xl px-4 pb-6 pt-7 text-center sm:px-6">
+          {isStandalone && (
+            <div className="mb-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setLang(uiLang === 'en' ? 'he' : 'en')}
+                className="rounded-full border border-gray-300 px-3 py-1 text-[13px] font-medium text-gray-600 transition hover:border-gray-400 hover:text-gray-900"
+              >
+                {t.switchTo}
+              </button>
+            </div>
+          )}
           <h1 className="text-[23px] font-black leading-tight tracking-tight text-gray-900 sm:text-[27px]">
             {headline}
           </h1>
+          {isStandalone && data.subtitle && (
+            <p className="mx-auto mt-2 max-w-2xl text-[15px] leading-relaxed text-gray-500">
+              {data.subtitle}
+            </p>
+          )}
 
           <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 text-[13.5px] text-gray-500">
             {metaParts.map((p, i) => (
@@ -278,7 +332,11 @@ export default function CustomerGalleryPage() {
           {/* Actions — the upload is the star; download is the quiet option. */}
           <div ref={actionsRef} className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
             {data.canUpload && uploadButton()}
-            {hasMedia && (
+            {/* "Download all" builds a ZIP whose expiry is keyed on the tour, so
+                a standalone gallery has no way to clean one up yet. The server
+                refuses it; offering a button that always fails would be worse
+                than not offering it. Individual downloads still work. */}
+            {hasMedia && !isStandalone && (
               <DownloadAllButton
                 className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-3 text-[13.5px] font-semibold text-gray-600 transition hover:bg-gray-100 disabled:opacity-60"
                 endpoints={{

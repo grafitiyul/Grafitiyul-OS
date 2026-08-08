@@ -121,6 +121,8 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
+import MediaGalleriesPage from './admin/media/MediaGalleriesPage.jsx';
+import MediaGalleryWorkspace from './admin/media/MediaGalleryWorkspace.jsx';
 import ConfirmationEmailSettings from './admin/crm/settings/ConfirmationEmailSettings.jsx';
 import ConfirmationSnapshotView from './admin/confirmation/ConfirmationSnapshotView.jsx';
 import CommunicationPage from './admin/communication/CommunicationPage.jsx';
@@ -362,6 +364,8 @@ export default function App() {
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
+        <Route path="settings/crm/media-galleries" element={<MediaGalleriesPage />} />
+        <Route path="settings/crm/media-galleries/:id" element={<MediaGalleryWorkspace />} />
         {/* Confirmation Email (מייל אישור) — dedicated module settings. */}
         <Route path="settings/crm/confirmation-email" element={<ConfirmationEmailSettings />} />
         {/* Communication Center — נוסחים למייל + WhatsApp: full-width management

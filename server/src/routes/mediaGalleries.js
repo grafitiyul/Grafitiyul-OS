@@ -19,7 +19,7 @@ import {
 import { initiateGalleryUpload } from '../media/uploads.js';
 import { isGarbageCollectable, removeMediaFromGallery } from '../media/usage.js';
 import { GALLERY_AUDIT_ACTIONS, recordGalleryAudit } from '../media/audit.js';
-import { completeUpload, getUploadTargets } from '../tours/gallery/uploads.js';
+import { abortUpload, completeUpload, getUploadTargets } from '../tours/gallery/uploads.js';
 import { publicOrigin } from '../communication/context.js';
 
 // Operator surface for STANDALONE media galleries ("תיקיות תמונות וסרטונים").
@@ -266,6 +266,19 @@ router.post(
         createdByName: null,
       },
     });
+    if (result.error) return res.status(result.status || 409).json({ error: result.error });
+    res.json(result);
+  }),
+);
+
+router.post(
+  '/:id/uploads/:mediaId/abort',
+  handle(async (req, res) => {
+    const gallery = await loadStandalone(req, res);
+    if (!gallery) return;
+    const media = await galleryMediaRow(req, res, gallery);
+    if (!media) return;
+    const result = await abortUpload(prisma, media);
     if (result.error) return res.status(result.status || 409).json({ error: result.error });
     res.json(result);
   }),

@@ -1616,6 +1616,71 @@ export const api = {
 
   // Tour Gallery — per-TourEvent media on R2 (staff surface). Uploads go
   // DIRECTLY to R2; these endpoints only authorize/record/verify.
+  // Standalone media galleries ("תיקיות תמונות וסרטונים"). Same engine as
+  // tourGallery below, without a TourEvent — see server/src/media/.
+  mediaGalleries: {
+    list: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.search) q.set('search', params.search);
+      if (params.includeArchived) q.set('includeArchived', 'true');
+      const qs = q.toString();
+      return request(`/api/media/galleries${qs ? `?${qs}` : ''}`);
+    },
+    create: (data) =>
+      request('/api/media/galleries', { method: 'POST', body: JSON.stringify(data) }),
+    get: (id) => request(`/api/media/galleries/${id}`),
+    update: (id, data) =>
+      request(`/api/media/galleries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    setArchived: (id, archived) =>
+      request(`/api/media/galleries/${id}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived }),
+      }),
+    rotateLink: (id) =>
+      request(`/api/media/galleries/${id}/link/rotate`, { method: 'POST', body: '{}' }),
+    setLinkEnabled: (id, enabled) =>
+      request(`/api/media/galleries/${id}/link/enabled`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      }),
+    initiateUpload: (id, files) =>
+      request(`/api/media/galleries/${id}/uploads`, {
+        method: 'POST',
+        body: JSON.stringify({ files }),
+      }),
+    uploadUrls: (id, mediaId, body) =>
+      request(`/api/media/galleries/${id}/uploads/${mediaId}/urls`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    completeUpload: (id, mediaId, body) =>
+      request(`/api/media/galleries/${id}/uploads/${mediaId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    abortUpload: (id, mediaId) =>
+      request(`/api/media/galleries/${id}/uploads/${mediaId}/abort`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    reorder: (id, orderedIds) =>
+      request(`/api/media/galleries/${id}/media/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ orderedIds }),
+      }),
+    updateMedia: (id, mediaId, data) =>
+      request(`/api/media/galleries/${id}/media/${mediaId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    removeMedia: (id, mediaId, { deleteAsset = false } = {}) =>
+      request(
+        `/api/media/galleries/${id}/media/${mediaId}${deleteAsset ? '?deleteAsset=true' : ''}`,
+        { method: 'DELETE' },
+      ),
+    audit: (id) => request(`/api/media/galleries/${id}/audit`),
+  },
+
   tourGallery: {
     settings: () => request('/api/tour-gallery/settings'),
     updateSettings: (data) =>

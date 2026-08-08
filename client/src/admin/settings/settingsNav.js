@@ -31,6 +31,14 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/ticket-types': { label: 'סוגי כרטיסים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
+  '/admin/settings/crm/media-galleries': {
+    label: 'תיקיות תמונות וסרטונים',
+    parent: '/admin/settings/crm',
+  },
+  '/admin/settings/crm/media-galleries/:id': {
+    label: 'תיקיית מדיה',
+    parent: '/admin/settings/crm/media-galleries',
+  },
   '/admin/settings/crm/confirmation-email': { label: 'מייל אישור', parent: '/admin/settings/crm' },
   '/admin/settings/navigation': { label: 'ניהול התפריט', parent: '/admin/settings' },
   '/admin/settings/communication': { label: 'נוסחים למייל + WhatsApp', parent: '/admin/settings' },
