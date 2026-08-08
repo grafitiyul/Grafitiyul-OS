@@ -186,6 +186,20 @@ export const MODULE_REGISTRY = [
     management: true,
     description: 'עמודי תוכן של האתר הציבורי — כתיבה, פרסום וגרסאות.',
   },
+  // סוכן AI — the WhatsApp agent's MANAGEMENT surface. Daily work stays in the
+  // WhatsApp inbox; this module is where its knowledge, authority and quality
+  // are governed. Ships out of the rail (like every management module) and is
+  // always reachable from Settings.
+  {
+    key: 'ai-agent',
+    to: '/admin/ai-agent',
+    label: 'סוכן AI',
+    glyph: '🤖',
+    railGroup: 'utility',
+    defaultInNav: false,
+    management: true,
+    description: 'הסוכן שעונה בוואטסאפ — ידע, הרשאות, אישור תשובות ואיכות.',
+  },
 ];
 
 // Back-compat exports. The rail's two groups are now RESOLVED at runtime from

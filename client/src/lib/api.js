@@ -2040,6 +2040,74 @@ export const api = {
         body: JSON.stringify(body),
       }),
   },
+  // סוכן AI — the controlled operational WhatsApp agent.
+  //
+  // Note what is NOT here: there is no "run the agent on this customer" or
+  // "enable auto-reply" call. The only method that can reach a customer is
+  // proposalSend, which requires a specific proposal id that a human is looking
+  // at. Everything else reads, configures, or records a human decision.
+  aiAgent: {
+    // Configuration + authority
+    settings: () => request('/api/ai-agent/settings'),
+    saveSettings: (body) => request('/api/ai-agent/settings', { method: 'PUT', body: JSON.stringify(body) }),
+    capabilities: () => request('/api/ai-agent/capabilities'),
+    setCapabilityMode: (key, body) =>
+      request(`/api/ai-agent/capabilities/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+
+    // Knowledge
+    knowledge: (params) => request(`/api/ai-agent/knowledge${qs(params)}`),
+    knowledgeCreate: (body) => request('/api/ai-agent/knowledge', { method: 'POST', body: JSON.stringify(body) }),
+    knowledgeUpdate: (id, body) => request(`/api/ai-agent/knowledge/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    knowledgeStatus: (id, status) =>
+      request(`/api/ai-agent/knowledge/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+
+    // Playbook
+    playbook: (params) => request(`/api/ai-agent/playbook${qs(params)}`),
+    playbookCreate: (body) => request('/api/ai-agent/playbook', { method: 'POST', body: JSON.stringify(body) }),
+    playbookUpdate: (id, body) => request(`/api/ai-agent/playbook/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    playbookStatus: (id, status) =>
+      request(`/api/ai-agent/playbook/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+
+    // Style
+    style: () => request('/api/ai-agent/style'),
+    styleUpdate: (id, body) => request(`/api/ai-agent/style/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    styleStatus: (id, status) =>
+      request(`/api/ai-agent/style/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+
+    // History / provenance
+    runs: (params) => request(`/api/ai-agent/runs${qs(params)}`),
+    run: (id) => request(`/api/ai-agent/runs/${id}`),
+    replay: (chatId) => request('/api/ai-agent/runs/replay', { method: 'POST', body: JSON.stringify({ chatId }) }),
+
+    // Proposals — the operator's decisions
+    proposals: (params) => request(`/api/ai-agent/proposals${qs(params)}`),
+    proposal: (id) => request(`/api/ai-agent/proposals/${id}`),
+    proposalForChat: (chatId) => request(`/api/ai-agent/proposals/for-chat/${chatId}`),
+    proposalSend: (id, text) =>
+      request(`/api/ai-agent/proposals/${id}/send`, { method: 'POST', body: JSON.stringify({ text: text ?? null }) }),
+    proposalReject: (id, reason) =>
+      request(`/api/ai-agent/proposals/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason: reason || null }) }),
+    proposalAction: (id, toolKey, input) =>
+      request(`/api/ai-agent/proposals/${id}/actions/${encodeURIComponent(toolKey)}`, {
+        method: 'POST',
+        body: JSON.stringify({ input: input || {} }),
+      }),
+
+    // Learning
+    insights: (params) => request(`/api/ai-agent/insights${qs(params)}`),
+    insightsGenerate: (days) =>
+      request('/api/ai-agent/insights/generate', { method: 'POST', body: JSON.stringify({ days }) }),
+    insightApprove: (id, body) =>
+      request(`/api/ai-agent/insights/${id}/approve`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    insightReject: (id, note) =>
+      request(`/api/ai-agent/insights/${id}/reject`, { method: 'POST', body: JSON.stringify({ note: note || null }) }),
+
+    // Evaluation
+    metrics: (params) => request(`/api/ai-agent/metrics${qs(params)}`),
+  },
   // בקרה (Operations Control) — the canonical operational-issue surface.
   // Mutations that already have endpoints (whatsapp.scheduledCancel,
   // deals.applyTourUpdate…) are called directly by the dashboard's action

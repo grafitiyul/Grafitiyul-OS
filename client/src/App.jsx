@@ -66,6 +66,14 @@ import CollectionReviewPage from './admin/collection/CollectionReviewPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
 import ControlPage from './admin/control/ControlPage.jsx';
+// סוכן AI — management surface for the controlled WhatsApp agent.
+import AiAgentLayout from './admin/ai-agent/AiAgentLayout.jsx';
+import AgentDashboard from './admin/ai-agent/AgentDashboard.jsx';
+import AgentReview from './admin/ai-agent/AgentReview.jsx';
+import AgentKnowledge from './admin/ai-agent/AgentKnowledge.jsx';
+import AgentLearning from './admin/ai-agent/AgentLearning.jsx';
+import AgentAuthority from './admin/ai-agent/AgentAuthority.jsx';
+import AgentHistory from './admin/ai-agent/AgentHistory.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
@@ -201,6 +209,17 @@ export default function App() {
             <Route index element={<ApprovalsIndexView />} />
             <Route path=":id" element={<ApprovalDetail />} />
           </Route>
+        </Route>
+        {/* סוכן AI — the WhatsApp agent's management surface. Daily approval
+            happens inside the conversation; this is where its knowledge,
+            authority and quality are governed. */}
+        <Route path="ai-agent" element={<AiAgentLayout />}>
+          <Route index element={<AgentDashboard />} />
+          <Route path="review" element={<AgentReview />} />
+          <Route path="knowledge" element={<AgentKnowledge />} />
+          <Route path="learning" element={<AgentLearning />} />
+          <Route path="authority" element={<AgentAuthority />} />
+          <Route path="history" element={<AgentHistory />} />
         </Route>
         {/* דפי אתר — website content pages managed in GOS */}
         <Route path="site-pages" element={<SitePagesPage />} />

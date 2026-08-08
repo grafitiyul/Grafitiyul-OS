@@ -131,6 +131,10 @@ import publicReservationsRouter from './routes/publicReservations.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import { startAutoTaskWorker } from './tasks/autoTaskWorker.js';
+// סוכן AI — the controlled operational WhatsApp agent. The sweep is a no-op
+// until an operator enables it in settings (AgentSettings.enabled ships false).
+import aiAgentRouter from './routes/aiAgent.js';
+import { startAgentSweep } from './agent/sweep.js';
 import './control/detectors/index.js';
 // Automation Registry — importing the definitions registers every automation.
 // validateRegistry() then runs at startup (see below): a bad definition must
@@ -531,6 +535,11 @@ app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 // subsystem reports problems into OperationalIssue (server/src/control/);
 // this router serves the dashboard + acknowledge/recheck/server actions.
 app.use('/api/control', requireAdminAuth, controlRouter);
+// סוכן AI — management surface for the WhatsApp agent: authority, knowledge,
+// playbook, style, runs, proposals and the learning inbox. Nothing here can
+// send a message except POST /proposals/:id/send, which additionally requires
+// an identified operator (requireAdminUser inside the router).
+app.use('/api/ai-agent', requireAdminAuth, aiAgentRouter);
 app.use('/api/automations', requireAdminAuth, automationsRouter);
 app.use('/api/queue', requireAdminAuth, queueRouter);
 app.use('/api/management-tasks', requireAdminAuth, reviewItemsRouter);
@@ -799,6 +808,11 @@ app.listen(port, () => {
   // deal with no active task gets one פולואפ task for the new day. 5m tick;
   // idempotent per (deal, day), so restarts/reruns never duplicate.
   startAutoTaskWorker(console);
+  // סוכן AI shadow sweep — watches the WhatsApp mirror for new customer turns
+  // and records what the agent WOULD answer. 60s tick, and a hard no-op while
+  // AgentSettings.enabled is false (which is how it ships). It can never send:
+  // the only send path is an authenticated operator approving a proposal.
+  startAgentSweep(console);
   // Communication Center deliveries — claim-based 60s tick: windows,
   // dependency waits, rendering, channel sends, retries.
   startCommunicationWorker(console);

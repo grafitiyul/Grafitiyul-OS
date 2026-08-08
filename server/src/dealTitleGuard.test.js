@@ -52,6 +52,13 @@ const CUSTOMER_FACING = [
   // Tour-change impact — the affected-customers list Part 4 ("עדכן לקוחות")
   // will feed into customer notifications; guarded BEFORE it goes customer-facing.
   'server/src/tours/changeImpact.js',
+  // סוכן AI — the agent DRAFTS customer-facing WhatsApp text. Its Context Pack
+  // must never carry Deal.title, or the internal deal name leaks into a message.
+  // A source scan is the weaker half of the guarantee here (agent/runner.js
+  // reads the title deliberately, to feed the runtime guard that DETECTS a
+  // leak); the strong half is agent/contextPack.noTitle.test.js, which asserts
+  // on the built pack itself rather than on how the code is spelled.
+  'server/src/agent',
   // Agent reservations — public /r/:token form + document composition.
   'server/src/reservations',
   // Quote — customer-facing quote documents.

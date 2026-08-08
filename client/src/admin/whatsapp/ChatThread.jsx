@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import MessageBubble from './MessageBubble.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ScheduledStrip from './ScheduledStrip.jsx';
+import AgentSuggestion from './AgentSuggestion.jsx';
 import { WHATSAPP_MESSAGE_SENT_EVENT } from './composerEvents.js';
 
 // Read view of one WhatsApp chat — the single thread component EVERY surface
@@ -605,6 +606,11 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       )}
       {canSend && (
         <>
+          {/* סוכן AI — the agent's suggestion for THIS conversation, directly
+              above the composer where the operator already is. Renders nothing
+              when there is no suggestion (the common case), and is keyed on the
+              chat id so a suggestion can never leak into the next conversation. */}
+          {!isDraft && <AgentSuggestion key={chat.id} chatId={chat.id} />}
           {!isDraft && <ScheduledStrip chat={chat} nonce={scheduledNonce} dealId={dealId} />}
           <ChatComposer
             chat={chat}

@@ -19,6 +19,7 @@ import { ACCOUNT_ORDER_BY, listSelectableAccounts } from '../whatsapp/senderAcco
 import { stampManualSend } from '../whatsapp/sendPace.js';
 import { phoneToJid } from '../whatsapp/send.js';
 import { ensureInitialCallTask } from '../tasks/autoTasks.js';
+import { markBypassedByOperatorReply } from '../agent/proposals.js';
 
 // MANUAL sends (this router's composer endpoints) are never paced — an operator
 // in a live conversation waits for nobody. They do STAMP the account's pacing
@@ -1487,6 +1488,10 @@ router.post(
         if (row) message = toClientMessage(row);
       }
       noteManualSend(chat.accountId);
+      // The operator answered themselves — any pending AI suggestion on this
+      // chat becomes 'bypassed' (see agent/proposals.js). Fire-and-forget:
+      // agent bookkeeping must never be able to fail a real send.
+      markBypassedByOperatorReply({ chatId: chat.id }).catch(() => undefined);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {
@@ -1544,6 +1549,10 @@ router.post(
         if (row) message = toClientMessage(row);
       }
       noteManualSend(chat.accountId);
+      // The operator answered themselves — any pending AI suggestion on this
+      // chat becomes 'bypassed' (see agent/proposals.js). Fire-and-forget:
+      // agent bookkeeping must never be able to fail a real send.
+      markBypassedByOperatorReply({ chatId: chat.id }).catch(() => undefined);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {
@@ -1604,6 +1613,10 @@ router.post(
         if (row) message = toClientMessage(row);
       }
       noteManualSend(chat.accountId);
+      // The operator answered themselves — any pending AI suggestion on this
+      // chat becomes 'bypassed' (see agent/proposals.js). Fire-and-forget:
+      // agent bookkeeping must never be able to fail a real send.
+      markBypassedByOperatorReply({ chatId: chat.id }).catch(() => undefined);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {

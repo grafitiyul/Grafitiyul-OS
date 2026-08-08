@@ -7050,3 +7050,299 @@ model SitePageVersion {
   @@unique([pageId, versionNo])
   @@index([pageId, publishedAt])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// סוכן AI — the controlled operational WhatsApp agent.
+// See docs/architecture/GOS-ai-agent-architecture-2026-08-08.md
+//
+// Design invariants encoded here:
+//   • CODE owns identity (capability + tool definitions live in
+//     server/src/agent/capabilities|tools). The database owns only the
+//     operator-controlled MODE, so a stored row can never name a capability
+//     that no longer exists, and adding one stays a one-line code change.
+//   • Nothing is hard-deleted. Knowledge / playbook / style / insights ARCHIVE,
+//     so a historical run's provenance stays readable forever.
+//   • RAW EVIDENCE (AgentProposal) → PROPOSED INSIGHT (AgentInsight) → APPROVED
+//     RULE (knowledge/playbook/style) are three separate concepts. Nothing
+//     crosses a boundary without a human action.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Singleton operational configuration. `enabled` is a KILL SWITCH FOR ANALYSIS —
+// deliberately NOT an authority control. Turning it on grants no permission to
+// anything: every capability still carries its own mode (AgentCapabilityState).
+model AgentSettings {
+  id      String  @id @default("singleton")
+  // false = the sweep does nothing at all. Ships OFF.
+  enabled Boolean @default(false)
+  // Provider/model identity, recorded on every run for evaluation.
+  provider String @default("anthropic")
+  model    String @default("claude-opus-5")
+  effort   String @default("medium") // low | medium | high | xhigh | max
+  // Eligibility knobs (V1 defaults are the conservative ones).
+  includeGroups        Boolean @default(false)
+  // Only analyse messages this fresh — protects against a history-sync backfill
+  // suddenly queueing thousands of runs.
+  maxMessageAgeMinutes Int     @default(180)
+  // Bounded conversation context handed to the model.
+  recentMessageCount   Int     @default(20)
+  // Hard ceiling on runs per sweep pass — cost + provider rate-limit protection.
+  maxRunsPerSweep      Int     @default(10)
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+}
+
+// Operator-chosen authority for ONE code-defined capability. `key` must exist in
+// agent/capabilities/registry.js; unknown keys are ignored on read and rejected
+// on write. `mode` is additionally clamped to the definition's maxMode by the
+// service — a never-auto family cannot be escalated from the UI or the API.
+model AgentCapabilityState {
+  key  String @id
+  mode String // disabled | shadow | approval | auto
+  // Optional operator conditions, e.g. { maxAmountMinor, dealStatuses }.
+  conditions  Json?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+}
+
+// APPROVED BUSINESS FACT. The agent may state a business fact only from canonical
+// live GOS data or from an APPROVED row here — otherwise it escalates.
+model AgentKnowledgeItem {
+  id       String @id @default(cuid())
+  title    String
+  body     String
+  category String // meeting_point | logistics | policy | product | pricing_rules | general
+  // he | en | both — which sending language this fact may be used for.
+  language String @default("both")
+  // Applicability scope, e.g. { productIds:[], variantIds:[], cityIds:[] }.
+  // null/empty = applies everywhere.
+  scope     Json?
+  status    String @default("draft") // draft | approved | archived
+  sortOrder Int    @default(0)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  archivedAt   DateTime?
+  // Set when an approved AgentInsight created or edited this row.
+  sourceInsightId String?
+
+  @@index([status, category])
+}
+
+// APPROVED WAY OF WORKING. Knowledge answers "what is true"; a playbook rule
+// answers "how do we work". Kept as structured when/then rather than prose so the
+// prompt stays composable and an operator can edit one rule without touching a
+// giant document.
+model AgentPlaybookRule {
+  id       String @id @default(cuid())
+  title    String
+  whenText String // the situation, in business language
+  thenText String // what we do about it
+  category String // qualification | pricing | objection | follow_up | service | logistics
+  language String @default("both")
+  scope    Json?
+  priority Int    @default(100) // lower = considered first
+  status   String @default("draft") // draft | approved | archived
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  archivedAt   DateTime?
+  sourceInsightId String?
+
+  @@index([status, category])
+}
+
+// HOW WE SOUND. Explicitly structured (not one prose blob) so an operator can
+// change "we do not use emojis in service replies" without rewriting a paragraph,
+// and so a future second profile is a row rather than a refactor.
+model AgentStyleProfile {
+  id String @id @default(cuid())
+  // Stable machine key, e.g. 'he_sales'. Resolution is (language, audience).
+  key      String @unique
+  name     String
+  language String // he | en
+  audience String // sales | service
+  // Structured rules — shape owned by agent/style.js:
+  // { greeting, messageLength, punctuation, emoji, questionsPerMessage,
+  //   directness, phrasesToUse: [], phrasesToAvoid: [], notes }
+  rules     Json
+  status    String  @default("draft") // draft | approved | archived
+  isDefault Boolean @default(false)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  archivedAt   DateTime?
+  sourceInsightId String?
+
+  @@index([status, language, audience])
+}
+
+// A frozen, content-addressed copy of the ACTIVE configuration (approved
+// knowledge + playbook + style + capability modes) at the moment a run used it.
+// Same configuration → same hash → one row reused, so this table grows only when
+// the operator actually changes something. This is what makes "which rules were
+// active when this historical answer was generated" answerable forever, and what
+// makes archive-instead-of-delete safe.
+model AgentConfigSnapshot {
+  id         String   @id @default(cuid())
+  hash       String   @unique
+  payload    Json
+  itemCounts Json?
+  createdAt  DateTime @default(now())
+
+  runs AgentRun[]
+
+  @@index([createdAt])
+}
+
+// ONE analysis attempt. Every attempt ends as a row with an explicit status —
+// "nothing happened" is never an acceptable outcome to leave unrecorded.
+model AgentRun {
+  id      String @id @default(cuid())
+  trigger String // inbound_message | manual | replay
+  status  String @default("pending") // pending | succeeded | failed | skipped
+
+  // What it was about. All LOOSE keys except the chat/message pair, which is the
+  // idempotency identity: re-seeing a mirrored message can never run twice.
+  accountId        String?
+  chatId           String?
+  triggerMessageId String?
+  contactId        String?
+  dealId           String?
+
+  // The effective authority at run time, frozen (a later config change must not
+  // rewrite how a historical run was governed).
+  authorityMode String? // disabled | shadow | approval | auto
+
+  // Provider / prompt / configuration provenance.
+  provider         String?
+  model            String?
+  promptVersion    String?
+  configSnapshotId String?
+  configSnapshot   AgentConfigSnapshot? @relation(fields: [configSnapshotId], references: [id])
+
+  // Which context sources actually supplied data, e.g. ['contact','deal','tour'].
+  contextSources Json?
+  // Bounded, structured context handed to the model — the "why?" evidence.
+  contextPack    Json?
+
+  // Outcome.
+  intent           String?
+  capabilityKey    String?
+  confidence       String? // strong | moderate | weak — never a fake percentage
+  escalate         Boolean @default(false)
+  escalationReason String?
+  // Mechanical guard verdicts, e.g. [{ code, detail }].
+  guardFindings    Json?
+
+  // Observability.
+  latencyMs    Int?
+  inputTokens  Int?
+  outputTokens Int?
+  errorCode    String?
+  errorMessage String?
+  skipReason   String?
+
+  createdAt DateTime @default(now())
+
+  proposals AgentProposal[]
+
+  @@unique([chatId, triggerMessageId])
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([chatId, createdAt])
+  @@index([dealId])
+}
+
+// What the agent would say / do, and what a human actually did about it.
+//
+// proposedText is IMMUTABLE. An operator edit writes finalText — we need both
+// versions to evaluate quality, and overwriting the proposal destroys the only
+// training signal the whole module exists to collect.
+model AgentProposal {
+  id    String   @id @default(cuid())
+  runId String
+  run   AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  kind          String  @default("reply") // reply | action
+  capabilityKey String?
+
+  proposedText    String?
+  // [{ toolKey, input, preview, risk, requiresApproval }]
+  proposedActions Json?
+
+  // open        — awaiting a human (APPROVAL mode)
+  // shadow      — recorded only; SHADOW mode never offers an action
+  // sent_unchanged / sent_edited / rejected — the human verdict
+  // bypassed    — the operator answered without using the suggestion
+  // superseded  — a newer proposal replaced it
+  // stale       — context moved; can never be sent
+  // expired     — aged out unhandled
+  status String @default("shadow")
+
+  finalText    String?
+  handledById  String?
+  handledAt    DateTime?
+  rejectReason String?
+
+  // Staleness fingerprint, captured at proposal time. A proposal whose
+  // conversation or deal moved on is not safe to send.
+  fpLastMessageId String?
+  fpLastMessageAt DateTime?
+  fpMessageCount  Int?
+  fpDealUpdatedAt DateTime?
+
+  // Minted per proposal. The send endpoint claims it, so two operators
+  // approving the same suggestion produce exactly one outbound message.
+  idempotencyKey String @unique
+
+  // Set once a send actually happened, through the canonical customer queue.
+  scheduledMessageId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([runId])
+  @@index([capabilityKey, status])
+}
+
+// A PROPOSED change to knowledge/playbook/style, derived from repeated evidence.
+// It is never applied automatically: only an approved insight can change an
+// active rule, and approval writes a NEW draft row rather than mutating history.
+model AgentInsight {
+  id             String @id @default(cuid())
+  category       String // knowledge | playbook | style
+  title          String
+  proposedChange String
+  rationale      String?
+  // Human-readable strength, never a fake mathematical confidence.
+  strength      String @default("initial") // initial | moderate | strong
+  evidenceCount Int    @default(0)
+  // [{ proposalId, runId, excerpt }] — the actual cases behind the claim.
+  evidenceRefs  Json?
+
+  status String @default("open") // open | approved | rejected | applied
+
+  // Where an approval landed (the created draft row), so provenance is two-way.
+  appliedRecordId String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  reviewNote      String?
+
+  generatedByRunId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, category])
+  @@index([createdAt])
+}
