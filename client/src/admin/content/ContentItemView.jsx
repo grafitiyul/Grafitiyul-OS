@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import BilingualField from '../common/BilingualField.jsx';
+import WorldCategoryPicker from './WorldCategoryPicker.jsx';
 import {
   CONTENT_TYPE_LABELS,
   contentTypeLabel,
@@ -59,7 +60,52 @@ function Player({ playback, media }) {
   );
 }
 
-function TranscriptPanel({ item, onChanged }) {
+const STAGE_TEXT = {
+  preparing_media: 'מכין את הקובץ…',
+  chunking: 'מחלץ אודיו ומפצל…',
+  transcribing: 'מתמלל',
+  assembling: 'מרכיב תמלול…',
+};
+
+// Live progress for a running job. Percentages are shown ONLY once the chunk
+// plan exists — before that there is nothing truthful to compute one from.
+function TranscriptionProgress({ progress, onCancel }) {
+  const j = progress?.job;
+  if (!j || !['queued', 'running'].includes(j.status)) return null;
+  const stage = STAGE_TEXT[j.stage] || 'בתור…';
+  const hasPlan = j.total > 0;
+  const pct = hasPlan ? Math.round((j.done / j.total) * 100) : null;
+  return (
+    <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-blue-900">
+          {j.stage === 'transcribing' && hasPlan
+            ? `${stage} ${j.done} מתוך ${j.total}…`
+            : stage}
+        </span>
+        <button
+          onClick={onCancel}
+          disabled={j.cancelRequested}
+          className="rounded border border-blue-300 px-2 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+        >
+          {j.cancelRequested ? 'מבטל…' : 'בטל'}
+        </button>
+      </div>
+      {pct !== null && (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-blue-100" dir="ltr">
+          <div className="h-full rounded-full bg-blue-600 transition-[width]" style={{ width: pct + '%' }} />
+        </div>
+      )}
+      {j.chunks?.failed > 0 && (
+        <p className="mt-2 text-xs text-amber-800">
+          {j.chunks.failed} קטעים נכשלו — ינוסו שוב; רק הם, לא כל הקובץ.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TranscriptPanel({ item, onChanged, progress, onCancel }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -123,6 +169,7 @@ function TranscriptPanel({ item, onChanged }) {
           {reasonText(state.error) || state.error}
         </p>
       )}
+      <TranscriptionProgress progress={progress} onCancel={onCancel} />
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       {t ? (
@@ -183,6 +230,10 @@ export default function ContentItemView() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const pollRef = useRef(null);
+  // What removing a world would cost, fetched from the server so the warning
+  // reflects the real link set rather than a client-side guess.
+  const [worldLoss, setWorldLoss] = useState([]);
+  const [progress, setProgress] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -200,6 +251,7 @@ export default function ContentItemView() {
         publicTitleEn: it.publicTitleEn || '',
         publicDescriptionHe: it.publicDescriptionHe || '',
         publicDescriptionEn: it.publicDescriptionEn || '',
+        worldIds: (it.worlds || []).map((w) => w.id),
         categoryIds: it.categories.map((c) => c.id),
         workspaceIds: it.workspaces.map((w) => w.id),
       });
@@ -215,15 +267,46 @@ export default function ContentItemView() {
     load();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // While a transcription job is live, poll — the worker runs out of band and
-  // the operator should see it land without refreshing.
+  // While a transcription job is live, poll the progress endpoint. Chunk-level
+  // progress changes far more often than the item itself, so this is a small
+  // dedicated call rather than reloading the whole item every few seconds.
   useEffect(() => {
-    const s = item?.transcriptState?.status;
-    const live = s === 'queued' || s === 'processing';
+    if (!item?.mediaId) return undefined;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const p2 = await api.contentLibrary.transcriptionProgress(item.id);
+        if (!alive) return;
+        setProgress(p2);
+        const st = p2?.job?.status;
+        // The job just settled — reload the item so the transcript appears.
+        if (st && !['queued', 'running'].includes(st) && progress?.job && ['queued','running'].includes(progress.job.status)) {
+          load();
+        }
+      } catch { /* transient */ }
+    };
+    tick();
+    const live = ['queued', 'running'].includes(progress?.job?.status) ||
+      ['queued', 'processing'].includes(item?.transcriptState?.status);
     clearInterval(pollRef.current);
-    if (live) pollRef.current = setInterval(load, 10_000);
-    return () => clearInterval(pollRef.current);
-  }, [item?.transcriptState?.status, load]);
+    if (live) pollRef.current = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(pollRef.current); };
+  }, [item?.id, item?.transcriptState?.status, progress?.job?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ask the server what a pending world change would remove, whenever the
+  // selection differs from what is saved.
+  useEffect(() => {
+    if (!item || !draft) return undefined;
+    const saved = (item.worlds || []).map((w) => w.id).sort().join(',');
+    const next = [...draft.worldIds].sort().join(',');
+    if (saved === next) { setWorldLoss([]); return undefined; }
+    let alive = true;
+    api.contentLibrary
+      .worldChangeImpact(item.id, draft.worldIds)
+      .then((r) => { if (alive) setWorldLoss(r.categoriesRemoved || []); })
+      .catch(() => { if (alive) setWorldLoss([]); });
+    return () => { alive = false; };
+  }, [item, draft?.worldIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save() {
     setSaving(true);
@@ -312,7 +395,15 @@ export default function ContentItemView() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Player playback={item.playback} media={m} />
-          <TranscriptPanel item={item} onChanged={load} />
+          <TranscriptPanel
+            item={item}
+            onChanged={load}
+            progress={progress}
+            onCancel={async () => {
+              await api.contentLibrary.cancelTranscription(item.id);
+              setProgress((p3) => (p3?.job ? { job: { ...p3.job, cancelRequested: true } } : p3));
+            }}
+          />
         </div>
 
         <div className="space-y-6">
@@ -380,33 +471,16 @@ export default function ContentItemView() {
           </section>
 
           <section className="rounded-2xl border border-gray-200 p-5">
-            <h2 className="text-[15px] font-semibold text-gray-900">קטגוריות</h2>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {(meta?.categories || []).map((c) => {
-                const on = draft.categoryIds.includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() =>
-                      setDraft({
-                        ...draft,
-                        categoryIds: on
-                          ? draft.categoryIds.filter((x) => x !== c.id)
-                          : [...draft.categoryIds, c.id],
-                      })
-                    }
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${
-                      on ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-600'
-                    }`}
-                  >
-                    {c.nameHe}
-                  </button>
-                );
-              })}
-              {(meta?.categories || []).length === 0 && (
-                <p className="text-sm text-gray-500">אין קטגוריות עדיין.</p>
-              )}
-            </div>
+            <h2 className="mb-3 text-[15px] font-semibold text-gray-900">שיוך</h2>
+            <WorldCategoryPicker
+              worlds={meta?.worlds || []}
+              categories={meta?.categories || []}
+              selectedWorldIds={draft.worldIds}
+              selectedCategoryIds={draft.categoryIds}
+              pendingLoss={worldLoss}
+              onWorldsChange={(v2) => setDraft({ ...draft, worldIds: v2 })}
+              onCategoriesChange={(v2) => setDraft({ ...draft, categoryIds: v2 })}
+            />
           </section>
 
           <section className="rounded-2xl border border-gray-200 p-5">

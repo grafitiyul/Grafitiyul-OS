@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { fmtDuration, reasonText } from './contentLabels.js';
+import WorldCategoryPicker from './WorldCategoryPicker.jsx';
 
 // Import from an external source.
 //
@@ -22,6 +23,7 @@ export default function ContentImportPage() {
   const [state, setState] = useState({ videos: [], loading: true, error: null, cursor: null });
   const [selected, setSelected] = useState({});
   const [names, setNames] = useState({});
+  const [worldIds, setWorldIds] = useState([]);
   const [categoryIds, setCategoryIds] = useState([]);
   const [strategy, setStrategy] = useState('reference');
   const [channelInput, setChannelInput] = useState('');
@@ -86,6 +88,7 @@ export default function ContentImportPage() {
       const res = await api.contentLibrary.import({
         provider: source,
         strategy,
+        worldIds,
         categoryIds,
         videos: chosen.map((v) => ({ ...v, internalName: names[v.externalId] || v.title })),
       });
@@ -210,33 +213,23 @@ export default function ContentImportPage() {
               )}
             </div>
 
-            {(meta?.categories?.length || 0) > 0 && (
-              <div>
-                <span className="block text-sm font-medium text-gray-700">קטגוריות לפריטים המיובאים</span>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {meta.categories.map((c) => {
-                    const on = categoryIds.includes(c.id);
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() =>
-                          setCategoryIds(on ? categoryIds.filter((x) => x !== c.id) : [...categoryIds, c.id])
-                        }
-                        className={`rounded-full px-3 py-1 text-xs font-medium ${
-                          on ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-600'
-                        }`}
-                      >
-                        {c.nameHe}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <div className="min-w-[320px]">
+              {/* Bulk default for the whole import: world first, then that
+                  world's categories. Each item can still be edited afterwards. */}
+              <WorldCategoryPicker
+                worlds={meta?.worlds || []}
+                categories={meta?.categories || []}
+                selectedWorldIds={worldIds}
+                selectedCategoryIds={categoryIds}
+                onWorldsChange={setWorldIds}
+                onCategoriesChange={setCategoryIds}
+                compact
+              />
+            </div>
 
             <button
               onClick={runImport}
-              disabled={!chosen.length || importing}
+              disabled={!chosen.length || !worldIds.length || importing}
               className="ms-auto rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
             >
               {importing ? 'מייבא…' : `ייבא ${chosen.length || ''}`}

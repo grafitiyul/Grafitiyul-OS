@@ -30,6 +30,8 @@ import * as vimeo from '../media/providers/vimeo.js';
 import { importExternalVideos } from '../media/imports.js';
 import { isGarbageCollectable } from '../media/usage.js';
 import { createServiceToken, revokeServiceToken } from '../media/serviceAuth.js';
+import { categoriesLostByWorldChange, listWorlds } from '../media/worlds.js';
+import { JOB_STATUS } from '../media/jobs.js';
 
 // ספריית תוכן — operator API. Mounted behind requireAdminAuth.
 
@@ -102,10 +104,20 @@ function itemDto(item) {
     archived: item.archived,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
+    worlds: (item.worlds || []).map((w) => ({
+      id: w.world.id,
+      key: w.world.key,
+      nameHe: w.world.nameHe,
+      nameEn: w.world.nameEn,
+    })),
+    // Every category carries its world, so a card showing two categories from
+    // two worlds can never be ambiguous about which belongs where.
     categories: (item.categories || []).map((c) => ({
       id: c.category.id,
       nameHe: c.category.nameHe,
       nameEn: c.category.nameEn,
+      worldId: c.category.worldId,
+      worldKey: c.category.world?.key || null,
     })),
     workspaces: (item.workspaces || []).map((w) => ({
       id: w.workspace.id,
@@ -123,7 +135,8 @@ function itemDto(item) {
 router.get(
   '/meta',
   handle(async (req, res) => {
-    const [categories, workspaces, vimeoCaps] = await Promise.all([
+    const [worlds, categories, workspaces, vimeoCaps] = await Promise.all([
+      listWorlds(prisma),
       listCategories(prisma),
       prisma.contentWorkspace.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
       // The live capability probe — never a guess. Cheap enough per settings
@@ -137,6 +150,10 @@ router.get(
     ]);
     res.json({
       contentTypes: CONTENT_TYPES,
+      // WORLD FIRST: the client renders worlds, then only the categories of the
+      // selected world(s). Each category carries its world so they can never be
+      // presented as one undifferentiated list.
+      worlds,
       categories,
       workspaces,
       providers: {
@@ -156,6 +173,7 @@ router.get(
     res.json({
       categories: await listCategories(prisma, {
         includeArchived: String(req.query.includeArchived || '') === 'true',
+        worldId: req.query.worldId || null,
       }),
     });
   }),
@@ -184,6 +202,7 @@ router.get(
     const items = await listItems(prisma, {
       search: req.query.search || '',
       categoryId: req.query.categoryId || null,
+      worldId: req.query.worldId || null,
       contentType: req.query.contentType || null,
       sourceProvider: req.query.source || null,
       workspaceId: req.query.workspaceId || null,
@@ -418,7 +437,7 @@ router.get(
 router.post(
   '/import',
   handle(async (req, res) => {
-    const { provider, videos, categoryIds, workspaceIds, strategy, language } = req.body || {};
+    const { provider, videos, worldIds, categoryIds, workspaceIds, strategy, language } = req.body || {};
     if (!['youtube', 'vimeo'].includes(provider)) {
       return res.status(422).json({ error: 'invalid_provider' });
     }
@@ -428,6 +447,7 @@ router.post(
     const result = await importExternalVideos(prisma, {
       provider,
       videos,
+      worldIds: worldIds || [],
       categoryIds: categoryIds || [],
       workspaceIds: workspaceIds || null,
       strategy: strategy === 'mirror' ? 'mirror' : 'reference',
@@ -554,6 +574,93 @@ router.delete(
     // Archives rather than destroys — the text stays as history.
     const count = await archiveCurrentTranscript(prisma, item.mediaId);
     res.json({ archived: count });
+  }),
+);
+
+// ---------- content worlds ----------
+
+router.get(
+  '/worlds',
+  handle(async (req, res) => {
+    res.json({
+      worlds: await listWorlds(prisma, {
+        includeInactive: String(req.query.includeInactive || '') === 'true',
+      }),
+    });
+  }),
+);
+
+/**
+ * What would be LOST if this item's worlds changed to the given set.
+ *
+ * The client calls this BEFORE saving so removing a world warns about the
+ * categories that go with it, instead of silently discarding them.
+ */
+router.post(
+  '/items/:id/world-change-impact',
+  handle(async (req, res) => {
+    const lost = await categoriesLostByWorldChange(prisma, req.params.id, req.body?.worldIds || []);
+    res.json({ categoriesRemoved: lost });
+  }),
+);
+
+// ---------- transcription progress / cancel ----------
+
+/**
+ * Honest progress for a running transcription. `stage` says what the job is
+ * DOING and the counters are real chunk counts — never an invented percentage.
+ */
+router.get(
+  '/items/:id/transcription',
+  handle(async (req, res) => {
+    const item = await prisma.libraryItem.findUnique({ where: { id: req.params.id } });
+    if (!item?.mediaId) return res.status(404).json({ error: 'not_found' });
+    const job = await prisma.mediaJob.findFirst({
+      where: { mediaId: item.mediaId, kind: JOB_KINDS.transcribe },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!job) return res.json({ job: null });
+    const chunks = await prisma.mediaTranscriptChunk.groupBy({
+      by: ['status'],
+      where: { jobId: job.id },
+      _count: { _all: true },
+    });
+    const byStatus = Object.fromEntries(chunks.map((c) => [c.status, c._count._all]));
+    res.json({
+      job: {
+        id: job.id,
+        status: job.status,
+        stage: job.stage,
+        done: job.progressDone ?? byStatus.done ?? 0,
+        total: job.progressTotal ?? null,
+        attempts: job.attempts,
+        error: job.lastError || null,
+        cancelRequested: job.cancelRequested,
+        chunks: byStatus,
+      },
+    });
+  }),
+);
+
+/**
+ * Cancel a running transcription. Cooperative: the worker stops between chunks,
+ * so nothing is killed mid-request and no half-written chunk is left behind.
+ * Completed transcript VERSIONS are never touched.
+ */
+router.post(
+  '/items/:id/transcription/cancel',
+  handle(async (req, res) => {
+    const item = await prisma.libraryItem.findUnique({ where: { id: req.params.id } });
+    if (!item?.mediaId) return res.status(404).json({ error: 'not_found' });
+    const r = await prisma.mediaJob.updateMany({
+      where: {
+        mediaId: item.mediaId,
+        kind: JOB_KINDS.transcribe,
+        status: { in: [JOB_STATUS.queued, JOB_STATUS.running] },
+      },
+      data: { cancelRequested: true },
+    });
+    res.json({ cancelRequested: r.count });
   }),
 );
 

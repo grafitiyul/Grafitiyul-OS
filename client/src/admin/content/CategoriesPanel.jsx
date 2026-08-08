@@ -8,6 +8,8 @@ import BilingualField from '../common/BilingualField.jsx';
 
 export default function CategoriesPanel({ onChanged }) {
   const [rows, setRows] = useState(null);
+  const [worlds, setWorlds] = useState([]);
+  const [worldId, setWorldId] = useState('');
   const [nameHe, setNameHe] = useState('');
   const [nameEn, setNameEn] = useState('');
   const [error, setError] = useState(null);
@@ -15,8 +17,13 @@ export default function CategoriesPanel({ onChanged }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.contentLibrary.listCategories(true);
+      const [res, w] = await Promise.all([
+        api.contentLibrary.listCategories({ includeArchived: true }),
+        api.contentLibrary.listWorlds(),
+      ]);
       setRows(res.categories || []);
+      setWorlds(w.worlds || []);
+      if (!worldId && w.worlds?.[0]) setWorldId(w.worlds[0].id);
     } catch (e) {
       setError(e?.payload?.error || 'טעינה נכשלה');
     }
@@ -30,7 +37,7 @@ export default function CategoriesPanel({ onChanged }) {
     e.preventDefault();
     if (!nameHe.trim()) return;
     try {
-      await api.contentLibrary.createCategory({ nameHe: nameHe.trim(), nameEn: nameEn.trim() || null });
+      await api.contentLibrary.createCategory({ worldId, nameHe: nameHe.trim(), nameEn: nameEn.trim() || null });
       setNameHe('');
       setNameEn('');
       await load();
@@ -83,6 +90,21 @@ export default function CategoriesPanel({ onChanged }) {
           genuine He/En pair and gets the shared translate action. */}
       <form onSubmit={add} className="mb-6 rounded-2xl border border-gray-200 p-4">
         <h3 className="mb-3 text-[15px] font-semibold text-gray-900">קטגוריה חדשה</h3>
+        <label className="mb-3 block">
+          <span className="block text-[13px] font-medium text-gray-700">עולם תוכן</span>
+          <select
+            value={worldId}
+            onChange={(e) => setWorldId(e.target.value)}
+            className="mt-1.5 w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >
+            {worlds.map((w) => (
+              <option key={w.id} value={w.id}>{w.nameHe}</option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-gray-500">
+            קטגוריה שייכת לעולם אחד. אותו שם יכול להתקיים גם בעולם אחר כקטגוריה נפרדת.
+          </span>
+        </label>
         <BilingualField
           label="שם הקטגוריה"
           he={nameHe}
@@ -95,7 +117,7 @@ export default function CategoriesPanel({ onChanged }) {
         <div className="mt-3 flex justify-end">
           <button
             type="submit"
-            disabled={!nameHe.trim()}
+            disabled={!nameHe.trim() || !worldId}
             className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
           >
             הוסף
@@ -136,6 +158,7 @@ export default function CategoriesPanel({ onChanged }) {
               ) : (
                 <>
                   <span className={`flex-1 text-sm ${r.archived ? 'text-gray-400' : 'text-gray-900'}`}>
+                    <span className="me-2 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{r.world?.nameHe}</span>
                     {r.nameHe}
                     {r.nameEn && <span className="ms-2 text-xs text-gray-400" dir="ltr">{r.nameEn}</span>}
                     {r.archived && (

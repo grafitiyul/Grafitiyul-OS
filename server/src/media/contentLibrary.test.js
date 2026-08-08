@@ -67,14 +67,16 @@ test('any external reference without bytes is refused', () => {
   assert.equal(res.reason, 'external_reference_has_no_media');
 });
 
-test('a file over the provider limit is refused up front, not truncated', () => {
+test('a file over the provider limit is NO LONGER refused — the pipeline chunks it', () => {
+  // Behaviour deliberately reversed (2026-08-08): the 25 MB provider limit is
+  // handled by chunking in the pipeline, so it is no longer a product limit.
+  // See largeMedia.test.js for the chunk-sizing guarantees.
   const res = transcribability({
     mediaType: 'audio',
     objectKey: 'library/originals/m1/a.mp3',
-    byteSize: MAX_REQUEST_BYTES + 1,
+    byteSize: MAX_REQUEST_BYTES * 100,
   });
-  assert.equal(res.ok, false);
-  assert.equal(res.reason, 'file_too_large_for_provider');
+  assert.equal(res.ok, true);
 });
 
 test('an R2-backed audio or video within the limit is transcribable', () => {
@@ -172,6 +174,15 @@ function fakeImportDb({ existingMedia = [] } = {}) {
     libraryItemCategory: { deleteMany: async () => ({}), createMany: async () => ({}) },
     libraryItemWorkspace: { deleteMany: async () => ({}), createMany: async () => ({}) },
     contentWorkspace: { findUnique: async () => ({ id: 'ws1', key: 'gos' }) },
+    // World-first validation: an item cannot exist without a world.
+    contentWorld: {
+      findMany: async ({ where }) =>
+        [{ id: 'w_gos', key: 'gos', active: true }].filter((w) =>
+          where?.id?.in ? where.id.in.includes(w.id) : true,
+        ),
+      findUnique: async () => ({ id: 'w_gos', key: 'gos', active: true }),
+    },
+    libraryItemWorld: { deleteMany: async () => ({}), createMany: async () => ({}), findMany: async () => [] },
     mediaJob: {
       findFirst: async () => null,
       create: async ({ data }) => {
@@ -196,6 +207,7 @@ test('re-importing the same video resolves to the existing item, never a duplica
   });
   const res = await importExternalVideos(db, {
     provider: 'youtube',
+    worldIds: ['w_gos'],
     videos: [{ externalId: 'abc123', title: 'A totally different title' }],
   });
   assert.equal(res.imported.length, 0);
@@ -214,6 +226,7 @@ test('duplicates are detected by provider id, NEVER by title', async () => {
   // Same title, different provider id → a genuinely different video.
   const res = await importExternalVideos(db, {
     provider: 'youtube',
+    worldIds: ['w_gos'],
     videos: [{ externalId: 'bbb', title: 'Same Title' }],
   });
   assert.equal(res.imported.length, 1, 'a different video with the same title still imports');
@@ -223,6 +236,7 @@ test('an import is always an external reference until bytes actually land', asyn
   const db = fakeImportDb();
   await importExternalVideos(db, {
     provider: 'vimeo',
+    worldIds: ['w_gos'],
     strategy: 'mirror',
     videos: [{ externalId: 'v1', title: 'Clip', canMirrorToR2: true }],
   });
@@ -238,6 +252,7 @@ test('asking to mirror a video Vimeo will not expose says so instead of pretendi
   const db = fakeImportDb();
   const res = await importExternalVideos(db, {
     provider: 'vimeo',
+    worldIds: ['w_gos'],
     strategy: 'mirror',
     videos: [
       { externalId: 'v2', title: 'Clip', canMirrorToR2: false, mirrorBlockedReason: 'no_source_file_exposed' },
@@ -252,6 +267,7 @@ test('YouTube is never mirrored, even when mirror is requested', async () => {
   const db = fakeImportDb();
   await importExternalVideos(db, {
     provider: 'youtube',
+    worldIds: ['w_gos'],
     strategy: 'mirror',
     videos: [{ externalId: 'yt1', title: 'Clip', canMirrorToR2: true }],
   });
@@ -262,6 +278,7 @@ test('the internal name seeds from the source title but is its own field', async
   const db = fakeImportDb();
   await importExternalVideos(db, {
     provider: 'youtube',
+    worldIds: ['w_gos'],
     videos: [{ externalId: 'y1', title: 'Provider Title', internalName: 'שם שהמפעיל בחר' }],
   });
   assert.equal(db.state.items[0].internalName, 'שם שהמפעיל בחר');

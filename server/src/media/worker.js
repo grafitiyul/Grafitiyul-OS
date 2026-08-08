@@ -1,8 +1,9 @@
 import { prisma } from '../db.js';
 import * as r2 from '../r2.js';
 import { JOB_KINDS, claimJob, completeJob, failJob } from './jobs.js';
-import { saveTranscript } from './transcripts.js';
 import * as openai from './transcription/openai.js';
+import { runTranscription } from './transcription/pipeline.js';
+import { ffmpegHealth } from './transcription/ffmpeg.js';
 import * as vimeo from './providers/vimeo.js';
 import { originalKey } from './keys.js';
 
@@ -21,30 +22,28 @@ import { originalKey } from './keys.js';
 const TICK_MS = Number(process.env.MEDIA_WORKER_TICK_MS || 30_000);
 
 async function runTranscribeJob(job, log) {
-  const media = job.media;
-  const language = job.payload?.language || media?.libraryLanguage || null;
-  const result = await openai.transcribeMedia(media, { language });
-  await saveTranscript(prisma, {
-    mediaId: media.id,
-    text: result.text,
-    segments: result.segments,
-    language: result.language,
-    provider: result.provider,
-    model: result.model,
-    sourceObjectKey: result.sourceObjectKey,
-    sourceChecksum: result.sourceChecksum,
-    durationSeconds: result.durationSeconds,
-    requestedById: job.requestedById,
-  });
-  // Duration is genuinely new information about the asset — record it once,
-  // and never overwrite a value we already had.
-  if (result.durationSeconds && !media.durationSeconds) {
-    await prisma.tourMedia.update({
-      where: { id: media.id },
-      data: { durationSeconds: result.durationSeconds },
+  const result = await runTranscription(prisma, job, { log });
+
+  if (result.status === 'cancelled') {
+    await prisma.mediaJob.update({
+      where: { id: job.id },
+      data: { status: 'cancelled', stage: null, completedAt: new Date() },
     });
+    log.log?.(`[media-worker] transcription ${job.id} cancelled by operator`);
+    // Signals "handled" — completeJob must not mark a cancelled job done.
+    return { handled: true };
   }
-  log.log?.(`[media-worker] transcribed ${media.id} (${result.text.length} chars)`);
+
+  if (result.status === 'incomplete') {
+    // NEVER stored as a finished transcript. The successful chunks stay in the
+    // database, so the next attempt transcribes only what is still missing.
+    const err = new Error(
+      `transcription_incomplete: ${result.done}/${result.total} chunks — ${result.reason}`,
+    );
+    err.retryable = true;
+    throw err;
+  }
+  return { handled: false };
 }
 
 /**
@@ -123,8 +122,10 @@ export async function runOnce(log = console) {
     const job = await claimJob(prisma, { kind });
     if (!job) continue;
     try {
-      await HANDLERS[kind](job, log);
-      await completeJob(prisma, job.id);
+      const out = await HANDLERS[kind](job, log);
+      // A handler that already settled the job (e.g. cancellation) must not be
+      // overwritten with 'done'.
+      if (!out?.handled) await completeJob(prisma, job.id);
     } catch (e) {
       // A permanently-impossible job is not retried: burning three attempts on
       // "this plan exposes no file" only delays the honest answer.
@@ -168,4 +169,13 @@ export function startMediaWorker(log = console) {
       openai.isConfigured() ? 'configured' : 'NOT configured'
     }, vimeo ${vimeo.isConfigured() ? 'configured' : 'NOT configured'}`,
   );
+  // Prove the media toolchain is REALLY present in this deploy rather than
+  // assuming it. Without ffmpeg no large file can be chunked, and finding that
+  // out on a customer's two-hour lecture is far worse than finding it at boot.
+  ffmpegHealth()
+    .then((h) => {
+      if (h.ok) log.log?.(`[media-worker] media toolchain OK — ${h.ffmpeg.version}`);
+      else log.warn?.(`[media-worker] MEDIA TOOLCHAIN UNAVAILABLE — ffmpeg: ${h.ffmpeg.error || 'ok'}, ffprobe: ${h.ffprobe.error || 'ok'}. Large-media transcription will fail with a clear reason.`);
+    })
+    .catch((e) => log.warn?.(`[media-worker] toolchain probe failed: ${e?.message || e}`));
 }

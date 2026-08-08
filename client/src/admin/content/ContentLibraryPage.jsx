@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { useFileDrop } from '../common/useFileDrop.js';
 import { createGalleryUploader, getGalleryUploader } from '../../lib/galleryUpload.js';
 import CategoriesPanel from './CategoriesPanel.jsx';
+import WorldCategoryPicker from './WorldCategoryPicker.jsx';
 import ConnectionsPanel from './ConnectionsPanel.jsx';
 import {
   CONTENT_TYPE_LABELS,
@@ -40,6 +41,7 @@ function NewItemDialog({ meta, onClose, onCreated }) {
   const [mode, setMode] = useState('upload'); // upload | link
   const [internalName, setInternalName] = useState('');
   const [url, setUrl] = useState('');
+  const [worldIds, setWorldIds] = useState([]);
   const [categoryIds, setCategoryIds] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -100,6 +102,7 @@ function NewItemDialog({ meta, onClose, onCreated }) {
     try {
       const item = await api.contentLibrary.createItem({
         internalName: internalName.trim(),
+        worldIds,
         contentType: mode === 'upload' ? uploadedType || 'video' : 'link',
         mediaId: mode === 'upload' ? uploadedMediaId : null,
         description: mode === 'link' ? url.trim() : null,
@@ -114,7 +117,7 @@ function NewItemDialog({ meta, onClose, onCreated }) {
 
   const uploading = progress && (progress.uploading || progress.queued || progress.preparing || progress.processing);
   const canSubmit =
-    internalName.trim() && !busy && (mode === 'link' ? url.trim() : uploadedMediaId);
+    internalName.trim() && worldIds.length > 0 && !busy && (mode === 'link' ? url.trim() : uploadedMediaId);
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/40 p-4">
@@ -196,30 +199,17 @@ function NewItemDialog({ meta, onClose, onCreated }) {
           </span>
         </label>
 
-        {meta?.categories?.length > 0 && (
-          <div className="mt-4">
-            <span className="text-sm font-medium text-gray-700">קטגוריות</span>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {meta.categories.map((c) => {
-                const on = categoryIds.includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() =>
-                      setCategoryIds(on ? categoryIds.filter((x) => x !== c.id) : [...categoryIds, c.id])
-                    }
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${
-                      on ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-600'
-                    }`}
-                  >
-                    {c.nameHe}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <div className="mt-4">
+          <WorldCategoryPicker
+            worlds={meta?.worlds || []}
+            categories={meta?.categories || []}
+            selectedWorldIds={worldIds}
+            selectedCategoryIds={categoryIds}
+            onWorldsChange={setWorldIds}
+            onCategoriesChange={setCategoryIds}
+            compact
+          />
+        </div>
 
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
@@ -249,6 +239,7 @@ export default function ContentLibraryPage() {
   const [creating, setCreating] = useState(false);
   const [filters, setFilters] = useState({
     search: '',
+    worldId: '',
     categoryId: '',
     contentType: '',
     source: '',
@@ -342,14 +333,31 @@ export default function ContentLibraryPage() {
               className="w-80 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
             />
             <select
+              value={filters.worldId}
+              onChange={(e) => setFilters((f) => ({ ...f, worldId: e.target.value, categoryId: '' }))}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">כל עולמות התוכן</option>
+              {(meta?.worlds || []).map((w) => (
+                <option key={w.id} value={w.id}>{w.nameHe}</option>
+              ))}
+            </select>
+            <select
               value={filters.categoryId}
               onChange={(e) => set('categoryId', e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">כל הקטגוריות</option>
-              {(meta?.categories || []).map((c) => (
-                <option key={c.id} value={c.id}>{c.nameHe}</option>
-              ))}
+              {/* Hierarchical: once a world is chosen only ITS categories are
+                  offered, so a CHALLENGE category can never be picked while
+                  filtering GOS. */}
+              {(meta?.categories || [])
+                .filter((c) => !filters.worldId || c.worldId === filters.worldId)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {filters.worldId ? c.nameHe : `${c.world?.nameHe || ''} · ${c.nameHe}`}
+                  </option>
+                ))}
             </select>
             <select
               value={filters.contentType}

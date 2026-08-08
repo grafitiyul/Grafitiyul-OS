@@ -5841,8 +5841,48 @@ model ContentServiceToken {
 // V1 uses CATEGORIES, not folders (owner decision). Categories are flat and
 // many-to-many, so nothing about the asset model has to change if a folder
 // hierarchy is ever added later.
+// עולם תוכן — a BUSINESS CONTENT DOMAIN (GOS, CHALLENGE, …).
+//
+// ── Why this is NOT ContentWorkspace ────────────────────────────────────────
+// These two look similar and mean genuinely different things, so they stay
+// separate models (owner decision, 2026-08-08):
+//
+//   ContentWorld     WHAT the content is about. A product/business domain.
+//                    Drives organisation: which categories apply, how an
+//                    operator files an item, how a consumer asks for
+//                    "CHALLENGE content".
+//   ContentWorkspace WHO may see it. An access/tenant boundary, backed by a
+//                    service token (ContentServiceToken).
+//
+// Collapsing them would break the moment an EXTERNAL Challenge tenant exists:
+// that tenant is its own workspace, but the content it consumes belongs to the
+// CHALLENGE world — and internal GOS staff must still see CHALLENGE content
+// without being that tenant. One is subject matter, the other is permission.
+model ContentWorld {
+  id        String            @id @default(cuid())
+  // Stable machine key: 'gos' | 'challenge' | …
+  key       String            @unique
+  nameHe    String
+  nameEn    String?
+  active    Boolean           @default(true)
+  sortOrder Int               @default(0)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  categories LibraryCategory[]
+  items      LibraryItemWorld[]
+
+  @@index([active, sortOrder])
+}
+
+// A category ALWAYS belongs to exactly one world. "הרצאות" under GOS and
+// "הרצאות" under CHALLENGE are two different categories that happen to share a
+// name — there is deliberately no global category pool, because filing an item
+// starts from its world.
 model LibraryCategory {
   id        String                @id @default(cuid())
+  world     ContentWorld          @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  worldId   String
   nameHe    String
   nameEn    String?
   sortOrder Int                   @default(0)
@@ -5853,7 +5893,25 @@ model LibraryCategory {
   updatedAt DateTime              @updatedAt
   items     LibraryItemCategory[]
 
+  // A world may not hold two live categories with the same Hebrew name; the
+  // same name in ANOTHER world is fine and expected.
+  @@unique([worldId, nameHe])
+  @@index([worldId, archived, sortOrder])
   @@index([archived, sortOrder])
+}
+
+// An item may belong to several worlds (GOS only, CHALLENGE only, or both).
+// Membership is a relation, never a duplicated media file: one TourMedia, one
+// transcript, many worlds.
+model LibraryItemWorld {
+  item      LibraryItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId    String
+  world     ContentWorld @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  worldId   String
+  createdAt DateTime     @default(now())
+
+  @@id([itemId, worldId])
+  @@index([worldId])
 }
 
 // A content item — how an asset is DESCRIBED, categorised and surfaced.
@@ -5892,6 +5950,9 @@ model LibraryItem {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
+  // WHAT it is about (business domain) vs WHO may see it (access) — two
+  // separate relations on purpose; see the ContentWorld block above.
+  worlds     LibraryItemWorld[]
   categories LibraryItemCategory[]
   workspaces LibraryItemWorkspace[]
 
@@ -5976,8 +6037,25 @@ model MediaJob {
   startedAt     DateTime?
   completedAt   DateTime?
   requestedById String? // AdminUser.id (loose)
+
+  // ── Honest, resumable progress for the large-media pipeline ───────────────
+  // `status` says whether the job is alive; `stage` says what it is DOING, so
+  // the operator never sees a spinner with no explanation:
+  //   preparing_media → chunking → transcribing → assembling
+  stage         String?
+  // Chunk counters — the only truthful basis for a percentage. Both null until
+  // chunking has actually produced a plan, because a percentage invented before
+  // the work is measured is a fake progress bar.
+  progressDone  Int?
+  progressTotal Int?
+  // Cooperative cancellation. The worker checks this between chunks and stops
+  // submitting new ones; it never kills a request mid-flight, so a cancelled
+  // job leaves no half-written state.
+  cancelRequested Boolean @default(false)
+
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  chunks        MediaTranscriptChunk[]
 
   // At most ONE live job of a kind per media — the idempotency guarantee that
   // makes a double-clicked "תמלל" button harmless. Enforced in the service
@@ -5985,6 +6063,45 @@ model MediaJob {
   // for the same no-drift reason as MediaTranscript.isCurrent above.
   @@index([status, notBefore])
   @@index([mediaId, kind, status])
+}
+
+// ONE chunk of a long recording, and the durable record of whether it has been
+// transcribed yet.
+//
+// This table is what makes a multi-hour transcription survivable. Progress
+// lives HERE, not in process memory, so a Railway deploy, a crash or a provider
+// timeout in the middle of chunk 47 of 50 costs exactly those chunks that had
+// not finished — the other 46 are never re-sent, never re-paid for.
+//
+// startSeconds/endSeconds are absolute offsets into the ORIGINAL media. The
+// provider returns timestamps relative to the chunk it was given, so assembly
+// shifts them by startSeconds; without these columns a resumed job could not
+// reconstruct the timeline.
+model MediaTranscriptChunk {
+  id        String   @id @default(cuid())
+  job       MediaJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  jobId     String
+  // Denormalised so chunk queries never need the job row.
+  mediaId   String
+  // 0-based position; assembly orders by this and NEVER by completion time.
+  index     Int
+  startSeconds Float
+  endSeconds   Float
+  // pending | running | done | failed
+  status    String   @default("pending")
+  attempts  Int      @default(0)
+  lastError String?
+  // The provider's text for this slice. NULL until it succeeds.
+  text      String?
+  // Chunk-local segments, already shifted to absolute time at assembly.
+  segments  Json?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobId, index])
+  @@index([jobId, status])
+  @@index([mediaId])
 }
 
 // Generic reference tracking — the input to reference-aware deletion. Any

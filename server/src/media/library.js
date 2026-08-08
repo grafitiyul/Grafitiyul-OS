@@ -1,4 +1,10 @@
 import { prisma } from '../db.js';
+import {
+  assertCategoriesMatchWorlds,
+  pruneCategoriesOutsideWorlds,
+  resolveWorldIds,
+  setItemWorlds,
+} from './worlds.js';
 
 // ספריית תוכן — the Content Library domain service.
 //
@@ -41,18 +47,30 @@ export async function primaryWorkspace(client) {
 
 // ── Categories ──────────────────────────────────────────────────────────────
 
-export async function listCategories(client, { includeArchived = false } = {}) {
+// Categories are ALWAYS world-scoped. `worldId` narrows to one world; without
+// it every world's categories come back, each carrying its world so the client
+// can group them and never present one undifferentiated list.
+export async function listCategories(client, { includeArchived = false, worldId = null } = {}) {
   return client.libraryCategory.findMany({
-    where: includeArchived ? {} : { archived: false },
-    orderBy: [{ sortOrder: 'asc' }, { nameHe: 'asc' }],
+    where: {
+      ...(includeArchived ? {} : { archived: false }),
+      ...(worldId ? { worldId } : {}),
+    },
+    include: { world: { select: { id: true, key: true, nameHe: true, nameEn: true } } },
+    orderBy: [{ world: { sortOrder: 'asc' } }, { sortOrder: 'asc' }, { nameHe: 'asc' }],
   });
 }
 
-export async function createCategory(client, { nameHe, nameEn, sortOrder }) {
+export async function createCategory(client, { nameHe, nameEn, sortOrder, worldId }) {
   const name = String(nameHe || '').trim();
   must(name, 'name_required');
+  // A category with no world could not be offered in a world-first picker.
+  must(worldId, 'content_world_required');
+  const world = await client.contentWorld.findUnique({ where: { id: worldId } });
+  must(world, 'unknown_content_world');
   return client.libraryCategory.create({
     data: {
+      worldId,
       nameHe: name,
       nameEn: String(nameEn || '').trim() || null,
       sortOrder: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
@@ -94,7 +112,8 @@ export async function deleteCategory(client, id) {
 
 const ITEM_INCLUDE = {
   media: true,
-  categories: { include: { category: true } },
+  worlds: { include: { world: true } },
+  categories: { include: { category: { include: { world: true } } } },
   workspaces: { include: { workspace: true } },
 };
 
@@ -129,6 +148,11 @@ export async function createItem(client, data, { actorId = null } = {}) {
   const contentType = String(data?.contentType || '').trim();
   must(CONTENT_TYPES.includes(contentType), 'invalid_content_type');
 
+  // WORLD FIRST. Both checks run BEFORE the row is created, so an invalid
+  // combination never produces a half-filed item that has to be cleaned up.
+  const worldIds = await resolveWorldIds(client, data.worldIds);
+  await assertCategoriesMatchWorlds(client, { categoryIds: data.categoryIds, worldIds });
+
   const ws = await primaryWorkspace(client);
   const item = await client.libraryItem.create({
     data: {
@@ -145,6 +169,7 @@ export async function createItem(client, data, { actorId = null } = {}) {
       updatedById: actorId,
     },
   });
+  await setItemWorlds(client, item.id, worldIds);
   await setCategories(client, item.id, data.categoryIds);
   await setWorkspaces(client, item.id, data.workspaceIds, ws?.id);
   return client.libraryItem.findUnique({ where: { id: item.id }, include: ITEM_INCLUDE });
@@ -177,7 +202,30 @@ export async function updateItem(client, id, patch, { actorId = null } = {}) {
   if ('archived' in patch) data.archived = !!patch.archived;
   if ('mediaId' in patch) data.mediaId = patch.mediaId || null;
 
+  // Resolve the world set FIRST — the categories about to be written are
+  // validated against it, and both are validated before anything is saved.
+  let worldIds = null;
+  if ('worldIds' in patch) {
+    worldIds = await resolveWorldIds(client, patch.worldIds);
+  }
+  if ('categoryIds' in patch) {
+    const effective =
+      worldIds ||
+      (await client.libraryItemWorld.findMany({ where: { itemId: id }, select: { worldId: true } }))
+        .map((w) => w.worldId);
+    await assertCategoriesMatchWorlds(client, { categoryIds: patch.categoryIds, worldIds: effective });
+  }
+
   await client.libraryItem.update({ where: { id }, data });
+
+  if (worldIds) {
+    await setItemWorlds(client, id, worldIds);
+    // Dropping a world must not leave that world's categories attached — the
+    // link would violate the invariant the moment it was written. The API
+    // surfaces what will be lost BEFORE the save (see the route), so this is
+    // the confirmed consequence, not a surprise.
+    await pruneCategoriesOutsideWorlds(client, id, worldIds);
+  }
   if ('categoryIds' in patch) await setCategories(client, id, patch.categoryIds);
   if ('workspaceIds' in patch) {
     const ws = await primaryWorkspace(client);
@@ -219,6 +267,7 @@ export async function listItems(client, filters = {}) {
   const {
     search = '',
     categoryId = null,
+    worldId = null,
     contentType = null,
     sourceProvider = null,
     workspaceId = null,
@@ -230,6 +279,9 @@ export async function listItems(client, filters = {}) {
   const where = {
     ...(includeArchived ? {} : { archived: false }),
     ...(categoryId ? { categories: { some: { categoryId } } } : {}),
+    // Filtering by world is hierarchical: pick a world, and only that world's
+    // content (and therefore only its categories) is in scope.
+    ...(worldId ? { worlds: { some: { worldId } } } : {}),
     ...(contentType ? { contentType } : {}),
     ...(workspaceId ? { workspaces: { some: { workspaceId } } } : {}),
     ...(sourceProvider

@@ -40,7 +40,7 @@ export async function findAlreadyImported(client, { provider, externalIds }) {
  */
 export async function importExternalVideos(
   client,
-  { provider, videos = [], categoryIds = [], workspaceIds = null, strategy = 'reference', language = null, actorId = null },
+  { provider, videos = [], worldIds = [], categoryIds = [], workspaceIds = null, strategy = 'reference', language = null, actorId = null },
 ) {
   const results = { imported: [], skipped: [], failed: [] };
   if (!provider || videos.length === 0) return results;
@@ -107,6 +107,9 @@ export async function importExternalVideos(
           contentType: provider, // 'youtube' | 'vimeo'
           mediaId: media.id,
           language,
+          // World FIRST here too — createItem validates that every category
+          // belongs to one of these worlds before the item exists.
+          worldIds,
           categoryIds,
           workspaceIds,
         },

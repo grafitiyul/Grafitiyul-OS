@@ -1,33 +1,28 @@
 import { Buffer } from 'node:buffer';
-import * as r2 from '../../r2.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
-// OpenAI transcription provider.
+// OpenAI transcription provider — ONE chunk per request.
+//
+// ── The 25 MB limit is the PROVIDER's, not the product's ────────────────────
+// This module used to refuse any media over 25 MB, which made long lectures and
+// meeting recordings untranscribable. That was the wrong layer to solve it in.
+// The provider limit still exists and is still respected here, but the pipeline
+// (pipeline.js) now guarantees every request is a ~10-minute, ~2.4 MB speech
+// chunk. There is no user-facing file-size or duration limit any more.
 //
 // ── The lesson inherited from the recruitment system ────────────────────────
-// Its code carries a hard-won warning: handing Whisper a long concatenated
-// stream transcribes only the first ~60 seconds and SILENTLY DISCARDS the rest,
-// producing a short transcript that looks successful. Their answer was to
-// record in ~60s segments and transcribe each independently.
-//
-// GOS cannot reuse that: our media is a single finished object in R2, not a
-// stream of client-recorded chunks. So the same lesson is applied differently —
-// we respect the provider's real limit by SIZE, refuse anything we cannot
-// honestly split, and never report a partial result as complete.
-//
-// The API limit is 25 MB per request. A file under that is sent whole. A file
-// over it cannot be safely split here: cutting a compressed audio/video
-// container at an arbitrary byte offset produces fragments that are not
-// decodable, and no audio re-encoder (ffmpeg) exists in this deployment. Rather
-// than send a corrupt fragment and store whatever came back, the job fails with
-// a reason the operator can act on.
-//
-// Env: OPENAI_API_KEY. Absent → isConfigured() false and the UI shows an honest
-// "not configured" state.
+// Its code carries a hard-won warning: hand Whisper a long stream and it
+// transcribes roughly the first minute and SILENTLY DISCARDS the rest, which
+// looks like success. That is why chunks here are produced by ffmpeg as
+// independently-decodable audio files (never byte slices) and why an empty
+// result is treated as a failure rather than as a finished transcript.
 
 export const PROVIDER = 'openai';
 export const DEFAULT_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
 
-// OpenAI's documented ceiling for /v1/audio/transcriptions.
+// The provider's documented per-request ceiling. An internal assertion, not a
+// product rule: if a chunk ever approaches this, the chunk length is wrong.
 export const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 
 export function isConfigured() {
@@ -40,25 +35,26 @@ export function configHint() {
     configured: isConfigured(),
     model: DEFAULT_MODEL,
     requiredEnv: ['OPENAI_API_KEY'],
-    optionalEnv: ['OPENAI_TRANSCRIBE_MODEL'],
-    maxRequestBytes: MAX_REQUEST_BYTES,
-    note: 'תמלול דרך OpenAI. קובץ גדול מ-25MB נדחה במפורש עם סיבה, ולא מתומלל חלקית.',
+    optionalEnv: ['OPENAI_TRANSCRIBE_MODEL', 'TRANSCRIBE_CHUNK_SECONDS'],
+    note: 'תמלול דרך OpenAI. קבצים גדולים מפוצלים אוטומטית — אין מגבלת גודל למשתמש.',
   };
 }
 
 /**
- * Whether this media can be transcribed at all, and why not when it cannot.
- * Pure — no network, no storage. The UI uses this to decide whether "תמלל" is
- * even offered, so the button never appears for something that must fail.
+ * Can this media be transcribed at all, and why not when it cannot?
+ *
+ * Pure — no network, no storage, no size rule. SIZE IS DELIBERATELY NOT A
+ * REASON any more: the pipeline chunks whatever it is given. The only genuine
+ * blockers are "there is no speech track" and "we do not hold the bytes".
  */
 export function transcribability(media) {
   if (!media) return { ok: false, reason: 'media_not_found' };
   if (!['video', 'audio'].includes(media.mediaType)) {
     return { ok: false, reason: 'not_audio_or_video' };
   }
-  // An external reference has no bytes we may lawfully fetch through this
-  // provider. YouTube in particular is reference-only by decision — we do NOT
-  // download media merely to transcribe it.
+  // An external reference has no bytes we may lawfully fetch. YouTube in
+  // particular is reference-only by decision — we do NOT download media merely
+  // to transcribe it. A Vimeo item MIRRORED to R2 has an objectKey and passes.
   if (!media.objectKey) {
     return {
       ok: false,
@@ -68,30 +64,25 @@ export function transcribability(media) {
           : 'external_reference_has_no_media',
     };
   }
-  const size = media.byteSize == null ? null : Number(media.byteSize);
-  if (size != null && size > MAX_REQUEST_BYTES) {
-    return { ok: false, reason: 'file_too_large_for_provider', size, limit: MAX_REQUEST_BYTES };
-  }
   return { ok: true };
 }
 
-// Multipart body built by hand, matching the proven recruitment approach —
-// deliberately not an SDK, so the request shape is visible and stable.
-function buildMultipart({ fileBuffer, fileName, mimeType, model, language, responseFormat }) {
+// Hand-built multipart, matching the proven recruitment approach — deliberately
+// not an SDK, so the request shape stays visible and stable.
+function buildMultipart({ fileBuffer, fileName, model, language, responseFormat }) {
   const boundary = `----GrafitiyulMedia${Date.now().toString(16)}`;
   const CRLF = '\r\n';
-  const parts = [];
   const field = (name, value) =>
     Buffer.from(
       `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${value}${CRLF}`,
     );
-  parts.push(field('model', model));
+  const parts = [field('model', model)];
   if (language) parts.push(field('language', language));
   parts.push(field('response_format', responseFormat));
   parts.push(
     Buffer.from(
       `--${boundary}${CRLF}Content-Disposition: form-data; name="file"; filename="${fileName}"${CRLF}` +
-        `Content-Type: ${mimeType || 'application/octet-stream'}${CRLF}${CRLF}`,
+        `Content-Type: audio/mpeg${CRLF}${CRLF}`,
     ),
   );
   parts.push(fileBuffer);
@@ -100,50 +91,42 @@ function buildMultipart({ fileBuffer, fileName, mimeType, model, language, respo
 }
 
 /**
- * Transcribe ONE media object stored in R2.
+ * Transcribe ONE audio chunk from local disk.
  *
- * `verbose_json` is requested so segments/timestamps are captured from day one
- * — the future timestamp, chapter and speaker features then need no
- * re-transcription of the whole archive. (The recruitment system used plain
- * `text`, which is why it can never add timestamps retroactively.)
+ * `verbose_json` is requested so segment timestamps are captured from the first
+ * run — future chapter/seek/speaker features then need no re-transcription of
+ * the archive. (The recruitment system used plain `text`, which is exactly why
+ * it can never add timestamps retroactively.)
+ *
+ * Errors carry `retryable` so the pipeline can distinguish "try again in a
+ * moment" (429/5xx) from "this will never work" (400), and retry only the
+ * former.
  */
-export async function transcribeMedia(media, { language = null, fetchImpl = fetch, storage = r2 } = {}) {
+export async function transcribeFile(filePath, { language = null, fetchImpl = fetch } = {}) {
   if (!isConfigured()) {
     const err = new Error('transcription_not_configured');
-    err.status = 503;
+    err.retryable = false;
     throw err;
   }
-  const can = transcribability(media);
-  if (!can.ok) {
-    const err = new Error(can.reason);
-    err.status = 422;
+  const fileBuffer = await fs.readFile(filePath);
+  if (fileBuffer.length === 0) {
+    const err = new Error('empty_audio_chunk');
+    err.retryable = false;
     throw err;
   }
-  if (!storage.isConfigured()) {
-    const err = new Error('r2_not_configured');
-    err.status = 503;
+  // Internal assertion. Reaching this means the chunk length is misconfigured;
+  // it is a bug to fix, not a limit to show a user.
+  if (fileBuffer.length > MAX_REQUEST_BYTES) {
+    const err = new Error(
+      `chunk_exceeds_provider_limit (${fileBuffer.length} > ${MAX_REQUEST_BYTES}) — lower TRANSCRIBE_CHUNK_SECONDS`,
+    );
+    err.retryable = false;
     throw err;
   }
-
-  // Read the object from R2 into memory. Bounded by the 25MB provider limit
-  // that transcribability() already enforced, so this cannot balloon.
-  const head = await storage.headObject(media.objectKey);
-  if (!head) {
-    const err = new Error('media_object_missing');
-    err.status = 422;
-    throw err;
-  }
-  if (head.size > MAX_REQUEST_BYTES) {
-    const err = new Error('file_too_large_for_provider');
-    err.status = 422;
-    throw err;
-  }
-  const fileBuffer = await storage.getObjectRange(media.objectKey, 0, head.size - 1);
 
   const { body, boundary } = buildMultipart({
     fileBuffer,
-    fileName: media.originalFileName || 'media',
-    mimeType: media.mimeType,
+    fileName: path.basename(filePath),
     model: DEFAULT_MODEL,
     language,
     responseFormat: 'verbose_json',
@@ -167,8 +150,8 @@ export async function transcribeMedia(media, { language = null, fetchImpl = fetc
       /* non-JSON error body */
     }
     const err = new Error(`transcription_provider_error: ${String(reason).slice(0, 300)}`);
-    // 429/5xx are worth retrying; a 400 means this file will never work.
     err.retryable = res.status === 429 || res.status >= 500;
+    err.status = res.status;
     throw err;
   }
 
@@ -182,21 +165,15 @@ export async function transcribeMedia(media, { language = null, fetchImpl = fetc
   }
 
   const text = String(parsed?.text ?? '').trim();
-  // An empty transcript is NOT a success. Silent-audio and wrong-format files
-  // both come back this way, and storing "" as a completed transcript would
-  // present a failure as a finished job.
-  if (!text) {
-    const err = new Error('transcription_returned_empty');
-    err.retryable = false;
-    throw err;
-  }
-
   return {
+    // An empty chunk is legitimate here (a silent stretch of a recording) and is
+    // NOT an error at the chunk level — the pipeline decides whether a whole
+    // transcript came back empty.
     text,
     segments: Array.isArray(parsed?.segments)
       ? parsed.segments.map((s) => ({
-          start: s.start,
-          end: s.end,
+          start: Number(s.start) || 0,
+          end: Number(s.end) || 0,
           text: String(s.text || '').trim(),
         }))
       : null,
@@ -204,7 +181,5 @@ export async function transcribeMedia(media, { language = null, fetchImpl = fetc
     durationSeconds: Number.isFinite(parsed?.duration) ? parsed.duration : null,
     provider: PROVIDER,
     model: DEFAULT_MODEL,
-    sourceObjectKey: media.objectKey,
-    sourceChecksum: head.etag || media.checksum || null,
   };
 }

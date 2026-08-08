@@ -1675,8 +1675,29 @@ export const api = {
         method: 'DELETE',
       }),
 
-    listCategories: (includeArchived = false) =>
-      request(`/api/content-library/categories${includeArchived ? '?includeArchived=true' : ''}`),
+    // ── Content Worlds (עולם תוכן) — the FIRST organisational choice ────────
+    listWorlds: () => request('/api/content-library/worlds'),
+    worldChangeImpact: (id, worldIds) =>
+      request(`/api/content-library/items/${id}/world-change-impact`, {
+        method: 'POST',
+        body: JSON.stringify({ worldIds }),
+      }),
+
+    listCategories: ({ includeArchived = false, worldId = null } = {}) => {
+      const q = new URLSearchParams();
+      if (includeArchived) q.set('includeArchived', 'true');
+      if (worldId) q.set('worldId', worldId);
+      const qs = q.toString();
+      return request(`/api/content-library/categories${qs ? `?${qs}` : ''}`);
+    },
+
+    // ── Large-media transcription: honest progress + cancel ─────────────────
+    transcriptionProgress: (id) => request(`/api/content-library/items/${id}/transcription`),
+    cancelTranscription: (id) =>
+      request(`/api/content-library/items/${id}/transcription/cancel`, {
+        method: 'POST',
+        body: '{}',
+      }),
     createCategory: (data) =>
       request('/api/content-library/categories', { method: 'POST', body: JSON.stringify(data) }),
     updateCategory: (id, data) =>
