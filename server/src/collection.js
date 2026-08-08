@@ -1,5 +1,6 @@
 import { DOC_TYPE_LABELS } from './icountDocs.js';
 import { lineageIdsFor, lineageIdsForMany, activeDealWhere } from './deals/mergeLineage.js';
+import { countedMinorFor } from '../../shared/paymentAllocation.mjs';
 
 // Collection (גבייה) — the SINGLE source of truth for a deal's financial
 // collection status. Everything that shows paid/balance/status (the Deal גבייה
@@ -60,24 +61,22 @@ const num = (v) => Number(v ?? 0);
 
 // The money a document contributes TO THIS DEAL.
 //
-//   • allocationMinor wins when set. It exists for SHARED HISTORICAL documents
-//     — one consolidated document that settles several deals — where the amount
-//     this deal counts is its own payable total, not the document's face value.
-//     Linking a ₪30,745 receipt to twenty deals must settle twenty deals, not
-//     show ₪30,745 outstanding-and-paid on each of them.
+//   • allocationMinor wins when set. It marks money that is SPLIT across
+//     several deals — the migration's consolidated documents, and now any
+//     operator-created multi-deal allocation — where the amount this deal
+//     counts is its own share, not the payment's face value. Linking a ₪30,745
+//     receipt to twenty deals must settle twenty deals, not show ₪30,745
+//     outstanding-and-paid on each of them.
 //   • otherwise `totalpaid`: a PARTIAL receipt records less than its face value,
 //     and the money received is what counts.
 //   • otherwise the gross (older rows, GOS-issued documents).
 //
-// The company-level total is a DIFFERENT question and is answered separately by
-// companyCollectionTotals(), which dedupes by document identity.
+// THE rule lives in shared/paymentAllocation.mjs and is applied identically to
+// manual evidence below, so a split bank transfer and a split receipt behave
+// the same. The company-level total is a DIFFERENT question, answered by
+// companyCollectionTotals(), which dedupes by payment identity.
 function documentMoneyMinor(d) {
-  if (d.allocationMinor != null) return Math.abs(num(d.allocationMinor));
-  if (d.paidMinor != null) {
-    const paid = Math.abs(num(d.paidMinor));
-    if (paid > 0) return paid;
-  }
-  return Math.abs(num(d.amountMinor));
+  return countedMinorFor(d);
 }
 
 // ── Row projection ───────────────────────────────────────────────────────────
@@ -126,8 +125,9 @@ function documentRow(d) {
     // A shared historical document must SAY so wherever it appears — an
     // operator seeing "paid" on this deal is entitled to know the same document
     // also settles others, and that company totals count it once.
-    sharedHistorical: !!d.sharedHistorical,
+    sharedHistorical: !!d.sharedHistorical || d.allocationMinor != null,
     documentAmountMinor: Math.abs(num(d.amountMinor)),
+    allocationGroupId: d.allocationGroupId || null,
     // The document's REAL accounting date; the row's write time is only a
     // fallback for documents GOS issued itself (where they coincide).
     occurredAt: d.issuedAt || d.createdAt,
@@ -142,6 +142,12 @@ function documentRow(d) {
 }
 
 function evidenceRow(e) {
+  // A split payment repeats the REAL amount on every row and carries this
+  // deal's share in allocationMinor — the same contract as a shared document,
+  // so `amountMinor` always answers "how much money moved" and `countedMinor`
+  // always answers "how much of it is this deal's".
+  const counted = countedMinorFor(e);
+  const shared = e.allocationMinor != null;
   return {
     id: e.id,
     rowType: 'evidence',
@@ -153,7 +159,12 @@ function evidenceRow(e) {
     counts: true,
     direction: e.direction,
     amountMinor: Math.abs(num(e.amountMinor)),
-    countedMinor: Math.abs(num(e.amountMinor)),
+    countedMinor: counted,
+    // Rendered exactly like a shared document: the panel must say out loud that
+    // this deal counts a SHARE of a larger payment.
+    sharedHistorical: shared,
+    documentAmountMinor: Math.abs(num(e.amountMinor)),
+    allocationGroupId: e.allocationGroupId || null,
     currency: e.currency || 'ILS',
     method: e.method || null,
     reference: e.reference || null,
@@ -394,7 +405,14 @@ export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {})
     }),
     prisma.dealCollectionEvidence.findMany({
       where: { status: 'active', currency },
-      select: { direction: true, amountMinor: true },
+      select: {
+        id: true, direction: true, amountMinor: true,
+        // A payment split across deals writes one row per deal, all carrying
+        // the SAME real amount — the group id is what stops it being counted
+        // once per deal. Exactly the role (doctype, docnum) plays for
+        // documents.
+        allocationGroupId: true, allocationMinor: true,
+      },
     }),
     // Retired deals are excluded from the company's AGREED-VALUE total: after a
     // merge the surviving deal carries the single merged total, so counting the
@@ -444,11 +462,25 @@ export async function companyCollectionTotals(prisma, { currency = 'ILS' } = {})
     }
   }
 
+  // Evidence is deduped by PAYMENT IDENTITY exactly like documents: three rows
+  // for one ₪3,000 transfer split across three deals are ONE ₪3,000 receipt of
+  // money. An un-allocated row (every historical one) is its own payment and
+  // falls back to its row id, so nothing is merged by accident.
+  //
+  // This is also what makes an OVER-ALLOCATION safe: the company total reads
+  // the real `amountMinor` once and never the sum of the shares, so crediting
+  // deals with ₪1,700 against a ₪1,500 payment reports ₪1,500 of income.
+  const seenEvidence = new Map();
+  for (const e of evidence) {
+    const key = e.allocationGroupId || `row:${e.id}`;
+    if (seenEvidence.has(key)) continue;
+    seenEvidence.set(key, { direction: e.direction, money: Math.abs(num(e.amountMinor)) });
+  }
   let manualIn = 0;
   let manualOut = 0;
-  for (const e of evidence) {
-    if (e.direction === 'out') manualOut += Math.abs(num(e.amountMinor));
-    else manualIn += Math.abs(num(e.amountMinor));
+  for (const e of seenEvidence.values()) {
+    if (e.direction === 'out') manualOut += e.money;
+    else manualIn += e.money;
   }
 
   const wonValue = deals.reduce((s, d) => s + num(d.valueMinor), 0);

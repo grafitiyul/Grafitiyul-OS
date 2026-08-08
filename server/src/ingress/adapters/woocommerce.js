@@ -218,6 +218,56 @@ export function orderedQuantity(order) {
   return total > 0 ? total : null;
 }
 
+// ── Gateway payment truth ────────────────────────────────────────────────────
+// Woo is the STORE; the money is moved by a payment gateway whose own record
+// lives in order meta. Until 2026-08-08 none of it was extracted, so the only
+// place a real charge's approval number existed in GOS was inside
+// IngressEvent.rawPayload — unqueryable, unreconcilable, and invisible on the
+// deal. Meanwhile the accounting document printed `card_number: '0000'`.
+//
+// Everything here is READ, never derived. A key the gateway did not send stays
+// null. In particular the brand codes are carried VERBATIM as codes:
+// Tranzila's `cardtype`/`cardissuer`/`cardaquirer` are small integers whose
+// meaning is NOT documented in anything GOS can verify, so mapping `1` to a
+// brand name would be exactly the invention this whole change removes. They are
+// stored so a human — or a later change, once the mapping is confirmed with
+// Tranzila — can use them.
+export function gatewayPayment(order) {
+  const meta = (key) => metaValue(order, key);
+  const gateway = String(order?.payment_method || '').toLowerCase() || null;
+  // Tranzila's WooCommerce plugin namespaces its fields `w2t_*`.
+  const isTranzila = gateway === 'tranzila' || meta('w2t_payment_method') != null;
+
+  // The CARD APPROVAL number — the thing a bookkeeper means by "אישור". It is
+  // NOT the transaction id, which is what GOS used to send to iCount as the
+  // confirmation code.
+  const approval = meta('cc_company_approval_num') || meta('מספר אישור ABS') || null;
+  const transactionId = order?.transaction_id || meta('transaction_id') || null;
+
+  if (!gateway && !transactionId && !approval) return null;
+  return {
+    gateway,
+    isTranzila,
+    transactionId: transactionId ? String(transactionId) : null,
+    approvalCode: approval ? String(approval) : null,
+    absApprovalCode: meta('מספר אישור ABS') ? String(meta('מספר אישור ABS')) : null,
+    // Raw provider codes — meaning unverified, deliberately not translated.
+    cardTypeCode: meta('cardtype') != null ? String(meta('cardtype')) : null,
+    cardIssuerCode: meta('cardissuer') != null ? String(meta('cardissuer')) : null,
+    cardAcquirerCode: meta('cardaquirer') != null ? String(meta('cardaquirer')) : null,
+    creditTypeCode: meta('w2t_cred_type') != null ? String(meta('w2t_cred_type')) : null,
+    paymentMethodCode: meta('w2t_payment_method') ? String(meta('w2t_payment_method')) : null,
+    terminalType: meta('tranzila_terminal_type') ? String(meta('tranzila_terminal_type')) : null,
+    gatewayCustomerRef: meta('myid') != null ? String(meta('myid')) : null,
+    // The gateway has never sent card last-four on this store. The field exists
+    // so that the day it does, it flows through to the document instead of
+    // being defaulted — and until then it is honestly null.
+    cardLast4: null,
+    sum: meta('w2t_sum') != null ? String(meta('w2t_sum')) : (order?.total ?? null),
+    paidAt: order?.date_paid_gmt || order?.date_paid || null,
+  };
+}
+
 export function toCanonicalEvent(order, { storeKey }) {
   const b = order?.billing || {};
   const items = (order?.line_items || []).map((li) => ({
@@ -240,6 +290,10 @@ export function toCanonicalEvent(order, { storeKey }) {
       lastName: b.last_name || null,
       email: b.email || null,
       phone: b.phone || null,
+      // The checkout's own billing country. Frequently EMPTY (the live store's
+      // checkout does not require it — order 2261), which is precisely why the
+      // phone normalizer must not assume Israel when it is missing.
+      country: b.country || null,
     },
     organization: b.company ? { name: b.company } : null,
     order: {
@@ -285,6 +339,8 @@ export function toCanonicalEvent(order, { storeKey }) {
       shippingTotal: order?.shipping_total ?? null,
       totalTax: order?.total_tax ?? null,
       transactionId: order?.transaction_id || null,
+      // The GATEWAY's own record of the charge — see gatewayPayment() below.
+      gatewayPayment: gatewayPayment(order),
       customerId: order?.customer_id ?? null,
       customerIp: order?.customer_ip_address || null,
       orderKey: order?.order_key || null,

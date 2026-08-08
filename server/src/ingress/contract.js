@@ -26,7 +26,7 @@ export const EVENT_KINDS = Object.freeze(['lead', 'order']);
  *   sourceKey:   instance within source e.g. 'primary' | 'contact_page' | page id
  *   externalId:  provider's own id      e.g. leadgen id / Woo order id
  *   occurredAt:  Date | null            when the provider says it happened
- *   person: { fullName, firstName, lastName, email, phone, language }
+ *   person: { fullName, firstName, lastName, email, phone, language, country }
  *   organization: { name, taxId } | null
  *   order: { total, currency, items:[{ sku, name, quantity, unitPrice, externalId }],
  *            status, paid } | null
@@ -61,6 +61,10 @@ export function buildEvent(input = {}) {
       email: input.person?.email ?? null,
       phone: input.person?.phone ?? null,
       language: input.person?.language ?? null,
+      // ISO-3166 alpha-2 from the SOURCE (a checkout's billing country), never
+      // inferred. It is what lets a foreign local-format number be resolved
+      // instead of being mis-read as Israeli — see shared/phone.mjs.
+      country: input.person?.country ?? null,
     },
     organization: input.organization
       ? { name: input.organization.name ?? null, taxId: input.organization.taxId ?? null }

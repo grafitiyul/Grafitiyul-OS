@@ -1643,12 +1643,50 @@ model IcountDocument {
   // settles twenty deals; it can never report ₪614,900 of revenue.
   sharedHistorical Boolean @default(false)
   // What this deal counts from the document. NULL = the ordinary case (the
-  // document's own money). Set for shared historical documents, where it is the
-  // deal's own payable total.
+  // document's own money). Set whenever ONE real payment is split across
+  // several deals — historically only the migration's consolidated documents,
+  // now the first-class multi-deal allocation (src/payments/allocation.js).
   allocationMinor  BigInt?
+
+  // ── Allocation provenance (first-class multi-deal payments, 2026-08-08) ────
+  // `allocationGroupId` is the ONE identity that ties the per-deal rows of a
+  // single real payment together. For a document the provider identity
+  // (doctype, docnum) already does that job and stays the primary dedupe key;
+  // the group id is written alongside so documents and manual evidence answer
+  // "which rows are the same money?" through the SAME column.
+  allocationGroupId String?
+  // 'migration' | 'operator' | 'system' — who decided this split. NULL means
+  // there is no split (the ordinary single-deal document).
+  allocationSource  String?
+  allocationNote    String?
+  allocatedBy       String? // loose AdminUser id
+  allocatedByName   String?
+  allocatedAt       DateTime?
+
+  // ── Multiple source documents ("מבוסס על") ────────────────────────────────
+  // iCount's `based_on` is a LIST: one document may close several sources. The
+  // scalar pair above stays populated with the FIRST parent so every existing
+  // reader keeps working unchanged; `basedOnDocs` is the full canonical
+  // relationship — [{ doctype, docnum }, …] — and is authoritative when set.
+  basedOnDocs Json?
+
+  // ── Gateway payment truth ─────────────────────────────────────────────────
+  // What the PAYMENT PROVIDER said, as opposed to what the accounting provider
+  // printed. Woo/Tranzila facts used to survive only inside
+  // IngressEvent.rawPayload, where nothing could query or reconcile them.
+  // Never invented: a field the gateway did not supply stays null.
+  paymentProvider      String? // 'tranzila' | 'cardcom' | 'icount' | …
+  paymentTransactionId String?
+  paymentApprovalCode  String? // the CARD approval number, never the tx id
+  paymentMeta          Json?
 
   @@index([dealId])
   @@index([doctype, docnum])
+  @@index([paymentProvider, paymentTransactionId])
+  // At most ONE row per (payment, deal) — the guarantee that makes a retried
+  // allocation converge instead of splitting the same money twice. NULLs are
+  // distinct in Postgres, so every un-allocated row is unaffected.
+  @@unique([allocationGroupId, dealId])
 }
 
 // ── Second-stage match candidates (the operator review queue) ────────────────
@@ -1818,7 +1856,78 @@ model DealCollectionEvidence {
   createdByName  String?
   createdAt      DateTime  @default(now())
 
+  // ── Multi-deal allocation (2026-08-08) ────────────────────────────────────
+  // THE SAME contract as IcountDocument, deliberately: one bank transfer that
+  // covers three deals is written as three rows that all carry the REAL payment
+  // amount in `amountMinor` and this deal's share in `allocationMinor`, tied
+  // together by `allocationGroupId`. Per-deal collection counts the share;
+  // company totals dedupe by the group and count the real money ONCE.
+  //
+  // NULL allocationMinor = the ordinary single-deal row, where `amountMinor` is
+  // both the real payment and this deal's share. Every historical row is that.
+  allocationMinor   BigInt?
+  allocationGroupId String?
+  allocationSource  String? // 'operator' | 'system' | 'migration'
+  allocationNote    String?
+  allocatedBy       String?
+  allocatedByName   String?
+  allocatedAt       DateTime?
+
+  // Gateway payment truth — same columns, same meaning as on IcountDocument.
+  paymentProvider      String?
+  paymentTransactionId String?
+  paymentApprovalCode  String?
+  paymentMeta          Json?
+
   @@index([dealId, status])
+  @@index([paymentProvider, paymentTransactionId])
+  @@unique([allocationGroupId, dealId])
+}
+
+// ── Payment allocation audit ─────────────────────────────────────────────────
+// Issued accounting evidence is immutable; the INTERNAL decision about which
+// deals a payment settles is not. Every allocation and re-allocation appends a
+// row here, so "₪1,000 → ₪800 on #27101, by admin, 08.08 14:32" is answerable
+// forever without touching the accounting document at the provider.
+//
+// Deliberately NOT an FK to Deal: the audit of where money was once allocated
+// must survive a deal deletion, exactly like CardcomWebhookLog survives one.
+model PaymentAllocationEvent {
+  id String @id @default(cuid())
+
+  // WHICH real payment. `sourceKind` says which table the rows live in;
+  // (doctype, docnum) identifies a provider document, allocationGroupId
+  // identifies any payment including manual evidence.
+  sourceKind        String // 'icount_document' | 'collection_evidence'
+  allocationGroupId String?
+  doctype           String?
+  docnum            String?
+  // The real money the underlying payment moved, as known at write time — so a
+  // historical audit row still states what the split was measured against.
+  sourceAmountMinor BigInt?
+
+  // WHAT changed, for ONE deal.
+  action        String // 'allocated' | 'reallocated' | 'removed'
+  dealId        String
+  orderNo       Int?
+  previousMinor BigInt?
+  nextMinor     BigInt?
+  currency      String  @default("ILS")
+
+  // The reconciliation state this change LEFT BEHIND — what the operator saw.
+  allocatedTotalMinor BigInt?
+  unallocatedMinor    BigInt?
+  overAllocatedMinor  BigInt?
+
+  reason    String?
+  actorType String  @default("user") // 'user' | 'system'
+  actorId   String?
+  actorName String?
+  createdAt DateTime @default(now())
+
+  @@index([allocationGroupId])
+  @@index([dealId])
+  @@index([doctype, docnum])
 }
 
 // ── Custom payment links ("קישור לתשלום מותאם אישית") ────────────────────────

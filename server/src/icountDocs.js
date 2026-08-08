@@ -5,6 +5,15 @@ import { lineSign } from '../../shared/lineMath.mjs';
 import { normalizeDocumentVatMode, documentRowCalc, documentTotals } from '../../shared/documentVat.mjs';
 import { GENERIC_PRODUCT_LINE_EN, GENERIC_PRODUCT_LINE_HE } from './displayFallbacks.js';
 import { normalizeDocumentNotes, documentNotesText } from './documentNotes.js';
+import {
+  applyAllocations,
+  documentGroupId,
+  emitAllocationTimeline,
+  loadAllocationGroup,
+  syncAllocationReview,
+  validatePlan,
+  ALLOCATION_TOLERANCE_MINOR,
+} from './payments/allocation.js';
 
 // iCount document production — the domain logic behind "הפק מסמך".
 //
@@ -384,7 +393,37 @@ export function allocationRequirement({ doctype, rows, vatId, vatMode = 'include
 // document (#38236): payments.payment_app { card_brand:'bit'|'paybox', sum }.
 // Never recorded as cash or as a credit card. (PayBox uses the same structure
 // by analogy — brand rendering not yet verified against a real PayBox doc.)
-export function buildPaymentBlocks(payments) {
+// ── Card facts are never invented ────────────────────────────────────────────
+// Until 2026-08-08 an unknown card produced `card_number:'0000'`,
+// `card_type:'VISA'`, `holder_id:'000000000'` and an expiry a year out. Every
+// one of those reads, on a tax document, as a fact somebody verified. None of
+// them was. The #27151 audit found all four printed on a real customer's
+// חשבונית מס קבלה for a Tranzila charge whose last four digits the gateway
+// never exposed at all.
+//
+// The rule now: a card field is sent ONLY when its value is real. `0000` is a
+// lie about four digits; omitting the key says "not recorded", which is the
+// truth. `holder_name` is exempt — it is the customer name we genuinely know.
+//
+// iCount's minimum `cc` block is not documented publicly (the official docs
+// 403-block scraping) and probing it would mean issuing a real tax document,
+// which the owner ruled out for QA. So instead of guessing, this builds the
+// honest block and `issueDocument` carries an explicit, bounded fallback: if
+// iCount REJECTS the request (a structured validation refusal, where no
+// document was created), it retries once with the unknown card fields present
+// but EMPTY — still no fabricated digits — and records which shape iCount
+// accepted. The first real website sale after deploy tells us the contract at
+// zero accounting risk.
+const CARD_UNKNOWN_KEYS = ['card_type', 'card_number', 'exp_year', 'exp_month', 'holder_id'];
+
+// Only digits are a last-four. Anything else (a gateway's internal code, a
+// masked PAN, an empty string) is NOT knowledge of the card.
+function realCardLast4(v) {
+  const s = String(v ?? '').trim();
+  return /^\d{4}$/.test(s) ? s : null;
+}
+
+export function buildPaymentBlocks(payments, { emptyUnknownCardFields = false } = {}) {
   const body = {};
   for (const p of payments || []) {
     const amount = round2(Number(p.amount) || 0);
@@ -395,18 +434,35 @@ export function buildPaymentBlocks(payments) {
       body.cash = { sum: String(amount) };
     } else if (p.method === 'cc') {
       if (body.cc) throw codedError('payment_method_duplicate');
+      const last4 = realCardLast4(p.cardLast4);
+      const cardType = String(p.cardType || '').trim() || null;
+      const expYear = Number(p.expYear) || null;
+      const expMonth = Number(p.expMonth) || null;
+      const holderId = String(p.holderId || '').trim() || null;
+      const known = {
+        ...(cardType ? { card_type: cardType } : {}),
+        ...(last4 ? { card_number: last4 } : {}),
+        ...(expYear && expMonth ? { exp_year: expYear, exp_month: expMonth } : {}),
+        ...(holderId ? { holder_id: holderId } : {}),
+      };
+      // The retry shape: the KEYS iCount may insist on, with no content. An
+      // empty string claims nothing; '0000' claims four digits.
+      const blanks = emptyUnknownCardFields
+        ? Object.fromEntries(CARD_UNKNOWN_KEYS.filter((k) => !(k in known)).map((k) => [k, '']))
+        : {};
       body.cc = {
         sum: String(amount),
         date,
         num_of_payments: Math.max(1, Number(p.installments) || 1),
         first_payment: String(amount),
-        card_type: p.cardType || 'VISA',
-        card_number: String(p.cardLast4 || '0000'),
-        exp_year: new Date().getFullYear() + 1,
-        exp_month: 12,
-        holder_id: String(p.holderId || '000000000'),
-        holder_name: p.holderName || 'Card Holder',
-        confirmation_code: String(p.reference || '000000'),
+        ...known,
+        ...blanks,
+        // The customer's real name — known, so it is sent.
+        ...(p.holderName ? { holder_name: String(p.holderName) } : {}),
+        // The card APPROVAL number when the gateway gave one. A transaction id
+        // is a different fact and is no longer passed off as an approval —
+        // callers put it in `reference` only when it genuinely is the approval.
+        ...(p.reference ? { confirmation_code: String(p.reference) } : {}),
       };
     } else if (p.method === 'banktransfer') {
       if (body.banktransfer) throw codedError('payment_method_duplicate');
@@ -468,9 +524,77 @@ export async function emitAccountingEvent(client, { dealId, doc, origin, sourceL
   });
 }
 
+/**
+ * Accept either shape of "מבוסס על" and return the canonical LIST.
+ *   [{doctype,docnum}, …]  → itself, cleaned
+ *   {doctype,docnum}       → a one-element list (the historical singular API)
+ *   null / incomplete      → []
+ */
+export function normalizeBasedOnList(raw) {
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return list
+    .filter((b) => b && b.doctype && b.docnum != null && String(b.docnum).trim() !== '')
+    .map((b) => ({ doctype: String(b.doctype), docnum: String(b.docnum).trim() }));
+}
+
+// Does this provider failure mean "iCount validated the request and refused it"
+// — i.e. no document exists — as opposed to "we do not know what happened"?
+// Only the first kind is safe to retry: a timeout or an unreachable provider
+// may well have created the document, and retrying would issue a second.
+function isStructuredRefusal(err) {
+  if (err?.code !== 'icount_request_failed') return false;
+  const reason = String(err?.reason || '');
+  if (!reason || /^HTTP 5\d\d/.test(reason)) return false;
+  if (/timeout|aborted|network|unreachable|socket/i.test(reason)) return false;
+  return true;
+}
+
+/**
+ * Create the document with an HONEST card block, falling back once to
+ * empty-valued card keys if iCount insists they be present.
+ *
+ * Neither shape ever states a card fact GOS does not know — the fallback sends
+ * '' where the old code sent '0000'. Which shape iCount accepted is returned so
+ * the caller can record it; after the first real payment we will know the
+ * contract without ever having issued a document for QA.
+ */
+async function createDocWithHonestCard(body, input, typeDef) {
+  const withPayments = (opts) => ({
+    ...body,
+    ...(typeDef.paymentsAllowed ? buildPaymentBlocks(input.payments, opts) : {}),
+  });
+
+  const first = withPayments({ emptyUnknownCardFields: false });
+  if (typeDef.paymentsRequired && Object.keys(first).length && !hasPaymentBlock(first)) {
+    throw codedError('payment_required');
+  }
+  try {
+    return { result: await createDoc(first), cardShape: 'omitted' };
+  } catch (err) {
+    const cardFieldsWereOmitted = first.cc && CARD_UNKNOWN_KEYS.some((k) => !(k in first.cc));
+    if (!cardFieldsWereOmitted || !isStructuredRefusal(err)) throw err;
+    console.warn(
+      `[icount] doc/create refused with omitted card fields (${err.reason}) — `
+      + 'retrying once with EMPTY card fields; no digits are fabricated either way',
+    );
+    const second = withPayments({ emptyUnknownCardFields: true });
+    return { result: await createDoc(second), cardShape: 'empty' };
+  }
+}
+
+const hasPaymentBlock = (b) =>
+  Boolean(b.cash || b.cc || b.banktransfer || (b.cheques && b.cheques.length) || b.payment_app);
+
 // Issue a document through iCount and record it. Validates BEFORE calling
 // iCount (allocation, credit base, payments), is idempotent on
 // `idempotencyKey`, and never records a document unless iCount confirmed one.
+//
+// MULTI-DEAL: `input.allocations` = [{ dealId, amountMinor }] makes ONE payment
+// settle several deals. Every row (the origin deal's and its siblings') is
+// written inside the SAME transaction as the document record, so a document can
+// never exist in GOS with half its allocations missing. Retrying converges via
+// idempotencyKey (the origin) and the unique (allocationGroupId, dealId) index
+// (the siblings) — a repeat never issues a second document or a second share.
 export async function issueDocument(prisma, deal, input, userId) {
   const doctype = String(input.doctype || '');
   const typeDef = DOC_TYPES.find((t) => t.key === doctype);
@@ -503,11 +627,21 @@ export async function issueDocument(prisma, deal, input, userId) {
     .filter((r) => r.description && r.quantity > 0);
   if (!rows.length) throw codedError('rows_required');
 
-  const basedOn = input.basedOn && input.basedOn.doctype && input.basedOn.docnum
-    ? { doctype: String(input.basedOn.doctype), docnum: String(input.basedOn.docnum) }
-    : null;
+  // ── Source documents ("מבוסס על") — a LIST ────────────────────────────────
+  // iCount's `based_on` has always been an array and it accepts several
+  // parents: one receipt legitimately closes three invoices. GOS accepts either
+  // shape — `basedOnDocs: [{doctype,docnum},…]` (canonical) or the historical
+  // singular `basedOn: {doctype,docnum}` — and the scalar columns keep holding
+  // the FIRST parent so every existing reader is untouched.
+  const basedOnDocs = normalizeBasedOnList(input.basedOnDocs ?? input.basedOn);
+  const basedOn = basedOnDocs[0] || null;
   if (typeDef.baseRequired && !basedOn) throw codedError('base_document_required');
-  if (basedOn && !typeDef.baseTypes.includes(basedOn.doctype)) throw codedError('base_document_type_invalid');
+  for (const b of basedOnDocs) {
+    if (!typeDef.baseTypes.includes(b.doctype)) throw codedError('base_document_type_invalid');
+  }
+  // Two parents that are the same document would double-close it at iCount.
+  const baseKeys = new Set(basedOnDocs.map((b) => `${b.doctype}:${b.docnum}`));
+  if (baseKeys.size !== basedOnDocs.length) throw codedError('base_document_duplicate');
 
   // Allocation-number precondition (ITA) — hard block before any iCount call.
   const alloc = allocationRequirement({ doctype, rows, vatId: client.vatId, vatMode });
@@ -517,8 +651,7 @@ export async function issueDocument(prisma, deal, input, userId) {
     throw err;
   }
 
-  const payments = typeDef.paymentsAllowed ? buildPaymentBlocks(input.payments) : {};
-  if (typeDef.paymentsRequired && Object.keys(payments).length === 0) {
+  if (typeDef.paymentsRequired && !(input.payments || []).length) {
     throw codedError('payment_required');
   }
 
@@ -572,18 +705,24 @@ export async function issueDocument(prisma, deal, input, userId) {
     // is repeated here because the payload, not the client, is the boundary.
     ...(notesText ? { hwc: notesText } : {}),
     ...(input.sendEmail && client.email ? { send_email: 1 } : {}),
-    ...payments,
   };
 
-  if (basedOn) {
+  if (basedOnDocs.length) {
     // Closing AND crediting both link by based_on. (The live doc_info payload
     // carries no internal doc_id, so the origin_doc_id variant from Bearer-
     // auth integrations is not available under body auth — verified
     // 2026-07-08; based_on is the mechanism doc/create supports here.)
-    body.based_on = [{ doctype: basedOn.doctype, docnum: Number(basedOn.docnum) }];
+    // The FULL list goes to the provider — a document that closes three
+    // invoices must say so at iCount, not only in GOS.
+    body.based_on = basedOnDocs.map((b) => ({ doctype: b.doctype, docnum: Number(b.docnum) }));
   }
 
-  const { docId, docnum, docUrl, raw } = await createDoc(body);
+  // Payment blocks are built LAST because the honest-card fallback rebuilds
+  // them; see CARD_UNKNOWN_KEYS. `createDocWithHonestCard` retries at most once
+  // and ONLY on a structured provider refusal (no document created), so a
+  // timeout can never issue a second document.
+  const { result: created, cardShape } = await createDocWithHonestCard(body, input, typeDef);
+  const { docId, docnum, docUrl, raw } = created;
 
   const { grossIls } = totalsForRows(rows, vatRatePercent(), vatMode);
   const amountMinor = BigInt(Math.round(grossIls * 100));
@@ -593,6 +732,17 @@ export async function issueDocument(prisma, deal, input, userId) {
   const origin = input.origin || (await userOrigin(userId));
   const source = input.source || 'user';
   const sourceLabel = input.sourceLabel || 'user';
+  // The multi-deal plan, if any. Validated BEFORE the transaction so an
+  // impossible plan is refused loudly; an UNBALANCED plan is deliberately
+  // accepted (owner ruling) and becomes a visible review card afterwards.
+  const plan = normalizeAllocationPlan(input.allocations, deal.id, amountMinor);
+  const allocationGroupId = plan ? documentGroupId(doctype, docnum) : null;
+  const actor = {
+    type: input.origin ? 'system' : 'user',
+    id: userId || null,
+    name: origin?.createdByName || null,
+  };
+
   const doc = await prisma.$transaction(async (tx) => {
     const created = await tx.icountDocument.create({
       data: {
@@ -606,21 +756,87 @@ export async function issueDocument(prisma, deal, input, userId) {
         clientName,
         clientVatId: client.vatId ? String(client.vatId).trim() : null,
         docUrl,
+        // First parent in the scalar columns (every existing reader), the FULL
+        // list beside it (the canonical relationship).
         basedOnDoctype: basedOn?.doctype || null,
         basedOnDocnum: basedOn?.docnum || null,
+        basedOnDocs: basedOnDocs.length ? basedOnDocs : undefined,
         idempotencyKey,
         issuedBy: userId || null,
         raw: raw ?? undefined,
+        // What the PAYMENT gateway said, kept beside what the accounting
+        // provider printed. Null whenever the gateway did not say it.
+        paymentProvider: input.paymentProvider || null,
+        paymentTransactionId: input.paymentTransactionId || null,
+        paymentApprovalCode: input.paymentApprovalCode || null,
+        paymentMeta: input.paymentMeta
+          ? { ...input.paymentMeta, icountCardShape: cardShape }
+          : { icountCardShape: cardShape },
+        // The group identity is stamped HERE so the row is already part of the
+        // payment before any share is written; applyAllocations below sets
+        // every share — including this deal's — so the audit trail records the
+        // origin deal's allocation exactly like every other one.
+        ...(plan ? { allocationGroupId } : {}),
       },
     });
     await emitAccountingEvent(tx, { dealId: deal.id, doc: created, origin, sourceLabel });
+
+    // Every deal's share — including this one's — in the SAME transaction, so
+    // "document issued but deal B missing" is not a reachable state.
+    if (plan) {
+      await applyAllocations(tx, {
+        groupId: allocationGroupId,
+        plan,
+        actor,
+        reason: input.allocationNote || null,
+        originDealId: deal.id,
+      });
+    }
     return created;
   });
+
+  // Post-commit, best-effort: the truthful per-deal timeline lines and the
+  // reconciliation card. Neither may undo an issued document, so a failure here
+  // is logged and the document still stands.
+  if (plan) {
+    try {
+      const group = await loadAllocationGroup(prisma, allocationGroupId);
+      if (group) {
+        await emitAllocationTimeline(prisma, group, { actor, reason: input.allocationNote || null });
+        await syncAllocationReview(prisma, allocationGroupId);
+      }
+    } catch (err) {
+      console.error(`[icount] allocation post-commit failed for ${allocationGroupId}: ${err?.message}`);
+    }
+  }
 
   // After success: the typed ח.פ/ת.ז becomes the GOS prefill for next time.
   await persistClientVatId(prisma, deal, input.clientMode, client.vatId);
 
   return { doc, reused: false };
+}
+
+/**
+ * Validate an allocation plan supplied at issue time. Returns null when the
+ * document is an ordinary single-deal one (the overwhelming case), so nothing
+ * about the existing path changes.
+ *
+ * Over-allocation is NOT rejected here — that is the owner's explicit ruling.
+ * What IS rejected is a plan that could not be persisted coherently: no rows,
+ * a duplicate deal, a negative share, or a plan that forgets the deal the
+ * document is being issued against.
+ */
+export function normalizeAllocationPlan(raw, originDealId, documentAmountMinor) {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const plan = validatePlan(raw);
+  if (plan.length === 1 && plan[0].dealId === originDealId
+    && Math.abs(plan[0].amountMinor - Number(documentAmountMinor)) <= ALLOCATION_TOLERANCE_MINOR) {
+    // "All of it to the issuing deal" is not a split — keep the row shape that
+    // every historical document has.
+    return null;
+  }
+  if (!plan.some((a) => a.dealId === originDealId)) throw codedError('allocation_origin_required');
+  return plan;
 }
 
 // ── External document linking ("שייך מסמך אחר מאייקאונט") ────────────────────

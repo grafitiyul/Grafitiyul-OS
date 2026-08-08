@@ -5,6 +5,7 @@ import { dealCollection, collectionDeals, companyCollectionTotals } from '../col
 import { activeDealWhere } from '../deals/mergeLineage.js';
 import { listQueue, queueCounts, resolveQueueItem } from '../collectionReviewQueue.js';
 import { COLLECTION_REVIEW_STATUS, COLLECTION_REVIEW_STATUS_VALUES } from '../collectionWorkQueue.js';
+import { allocationsForDeal } from '../payments/allocation.js';
 import {
   recordEvidence,
   reverseEvidence,
@@ -55,12 +56,17 @@ function evidenceErrorStatus(code) {
 // the next refresh, which is exactly the kind of drift this module exists to
 // prevent.
 async function collectionPayload(deal) {
-  const [summary, evidence] = await Promise.all([
+  const [summary, evidence, allocations] = await Promise.all([
     dealCollection(prisma, deal),
     listEvidence(prisma, deal.id),
+    // Where the REST of a split payment went. Presentation context only — the
+    // money on this deal is still computeCollection's answer, and the panel
+    // does no arithmetic with these numbers.
+    allocationsForDeal(prisma, deal.id),
   ]);
   return {
     ...summary,
+    allocations,
     collectionReviewStatus: deal.collectionReviewStatus || null,
     paymentReviewStatus: deal.paymentReviewStatus || null,
     paymentReviewSource: deal.paymentReviewSource || null,

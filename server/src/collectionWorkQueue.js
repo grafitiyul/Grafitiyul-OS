@@ -25,6 +25,13 @@
 export const COLLECTION_REVIEW_STATUS = {
   ACTIVE: 'active_collection',
   LEGACY: 'likely_paid_legacy',
+  // Settled HERE, with evidence GOS holds. Added 2026-08-08 after the #27151
+  // audit: the first real website sale — paid by card that afternoon and
+  // documented by a GOS-issued חשבונית מס קבלה minutes later — was labelled
+  // "ככל הנראה שולם במערכת קודמת" five minutes after it was born. The money
+  // reading was right; the sentence was false, and a false provenance on a
+  // financial screen is not a cosmetic problem.
+  PAID_IN_GOS: 'paid_in_gos',
 };
 
 export const COLLECTION_REVIEW_STATUS_VALUES = Object.values(COLLECTION_REVIEW_STATUS);
@@ -32,6 +39,7 @@ export const COLLECTION_REVIEW_STATUS_VALUES = Object.values(COLLECTION_REVIEW_S
 export const COLLECTION_REVIEW_STATUS_LABELS = {
   active_collection: 'בגבייה פעילה',
   likely_paid_legacy: 'ככל הנראה שולם במערכת קודמת',
+  paid_in_gos: 'שולם ותועד במערכת',
 };
 
 // Machine-set sources may be replaced by a later run. 'operator' never is — a
@@ -42,6 +50,9 @@ export const SOURCE = {
   // A tour that has not happened yet and is not fully paid. Standing rule.
   FUTURE_TOUR: 'migration:future_tour_unpaid',
   LEGACY: 'migration:legacy_assumed_paid',
+  // The deal was settled in GOS and GOS holds the evidence. NOT a migration
+  // source — it is a statement about this system, which is the whole point.
+  PAID_IN_GOS: 'gos:paid_in_gos',
   // A payment-review classification (deposit-vs-full audit) says only a
   // deposit was collected — even when the resolver reads "paid", because the
   // recorded agreed amount may itself be the deposit. Standing rule.
@@ -73,10 +84,20 @@ export const DEPOSIT_REVIEW_STATUSES = ['confirmed_deposit', 'suspected_deposit'
  *                                  deposit-vs-full classification. Not a guess
  *                                  made here: it arrives persisted, exactly
  *                                  like the snapshot.
+ * @param ctx.settledInGos          GOS itself holds the settlement evidence:
+ *                                  at least one document or evidence row that
+ *                                  THIS system issued or recorded. Like every
+ *                                  other input, it arrives resolved — this
+ *                                  module still infers nothing.
  */
 export function classifyDeal(
   summary,
-  { inCollectionSnapshot = false, hasLiveFutureTour = false, paymentReviewStatus = null } = {},
+  {
+    inCollectionSnapshot = false,
+    hasLiveFutureTour = false,
+    paymentReviewStatus = null,
+    settledInGos = false,
+  } = {},
 ) {
   // The snapshot is a business decision about which deals are being collected.
   // It stands whatever the payment state says — if the business is chasing it,
@@ -98,8 +119,16 @@ export function classifyDeal(
     return { status: COLLECTION_REVIEW_STATUS.ACTIVE, source: SOURCE.FUTURE_TOUR };
   }
 
+  // Settled, and GOS can prove it. Checked BEFORE the legacy fall-through so a
+  // deal this system collected is never described as somebody else's history.
+  if (!unpaid && settledInGos) {
+    return { status: COLLECTION_REVIEW_STATUS.PAID_IN_GOS, source: SOURCE.PAID_IN_GOS };
+  }
+
   // Everything else is historical and assumed settled in the previous system.
-  // A deliberate business decision, NOT a claim about the accounting.
+  // A deliberate business decision, NOT a claim about the accounting — and now
+  // reached only when GOS holds NO settlement evidence of its own, which is
+  // exactly what "assumed paid elsewhere" was always supposed to mean.
   return { status: COLLECTION_REVIEW_STATUS.LEGACY, source: SOURCE.LEGACY };
 }
 

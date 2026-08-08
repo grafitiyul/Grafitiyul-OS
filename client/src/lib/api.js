@@ -696,6 +696,12 @@ export const api = {
       }),
     resolveCollectionReview: (id, data) =>
       request(`/api/deals/${id}/collection/review/resolve`, { method: 'POST', body: JSON.stringify(data) }),
+    // "שייך לדילים נוספים" — split an EXISTING single-deal payment row (a
+    // document or manual evidence) across several deals. The response is the
+    // recalculated allocation group; per-deal money still comes from
+    // `collection(id)` above, which stays the one financial resolver.
+    allocatePayment: (id, data) =>
+      request(`/api/deals/${id}/collection/allocate`, { method: 'POST', body: JSON.stringify(data) }),
     // Cardcom tourist payment links (/payment/cardcom/<token>).
     touristPayment: (id) => request(`/api/deals/${id}/tourist-payment`),
     createTouristPayment: (id, data) =>
@@ -904,6 +910,23 @@ export const api = {
   },
   auth: {
     status: () => request('/api/auth/status'),
+  },
+  // ── Multi-deal payment allocation ──────────────────────────────────────────
+  // ONE real payment split across N deals. The math is entirely server-side
+  // (shared/paymentAllocation.mjs); the client only presents it.
+  payments: {
+    // The Deal picker for the allocation dialog — the CANONICAL global-search
+    // deal provider, enriched with each deal's total/paid/remaining.
+    searchDeals: (q, exclude) =>
+      request(`/api/payments/allocations/deal-search${qs({ q, exclude: (exclude || []).join(',') || undefined })}`),
+    allocation: (groupId) => request(`/api/payments/allocations/${encodeURIComponent(groupId)}`),
+    // Apply OR correct a split — the same call, because both describe the
+    // desired end state. Never touches the accounting document at the provider.
+    setAllocation: (groupId, data) =>
+      request(`/api/payments/allocations/${encodeURIComponent(groupId)}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   // ── Collection (גבייה) — WON deals that still require collection ──
   collection: {

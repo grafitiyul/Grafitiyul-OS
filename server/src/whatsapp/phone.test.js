@@ -25,7 +25,12 @@ test('normalizePhoneIntl: unusable input → null', () => {
 test('normalizePhoneIntl: 972+0 double prefix is repaired', () => {
   assert.equal(normalizePhoneIntl('972050-1234567'), '972501234567'); // mobile
   assert.equal(normalizePhoneIntl('97203-1234567'), '97231234567'); // landline
-  assert.equal(normalizePhoneIntl('+972 052-321816'), '97252321816'); // truncated but unambiguous repair
+  // A TRUNCATED mobile is no longer "repaired" into a number that cannot exist
+  // (changed 2026-08-08). 052-321816 is one digit short of an Israeli mobile,
+  // and the old length-only check let it through purely because 972 + 8 digits
+  // is the length of a valid LANDLINE. The numbering plan tells them apart: a
+  // 5-prefix subscriber needs 9 digits, so this is data, not a phone.
+  assert.equal(normalizePhoneIntl('+972 052-321816'), null);
 });
 
 test('normalizePhoneIntl: impossible Israeli shapes → null, never a fake JID', () => {

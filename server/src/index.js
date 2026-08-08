@@ -67,6 +67,7 @@ import dealFilesRouter from './routes/dealFiles.js';
 import dealTourPlanRouter from './routes/dealTourPlan.js';
 import dealConversionRouter from './routes/dealConversion.js';
 import icountDocsRouter from './routes/icountDocs.js';
+import paymentAllocationsRouter, { dealAllocationRouter } from './routes/paymentAllocations.js';
 import taskTypesRouter from './routes/taskTypes.js';
 import whatsappTemplatesRouter from './routes/whatsappTemplates.js';
 import guideMessageRouter from './routes/guideMessage.js';
@@ -428,6 +429,11 @@ app.use('/api/deals', requireAdminAuth, touristPaymentRouter);
 // /:id/collection (Deal card) + /api/collection/deals (Collection screen).
 app.use('/api/deals', requireAdminAuth, dealCollectionRouter);
 app.use('/api/collection', requireAdminAuth, collectionRouter);
+// Multi-deal payment allocation — ONE real payment split across N deals.
+// /api/payments/allocations/* reads+writes a split; the deal-scoped router adds
+// "שייך לדילים נוספים" to an existing single-deal payment row.
+app.use('/api/payments', requireAdminAuth, paymentAllocationsRouter);
+app.use('/api/deals', requireAdminAuth, dealAllocationRouter);
 // Payroll (שכר צוות) — day screen + activity drawer. Math lives in
 // payroll/engine.js (pure), writes in payroll/service.js.
 app.use('/api/payroll', requireAdminAuth, payrollRouter);

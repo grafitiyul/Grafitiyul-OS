@@ -43,6 +43,15 @@ export function displayPhone(intl) {
   return `+${intl}`;
 }
 
+// Is this string enough of a phone number to be worth showing a human? Seven
+// digits is the shortest real subscriber number anywhere; below that it is a
+// form-field accident, not a contact detail.
+export function readablePhone(raw) {
+  const s = clean(raw);
+  if (!s) return null;
+  return s.replace(/\D/g, '').length >= 7 ? s : null;
+}
+
 // Name splitting. Providers give either a single full name (Meta, Elementor) or
 // separate parts (WooCommerce billing). One rule, applied everywhere: first
 // token is the first name, the remainder is the last name.
@@ -77,7 +86,13 @@ export function coerceNumber(v) {
 }
 
 export function normalizeEvent(event) {
-  const phoneIntl = normalizePhoneIntl(event?.person?.phone);
+  // The source's OWN billing country is passed to the normalizer as evidence —
+  // it is what lets a foreign local-format number (a French 06…) resolve
+  // correctly instead of being rewritten as an unreachable Israeli one.
+  // Never inferred from the digits; a source that supplies no country simply
+  // gets the Israeli-numbering-plan rule, which now refuses to guess.
+  const country = clean(event?.person?.country)?.toUpperCase() || null;
+  const phoneIntl = normalizePhoneIntl(event?.person?.phone, { country });
   const email = normalizeEmail(event?.person?.email);
   const { firstName, lastName } = splitName(event?.person || {});
 
@@ -96,8 +111,19 @@ export function normalizeEvent(event) {
       // Both forms are kept: `phoneIntl` is the ONLY value used for matching;
       // `phoneDisplay` is what gets written onto a new ContactPhone.
       phoneIntl,
-      phoneDisplay: displayPhone(phoneIntl),
+      // What the customer actually typed. Kept because `phoneIntl` is null
+      // whenever GOS could not place the number, and "no international
+      // identity" must not mean "no phone" — a human can still read and dial
+      // this, and language classification reads it as evidence.
+      phoneRaw: clean(event?.person?.phone),
+      // The number a human reads on the contact card. Normally derived from
+      // `phoneIntl`; when GOS could not place the number internationally but it
+      // is still plainly a phone (a foreign local format — the #27151 case), the
+      // typed value is kept so the customer stays reachable by a person even
+      // though no WhatsApp JID can be minted from it. Junk never survives.
+      phoneDisplay: displayPhone(phoneIntl) || readablePhone(event?.person?.phone),
       language: clean(event?.person?.language),
+      country,
     },
 
     organization: event.organization?.name

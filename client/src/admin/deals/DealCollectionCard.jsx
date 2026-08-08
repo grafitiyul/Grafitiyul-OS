@@ -8,6 +8,7 @@ import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import ManualPaymentModal from './collection/ManualPaymentModal.jsx';
 import LinkExistingDocumentModal from './collection/LinkExistingDocumentModal.jsx';
+import AllocationDialog from './payments/AllocationDialog.jsx';
 import { formatMinor } from '../../lib/money.js';
 import { contactNameHe, TOUR_LANGS } from './config.js';
 import { DateField, TimeField } from '../common/pickers/DateTimeFields.jsx';
@@ -146,7 +147,7 @@ export function OpenDocumentButton({ dealId, row, label }) {
 // document, an automatic clearing capture, or money an operator typed in. That
 // distinction is a product requirement: the balance may be identical, but the
 // trust behind it is not, and the panel must never blur the two.
-function PaymentRow({ row, onReverse, dealId }) {
+function PaymentRow({ row, onReverse, dealId, allocation, onAllocate }) {
   const out = row.direction === 'out';
   // Evidence rows (operator-attested OR machine-recorded Woo money) render by
   // their kind label and support reversal; document rows render by doc number.
@@ -194,11 +195,33 @@ function PaymentRow({ row, onReverse, dealId }) {
               {[row.reference, row.note, row.createdByName].filter(Boolean).join(' · ')}
             </span>
           )}
-          {/* A shared document settles this deal by the deal's own amount — say
-              what the document itself is worth, so "paid" is never mysterious. */}
-          {row.sharedHistorical && row.documentAmountMinor !== row.amountMinor && (
+          {/* A SPLIT payment settles this deal by its own share — say what the
+              payment itself was worth and how much of it landed here, so "paid"
+              is never mysterious and no deal appears to have received the whole
+              amount. The other deals' shares are listed underneath. */}
+          {row.sharedHistorical && (
             <span className="block truncate text-[10.5px] text-purple-700">
-              המסמך כולו: {formatMinor(row.documentAmountMinor, row.currency)} · סוגר גם עסקאות אחרות · נספר פעם אחת בדוחות
+              {`סך התשלום: ${formatMinor(row.documentAmountMinor, row.currency)}`}
+              {` · שויך לדיל זה: ${formatMinor(row.countedMinor, row.currency)}`}
+              {' · נספר פעם אחת בדוחות'}
+            </span>
+          )}
+          {(allocation?.otherAllocations || []).length > 0 && (
+            <span className="block truncate text-[10.5px] text-purple-700">
+              שויך גם: {allocation.otherAllocations
+                .map((o) => `#${o.orderNo} — ${formatMinor(o.amountMinor, row.currency)}`)
+                .join(' · ')}
+            </span>
+          )}
+          {allocation && allocation.state === 'unallocated' && (
+            <span className="block truncate text-[10.5px] text-amber-700">
+              לא שויכו {formatMinor(allocation.unallocatedMinor, row.currency)} — ממתין להחלטה
+            </span>
+          )}
+          {allocation && allocation.state === 'over' && (
+            <span className="block truncate text-[10.5px] text-red-700">
+              שויך ביתר {formatMinor(allocation.overAllocatedMinor, row.currency)} — הכסף שהתקבל בפועל{' '}
+              {formatMinor(allocation.realMinor, row.currency)}
             </span>
           )}
           {/* Why this document is on this deal — the audit line. */}
@@ -216,6 +239,20 @@ function PaymentRow({ row, onReverse, dealId }) {
           >
             {out ? '−' : ''}{formatMinor(row.amountMinor, row.currency)}
           </span>
+          {/* Money that moved can be divided between deals; billing paper and
+              reversed rows cannot. */}
+          {onAllocate && row.counts && (
+            <button
+              type="button"
+              onClick={() => onAllocate(row)}
+              title="שייך לדילים נוספים"
+              className="rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover/row:opacity-100 hover:bg-purple-50 hover:text-purple-700 [@media(hover:none)]:opacity-100"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M18 8a3 3 0 100-6 3 3 0 000 6zM6 15a3 3 0 100-6 3 3 0 000 6zM18 22a3 3 0 100-6 3 3 0 000 6zM8.6 13.5l6.8 3.9M15.4 6.6L8.6 10.5" />
+              </svg>
+            </button>
+          )}
           {!manual && row.docnum && <OpenDocumentButton dealId={dealId} row={row} />}
           {manual && onReverse && (
             <button
@@ -261,7 +298,9 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
 
   const reload = useCallback(async () => {
     try {
-      setSummary(await api.deals.collection(deal.id));
+      const next = await api.deals.collection(deal.id);
+      setSummary(next);
+      setAllocations(next.allocations || []);
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -312,6 +351,11 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
   const [manualOpen, setManualOpen] = useState(false);
   const [linkDocOpen, setLinkDocOpen] = useState(false);
   const [reverseTarget, setReverseTarget] = useState(null); // the manual row being reversed
+  // Multi-deal allocation: the payment row being split, and the per-row
+  // allocation context the server resolved (so a row can say where the rest of
+  // the money went without the client doing any math).
+  const [allocateRow, setAllocateRow] = useState(null);
+  const [allocations, setAllocations] = useState([]);
   const [reverseReason, setReverseReason] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
@@ -692,7 +736,14 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                 <p className="px-2 text-[12px] text-gray-400">עדיין לא התקבלו תשלומים לעסקה זו.</p>
               ) : (
                 summary.payments.map((row) => (
-                  <PaymentRow key={row.id} row={row} dealId={deal.id} onReverse={setReverseTarget} />
+                  <PaymentRow
+                    key={row.id}
+                    row={row}
+                    dealId={deal.id}
+                    onReverse={setReverseTarget}
+                    allocation={allocations.find((a) => a.groupId === row.allocationGroupId) || null}
+                    onAllocate={setAllocateRow}
+                  />
                 ))
               )}
             </div>
@@ -808,6 +859,16 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         open={linkDocOpen}
         onClose={() => setLinkDocOpen(false)}
         onLinked={() => reload()}
+      />
+      {/* "שייך לדילים נוספים" — divide ONE real payment between several deals.
+          Never clones the payment: the same document/transfer is shown on every
+          deal it settles, each counting only its own share. */}
+      <AllocationDialog
+        open={!!allocateRow}
+        row={allocateRow}
+        dealId={deal.id}
+        onClose={() => setAllocateRow(null)}
+        onDone={() => reload()}
       />
 
       {/* Reversing a manual row requires a reason — the record survives. */}

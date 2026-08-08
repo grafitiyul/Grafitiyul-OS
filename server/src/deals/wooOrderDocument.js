@@ -88,6 +88,11 @@ export async function issueWooOrderInvrec({ dealId, normalized, storeKey }, { db
 
     const paidAtRaw = normalized.extra?.datePaid || null;
     const paidDate = (paidAtRaw ? new Date(paidAtRaw) : new Date());
+    // What the PAYMENT gateway said (Tranzila on this store), as opposed to
+    // what the accounting provider will print. Null when the order carried no
+    // gateway record — an older store, a manual order — and every field below
+    // then stays null rather than being filled with a plausible default.
+    const gw = normalized.extra?.gatewayPayment || null;
     const { doc, reused } = await issue(
       db,
       deal,
@@ -110,10 +115,26 @@ export async function issueWooOrderInvrec({ dealId, normalized, storeKey }, { db
             method: wooPaymentMethod(normalized.extra?.paymentMethod),
             amount: paidIls,
             date: Number.isNaN(paidDate.getTime()) ? undefined : paidDate.toISOString().slice(0, 10),
-            reference: normalized.extra?.transactionId || String(orderNumber),
+            // The card APPROVAL number when the gateway gave one — that is what
+            // `confirmation_code` means on an Israeli receipt. Falling back to
+            // the transaction id (what this used to always send) would put a
+            // store reference in an accounting field that means something else,
+            // so the fallback is now explicitly nothing.
+            reference: gw?.approvalCode || null,
             holderName: normalized.person?.displayName || clientName,
+            // Card facts are passed ONLY when the gateway supplied them.
+            // Tranzila does not expose last-four on this store, so this is null
+            // and buildPaymentBlocks omits the field entirely — never '0000'.
+            cardLast4: gw?.cardLast4 || null,
           },
         ],
+        // The gateway's own record, persisted on the document row so the
+        // approval number, transaction id and provider codes are queryable
+        // instead of buried in IngressEvent.rawPayload.
+        paymentProvider: gw?.gateway || null,
+        paymentTransactionId: gw?.transactionId || null,
+        paymentApprovalCode: gw?.approvalCode || null,
+        paymentMeta: gw || undefined,
         notes: `הזמנה מהאתר #${orderNumber}`,
         sendEmail: false,
         origin: systemOrigin(),

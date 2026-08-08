@@ -80,12 +80,25 @@ export async function classifyCollectionWorkQueue(
     evBy.get(e.dealId).push(e);
   }
 
+  // Does GOS itself hold this deal's settlement evidence?
+  //
+  // "This system collected it" means a document GOS issued or captured from a
+  // provider webhook, or money an operator/gateway recorded here. What it
+  // deliberately does NOT include is `source: 'linked'` / `'backfill'` — a
+  // document an operator attached after the fact, or the historical
+  // reconstruction — because those describe money that moved somewhere else.
+  // Same for `origin: 'backfill'` evidence.
+  const settledInGos = (docs, evs) =>
+    docs.some((d) => d.status === 'issued' && (d.source === 'user' || d.source === 'webhook'))
+    || evs.some((e) => e.status === 'active' && e.direction === 'in' && e.origin !== 'backfill');
+
   const stats = {
     scanned: deals.length,
     snapshotResolved: snapshotDeals.length,
     liveFutureTours: liveFutureIds.size,
     active: 0,
     legacy: 0,
+    paidInGos: 0,
     written: 0,
     unchanged: 0,
     operatorPreserved: 0,
@@ -95,13 +108,17 @@ export async function classifyCollectionWorkQueue(
   const writes = [];
 
   for (const deal of deals) {
-    const summary = computeCollection(deal, docsBy.get(deal.id) || [], evBy.get(deal.id) || []);
+    const docs = docsBy.get(deal.id) || [];
+    const evs = evBy.get(deal.id) || [];
+    const summary = computeCollection(deal, docs, evs);
     const next = classifyDeal(summary, {
       inCollectionSnapshot: snapshotIds.has(deal.id),
       hasLiveFutureTour: liveFutureIds.has(deal.id),
       paymentReviewStatus: deal.paymentReviewStatus,
+      settledInGos: settledInGos(docs, evs),
     });
     if (next.status === COLLECTION_REVIEW_STATUS.ACTIVE) stats.active += 1;
+    else if (next.status === COLLECTION_REVIEW_STATUS.PAID_IN_GOS) stats.paidInGos += 1;
     else stats.legacy += 1;
     stats.bySource[next.source] = (stats.bySource[next.source] || 0) + 1;
 

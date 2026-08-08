@@ -17,6 +17,7 @@ import { normalizeClassification } from '../deals/classification.js';
 import { writeDealMarketing } from '../deals/marketing.js';
 import { emitTimelineEvent, touchDealActivity } from '../timeline/events.js';
 import { createContactFrom, enrichContactChannels, resolveOrganization } from './resolve.js';
+import { resolveIngressLanguage } from './language.js';
 
 const escapeHtml = (s) =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -159,7 +160,11 @@ export async function createLeadDeal(tx, { normalized, stageKey = null }) {
       tourDate: normalized.context.preferredDate
         ? israelDateOf(normalized.context.preferredDate)
         : null,
-      communicationLanguage: normalized.person.language || null,
+      // Which language GOS speaks to this customer. Resolved by the canonical
+      // conservative rule (ingress/language.js) — English only on positive
+      // evidence, never merely because the name is not Hebrew. null keeps the
+      // system-wide Hebrew default, exactly as before.
+      communicationLanguage: resolveIngressLanguage(normalized),
       valueMinor: toMinor(normalized.order?.total),
       contacts: { create: [{ contactId, isPrimary: true, roles: ['ongoingBooking'] }] },
     },

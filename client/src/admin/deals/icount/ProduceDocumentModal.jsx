@@ -6,6 +6,7 @@ import LinkExternalDocumentPanel from './LinkExternalDocumentPanel.jsx';
 import { friendlyIcountError } from './icountErrors.js';
 import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 import { documentTotals } from '../../../../../shared/documentVat.mjs';
+import AllocationPanel from '../payments/AllocationPanel.jsx';
 
 // "הפק מסמך" — produce an iCount accounting document from a Deal.
 //
@@ -93,7 +94,12 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   // operator is told to type the notes instead.
   const [notesWarning, setNotesWarning] = useState(null);
   const [payments, setPayments] = useState([]);
-  const [baseDoc, setBaseDoc] = useState(null); // { doctype, docnum }
+  // "מבוסס על" is a LIST — iCount's based_on accepts several parents, and one
+  // receipt legitimately closes several invoices. `baseDocs[0]` is the PRIMARY
+  // parent: it drives row inheritance and the doctype restriction exactly as
+  // the single base always did, so nothing about the one-parent flow changed.
+  const [baseDocs, setBaseDocs] = useState([]);
+  const [baseDoc, setBaseDoc] = useState(null); // { doctype, docnum } — the primary
   const [baseLoading, setBaseLoading] = useState(false);
   const [baseError, setBaseError] = useState(null);
   const [baseNote, setBaseNote] = useState(null); // "rows inherited from …"
@@ -101,6 +107,14 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   const [sendEmail, setSendEmail] = useState(true);
   const [docDate, setDocDate] = useState(today());
   const [lang, setLang] = useState('he');
+
+  // ── Multi-deal allocation, decided BEFORE issuance ────────────────────────
+  // `allocationPlan` null = the ordinary single-deal document. When set, the
+  // server writes every deal's share inside the SAME transaction as the
+  // document record, so "issued but deal B missing" is not a reachable state.
+  const [allocationPlan, setAllocationPlan] = useState(null);
+  const [allocationNote, setAllocationNote] = useState('');
+  const [allocationOpen, setAllocationOpen] = useState(false);
 
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -154,6 +168,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           setPayments([]);
         }
         setBaseDoc(null);
+        setBaseDocs([]);
         setBaseError(null);
         setBaseNote(null);
         setLinkOpen(false);
@@ -234,6 +249,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
       return;
     }
     setBaseDoc(null);
+    setBaseDocs([]);
     setBaseNote(null);
     setBaseError(null);
     // Base cleared → back to the deal's own per-doctype suggestions.
@@ -242,6 +258,44 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
     // Docs that record money received start with one payment row over the total.
     setPayments(def?.paymentsAllowed ? [newPayment(grossIls)] : []);
   }
+
+  // ── Base selection (multi) ─────────────────────────────────────────────────
+  // Changing the PRIMARY parent re-runs the existing single-base inheritance;
+  // adding or removing a secondary parent only changes the list that is sent.
+  // That keeps the whole row/VAT/notes inheritance path byte-identical to the
+  // behaviour it has had since it was verified in production.
+  function setBaseSelection(next, { forDoctype = doctype } = {}) {
+    const prevPrimary = baseDocs[0] || null;
+    setBaseDocs(next);
+    const nextPrimary = next[0] || null;
+    const changed =
+      (prevPrimary?.doctype ?? null) !== (nextPrimary?.doctype ?? null)
+      || (prevPrimary?.docnum ?? null) !== (nextPrimary?.docnum ?? null);
+    if (changed) selectBase(nextPrimary, { forDoctype });
+  }
+
+  function toggleBase(d) {
+    const key = `${d.doctype}:${d.docnum}`;
+    const exists = baseDocs.some((b) => `${b.doctype}:${b.docnum}` === key);
+    if (exists) {
+      setBaseSelection(baseDocs.filter((b) => `${b.doctype}:${b.docnum}` !== key));
+      return;
+    }
+    // A credit note has exactly one origin document — never several.
+    if (doctype === 'refund') {
+      setBaseSelection([d]);
+      return;
+    }
+    setBaseSelection([...baseDocs, d]);
+  }
+
+  // The money the selected parents represent — shown beside the new document's
+  // own total so a mismatch is visible before issuing.
+  const baseSum = useMemo(() => {
+    if (baseDocs.length < 2) return null;
+    if (baseDocs.some((b) => b.amountIls == null)) return null;
+    return baseDocs.reduce((s, b) => s + Number(b.amountIls || 0), 0);
+  }, [baseDocs]);
 
   // Selecting a base document inherits its REAL lines + total from iCount —
   // the deal's own pricing must never leak into a follow-up/closing document.
@@ -385,7 +439,14 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           })),
         notes: notes.trim() || null,
         payments: typeDef.paymentsAllowed ? payments : [],
+        // The FULL list of source documents. `basedOn` is still sent so an
+        // older server (or a replayed request) keeps working unchanged.
         basedOn: baseDoc,
+        basedOnDocs: baseDocs.map((b) => ({ doctype: b.doctype, docnum: b.docnum })),
+        // Multi-deal allocation, confirmed BEFORE issuance. Null for the
+        // ordinary single-deal document, which behaves exactly as before.
+        allocations: allocationPlan,
+        allocationNote: allocationNote || null,
         sendEmail,
       });
       idemKey.current = crypto.randomUUID(); // next issue is a NEW document
@@ -562,28 +623,64 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
                   {doctype === 'refund' && ' לא ניתן להפיק חשבונית זיכוי ללא מסמך מקור.'}
                 </p>
               ) : (
+                /* MULTI-SELECT: one document may close several sources (iCount's
+                   based_on is a list). The FIRST selected document is the
+                   primary — its real lines are inherited, exactly as before —
+                   and every additional one is sent as a further parent. The
+                   selection stays visible so the operator can never issue a
+                   document that closes three invoices without seeing all three. */
                 <div className="mt-1.5 space-y-1">
                   {doctype !== 'refund' && (
                     <label className="flex items-center gap-2 text-[13px] text-gray-700">
-                      <input type="radio" name="baseDoc" checked={!baseDoc} onChange={() => selectBase(null)} />
+                      <input type="checkbox" checked={baseDocs.length === 0} onChange={() => setBaseSelection([])} />
                       ללא קישור למסמך קודם
                     </label>
                   )}
-                  {baseCandidates.map((d) => (
-                    <label key={`${d.doctype}:${d.docnum}`} className="flex items-center gap-2 text-[13px] text-gray-700">
-                      <input type="radio" name="baseDoc"
-                        checked={baseDoc?.doctype === d.doctype && baseDoc?.docnum === d.docnum}
-                        onChange={() => selectBase(d)} />
-                      <span>
-                        {d.doctypeLabel} מס׳ {d.docnum}
-                        {d.amountIls != null && <span className="text-gray-500"> · {fmtIls(d.amountIls)}</span>}
-                        {d.clientName && <span className="text-gray-500"> · {d.clientName}</span>}
-                        <span className="text-[11px] text-gray-400">
-                          {' '}({d.origin === 'gos' ? 'הופק מ־GOS' : d.origin === 'linked' ? 'שויך ידנית' : 'iCount'})
+                  {baseCandidates.map((d) => {
+                    const key = `${d.doctype}:${d.docnum}`;
+                    const idx = baseDocs.findIndex((b) => `${b.doctype}:${b.docnum}` === key);
+                    return (
+                      <label key={key} className="flex items-center gap-2 text-[13px] text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={idx >= 0}
+                          onChange={() => toggleBase(d)}
+                        />
+                        <span>
+                          {idx === 0 && baseDocs.length > 1 && (
+                            <span className="ml-1 rounded bg-blue-50 px-1 py-px text-[10px] text-blue-700">ראשי</span>
+                          )}
+                          {d.doctypeLabel} מס׳ {d.docnum}
+                          {d.amountIls != null && <span className="text-gray-500"> · {fmtIls(d.amountIls)}</span>}
+                          {d.issuedAt && <span className="text-gray-500"> · {String(d.issuedAt).slice(0, 10)}</span>}
+                          {d.clientName && <span className="text-gray-500"> · {d.clientName}</span>}
+                          <span className="text-[11px] text-gray-400">
+                            {' '}({d.origin === 'gos' ? 'הופק מ־GOS' : d.origin === 'linked' ? 'שויך ידנית' : 'iCount'})
+                          </span>
                         </span>
-                      </span>
-                    </label>
-                  ))}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Multi-parent: state the whole relationship out loud, plus the
+                  arithmetic. A closing document that does not equal the sum of
+                  what it closes is not blocked here — iCount is the authority on
+                  whether the close is legal — but it is never silent. */}
+              {baseDocs.length > 1 && (
+                <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[12px] ring-1 ring-gray-200">
+                  <p className="font-medium text-gray-700">
+                    המסמך יסגור {baseDocs.length} מסמכי מקור:
+                  </p>
+                  <p className="mt-0.5 text-gray-600">
+                    {baseDocs.map((b) => `${b.doctypeLabel || b.doctype} ${b.docnum}`).join(' · ')}
+                  </p>
+                  {baseSum != null && (
+                    <p className={`mt-1 ${Math.abs(baseSum - grossIls) > 0.11 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                      סכום מסמכי המקור: {fmtIls(baseSum)} · סכום המסמך החדש: {fmtIls(grossIls)}
+                      {Math.abs(baseSum - grossIls) > 0.11 && ' — הסכומים אינם זהים, ודאו שזו הכוונה'}
+                    </p>
+                  )}
                 </div>
               )}
               {baseLoading && <p className="mt-1 text-[12px] text-blue-700">טוען את שורות המסמך המקורי…</p>}
@@ -797,6 +894,47 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             </div>
           )}
 
+          {/* ── שייך לדילים נוספים ────────────────────────────────────────────
+              Only for documents that RECORD money — billing paper settles
+              nothing, so splitting it would be meaningless. The confirmation
+              happens HERE, before issuance, so the operator sees exactly which
+              deals the payment covers and for how much before the document
+              exists at the provider. */}
+          {typeDef?.paymentsAllowed && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12px] font-semibold text-gray-500">שיוך התשלום</p>
+                <button
+                  type="button"
+                  onClick={() => setAllocationOpen(true)}
+                  className="text-[12.5px] font-medium text-blue-700 hover:underline"
+                >
+                  {allocationPlan ? 'עריכת השיוך' : '+ שייך לדילים נוספים'}
+                </button>
+              </div>
+              {!allocationPlan ? (
+                <p className="mt-1 text-[13px] text-gray-500">
+                  כל הסכום ישויך לדיל הנוכחי.
+                </p>
+              ) : (
+                <div className="mt-1.5 space-y-0.5 text-[13px] text-gray-700">
+                  {allocationPlan.map((a) => (
+                    <div key={a.dealId} className="flex items-center justify-between">
+                      <span>#{a.orderNo ?? '—'}{a.label ? ` · ${a.label}` : ''}</span>
+                      <span dir="ltr" className="tabular-nums">{fmtIls(a.amountMinor / 100)}</span>
+                    </div>
+                  ))}
+                  <div className="mt-1 flex items-center justify-between border-t border-gray-200 pt-1 text-[12px] text-gray-500">
+                    <span>סה״כ שויך</span>
+                    <span dir="ltr" className="tabular-nums">
+                      {fmtIls(allocationPlan.reduce((s, a) => s + a.amountMinor, 0) / 100)} / {fmtIls(grossIls)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Notes + send. The field shows the EXACT text that will be sent to
               iCount (hwc) — nothing is appended after confirmation. */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -836,6 +974,82 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           )}
         </div>
       )}
+
+      {/* Pre-issuance allocation confirmation. Nothing is written here — the
+          plan travels with the issue request and is persisted in the same
+          transaction as the document. */}
+      <PreIssueAllocationDialog
+        open={allocationOpen}
+        onClose={() => setAllocationOpen(false)}
+        dealId={dealId}
+        totalMinor={Math.round(grossIls * 100)}
+        currency={defaults?.currency || 'ILS'}
+        initialPlan={allocationPlan}
+        onConfirm={(plan, note) => {
+          // "everything to this deal" is not a split — clear it so the ordinary
+          // single-deal path (and its row shape) is what actually runs.
+          setAllocationPlan(plan && plan.length > 1 ? plan : null);
+          setAllocationNote(note || '');
+          setAllocationOpen(false);
+        }}
+      />
+    </Dialog>
+  );
+}
+
+// The N-deal allocation step, run BEFORE the document exists. Reuses the same
+// panel (and therefore the same arithmetic) as post-issue re-allocation, so the
+// operator sees one consistent surface for "which deals does this money cover".
+function PreIssueAllocationDialog({ open, onClose, dealId, totalMinor, currency, initialPlan, onConfirm }) {
+  const [deal, setDeal] = useState(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    (async () => {
+      try {
+        const d = await api.deals.get(dealId);
+        if (alive) setDeal(d);
+      } catch {
+        if (alive) setDeal(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [open, dealId]);
+
+  if (!open) return null;
+
+  const initial = initialPlan?.length
+    ? initialPlan.map((a) => ({ ...a, dealTitle: a.label }))
+    : [{
+      dealId,
+      orderNo: deal?.orderNo ?? null,
+      dealTitle: deal?.title ?? null,
+      amountMinor: totalMinor,
+      dealTotalMinor: deal ? Number(deal.valueMinor || 0) : null,
+    }];
+
+  return (
+    <Dialog open={open} onClose={onClose} title="שיוך התשלום לדילים" size="xl">
+      <AllocationPanel
+        payment={{ realMinor: totalMinor, currency, label: 'סכום המסמך' }}
+        initial={initial}
+        originDealId={dealId}
+        onCancel={onClose}
+        busy={false}
+        onApply={async (plan, opts, rows) => {
+          // Nothing is written before the document exists — the plan is carried
+          // into the issue request, which persists it atomically.
+          const byId = new Map((rows || []).map((r) => [r.dealId, r]));
+          onConfirm(
+            plan.map((p) => {
+              const row = byId.get(p.dealId);
+              return { ...p, orderNo: row?.orderNo ?? null, label: row?.contactName || row?.title || null };
+            }),
+            opts?.reason,
+          );
+        }}
+      />
     </Dialog>
   );
 }
