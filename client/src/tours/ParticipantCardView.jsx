@@ -2,6 +2,23 @@ import { useState } from 'react';
 import RichText from '../editor/RichText.jsx';
 import { participantsLabel } from '../portal/format.js';
 import ProductBreakdown from './ProductBreakdown.jsx';
+import {
+  formatPhoneDisplay,
+  phoneTelHref,
+  phoneCountryFromIntl,
+  countryFlag,
+  normalizePhoneIntl,
+} from '../../../shared/phone.mjs';
+
+// A flag ONLY for a foreign number GOS has actually placed — never for an
+// Israeli one (the guide's default) and never for a number whose country is
+// ambiguous or unknown.
+function phoneFlag(raw) {
+  const intl = normalizePhoneIntl(raw);
+  if (!intl || intl.startsWith('972')) return null;
+  const flag = countryFlag(phoneCountryFromIntl(intl));
+  return flag ? `${flag} ` : null;
+}
 
 // Shared participant/customer card presentation — the ONE visual source of
 // truth for the tour surfaces (admin Tour modal `CustomerCard` and the Guide
@@ -91,13 +108,18 @@ export default function ParticipantCardView({
 
       {(phone || email || fieldRepName) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 px-3 py-2 text-[13px]">
+          {/* A guide must be able to READ and TAP this. The canonical formatter
+              renders an Israeli number the way an Israeli reads it, a foreign
+              one in international form with its country flag, and an
+              un-placeable one exactly as stored — never dressed up. The tel:
+              target is always the tightest unambiguous form. */}
           {phone && (
             <a
-              href={`tel:${phone}`}
+              href={`tel:${phoneTelHref(phone)}`}
               dir="ltr"
               className="tabular-nums text-blue-700 hover:underline active:underline"
             >
-              📞 {phone}
+              📞 {phoneFlag(phone)}{formatPhoneDisplay(phone)}
             </a>
           )}
           {email && (

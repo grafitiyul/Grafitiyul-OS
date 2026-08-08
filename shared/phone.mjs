@@ -103,6 +103,126 @@ export function knownDialCountry(code) {
   return Boolean(COUNTRY_DIAL[String(code || '').trim().toUpperCase()]);
 }
 
+// ── Display ──────────────────────────────────────────────────────────────────
+// A guide holding a phone at 11:00 on a Monday needs a number they can READ and
+// TAP. Until now every stored value was rendered verbatim, which is right for an
+// Israeli number and useless for a foreign one: "0669129785" tells an Israeli
+// guide nothing about which country to dial.
+//
+// Nothing here INFERS a country. It only formats a number GOS has already
+// resolved to international form — the resolution itself still requires real
+// evidence (a declared billing country), exactly as normalizePhoneIntl demands.
+
+// Dial code → country, ONLY where the mapping is unambiguous. '1' is
+// deliberately absent: +1 is both the US and Canada, and a flag that might be
+// the wrong one is worse than no flag.
+const DIAL_TO_COUNTRY = (() => {
+  const counts = new Map();
+  for (const [iso, { cc }] of Object.entries(COUNTRY_DIAL)) {
+    counts.set(cc, [...(counts.get(cc) || []), iso]);
+  }
+  const out = new Map();
+  for (const [cc, isos] of counts) {
+    // 'UK' is an alias for 'GB', not a second country.
+    const real = isos.filter((i) => i !== 'UK');
+    if (real.length === 1) out.set(cc, real[0]);
+  }
+  return out;
+})();
+
+/** ISO-3166 alpha-2 for an international number, or null when ambiguous. */
+export function phoneCountryFromIntl(intl) {
+  const digits = String(intl || '').replace(/\D/g, '');
+  if (!digits) return null;
+  // Longest dial code wins (351 before 35, 972 before 97).
+  for (const len of [3, 2, 1]) {
+    const hit = DIAL_TO_COUNTRY.get(digits.slice(0, len));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The regional-indicator flag for an ISO-3166 alpha-2 code. */
+export function countryFlag(iso) {
+  const s = String(iso || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(s)) return null;
+  return String.fromCodePoint(...[...s].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+// National-number grouping, ONLY where the convention is genuinely known.
+//
+// Deliberately almost empty. Grouping digits the way a country does NOT write
+// them is a small lie about how the number is read, and it is the same class of
+// error as the fabricated card digits this project just removed. A country with
+// no entry renders as "+CC national" — unambiguous, correct everywhere, and
+// never pretending to a local convention nobody verified.
+//
+// FR is here because it was verified against the real number this rule exists
+// for (#27151: 06 69 12 97 85). Add another only with the same standard of
+// evidence.
+const NATIONAL_GROUPS = Object.freeze({
+  FR: [1, 2, 2, 2, 2], // 6 69 12 97 85
+});
+
+function group(national, sizes) {
+  const out = [];
+  let i = 0;
+  for (const n of sizes) {
+    if (i >= national.length) break;
+    out.push(national.slice(i, i + n));
+    i += n;
+  }
+  if (i < national.length) out.push(national.slice(i));
+  return out.join(' ');
+}
+
+/**
+ * The human-readable form of a phone number.
+ *
+ *   '0501234567'    → '0501234567'           (Israeli — EXACTLY as stored)
+ *   '972501234567'  → '0501234567'           (Israeli — local form)
+ *   '33669129785'   → '+33 6 69 12 97 85'    (international, grouped)
+ *   '0669129785'    → '0669129785'           (unplaceable — shown verbatim,
+ *                                             never dressed up as anything)
+ *
+ * Israeli numbers are deliberately NOT re-styled. They are the default case,
+ * every operator and guide already reads them fine, and re-grouping thousands
+ * of existing numbers to satisfy a foreign-number fix would be a change nobody
+ * asked for. Only numbers GOS resolved to a FOREIGN country are reformatted —
+ * that is the actual problem being solved.
+ */
+export function formatPhoneDisplay(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  const intl = normalizePhoneIntl(value);
+  // Un-normalizable: show exactly what is stored. GOS does not know what this
+  // number is, and pretending otherwise is how '0669129785' became Israeli.
+  if (!intl) return value;
+  if (intl.startsWith('972')) {
+    // Already written in local form → leave it completely alone.
+    if (value.replace(/\D/g, '').startsWith('0')) return value;
+    return `0${intl.slice(3)}`;
+  }
+  const iso = phoneCountryFromIntl(intl);
+  const cc = iso ? COUNTRY_DIAL[iso].cc : null;
+  if (!cc) return `+${intl}`;
+  const national = intl.slice(cc.length);
+  const sizes = NATIONAL_GROUPS[iso];
+  return `+${cc} ${sizes ? group(national, sizes) : national}`;
+}
+
+/**
+ * The `tel:` target. Always the tightest unambiguous form GOS can produce —
+ * E.164 when the number is placed, the stored value otherwise (a local number
+ * still dials correctly for someone in the same country).
+ */
+export function phoneTelHref(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  const intl = normalizePhoneIntl(value);
+  return intl ? `+${intl}` : value;
+}
+
 /**
  * @param raw      the number as supplied
  * @param options.country  ISO-3166 alpha-2 from a TRUSTED source (Woo billing

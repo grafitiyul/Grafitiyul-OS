@@ -7,6 +7,7 @@ import { friendlyIcountError } from './icountErrors.js';
 import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 import { documentTotals } from '../../../../../shared/documentVat.mjs';
 import AllocationPanel from '../payments/AllocationPanel.jsx';
+import MultiDealDocumentWizard from '../payments/MultiDealDocumentWizard.jsx';
 
 // "הפק מסמך" — produce an iCount accounting document from a Deal.
 //
@@ -115,6 +116,11 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   const [allocationPlan, setAllocationPlan] = useState(null);
   const [allocationNote, setAllocationNote] = useState('');
   const [allocationOpen, setAllocationOpen] = useState(false);
+  // "מסמך אחד לדילים שונים" — the wizard's confirmed plan. Holding it here (and
+  // not merging it away) is what lets the operator see, edit and cancel the
+  // multi-deal decision from the composer without redoing the wizard.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [multiDealPlan, setMultiDealPlan] = useState(null);
 
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -220,6 +226,60 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
   // a payment, so GOS blocks upfront with a clear message.
   const paymentsMissing =
     !!typeDef?.paymentsRequired && !payments.some((p) => p.method && Number(p.amount) > 0);
+
+  // ── The multi-deal plan lands in THIS composer ────────────────────────────
+  // The wizard configures; the composer still owns the document. Applying a
+  // plan writes exactly what the operator confirmed — the deal-ordered lines,
+  // the deal-ordered notes, the full based_on list and the per-deal shares —
+  // and everything stays editable before "הפק מסמך", which is still the one
+  // button that issues anything.
+  function applyMultiDealPlan(plan) {
+    setMultiDealPlan(plan);
+    setWizardOpen(false);
+    setDoctype(plan.doctype);
+    setRows(plan.rows.map((r) => ({ ...r })));
+    setVatMode(plan.vatMode);
+    setLang(plan.language === 'en' ? 'en' : 'he');
+    // Composed notes replace the suggestion unless the operator already typed
+    // their own — the same rule the single-deal notes swap follows.
+    if (!notesEdited) setNotes(plan.notes || '');
+    // Source documents: the FULL list, with the first also in the scalar
+    // fields for every reader that predates multi-parent.
+    setBaseDocs(plan.perDeal.filter((d) => d.basedOn).map((d) => ({
+      doctype: d.basedOn.doctype,
+      docnum: d.basedOn.docnum,
+      doctypeLabel: d.basedOnLabel,
+      amountIls: d.sourceAmountIls,
+    })));
+    setBaseDoc(plan.perDeal.find((d) => d.basedOn)?.basedOn || null);
+    setBaseNote(null);
+    setBaseError(null);
+    // The per-deal shares, in the shape issueDocument persists.
+    setAllocationPlan(plan.allocations.map((a) => {
+      const d = plan.perDeal.find((x) => x.dealId === a.dealId);
+      return { ...a, label: d?.contactName || d?.dealTitle || null };
+    }));
+    setAllocationNote(`מסמך אחד ל-${plan.perDeal.length} דילים`);
+    // A document that records money opens with one payment over its total.
+    const def = (defaults?.docTypes || []).find((t) => t.key === plan.doctype);
+    setPayments(def?.paymentsAllowed ? [newPayment(plan.amountIls)] : []);
+  }
+
+  // Cancelling the multi-deal decision returns the composer to THIS deal only.
+  function clearMultiDeal() {
+    setMultiDealPlan(null);
+    setAllocationPlan(null);
+    setAllocationNote('');
+    setBaseDocs([]);
+    setBaseDoc(null);
+    setRows((defaults?.rows || []).map((r) => ({ ...r })));
+    setVatMode(defaults?.vatMode || 'included');
+    setNotesMap(defaults?.notesByDoctype || null);
+    if (!notesEdited) setNotes(defaults?.notesByDoctype?.[doctype] ?? '');
+    const def = (defaults?.docTypes || []).find((t) => t.key === doctype);
+    const gross = documentTotals(defaults?.rows || [], defaults?.vatMode || 'included', defaults?.vatRate ?? 18).grossIls;
+    setPayments(def?.paymentsAllowed ? [newPayment(gross)] : []);
+  }
 
   function switchMode(mode) {
     setClientMode(mode);
@@ -542,6 +602,42 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
               חיבור iCount אינו מוגדר בסביבה הזו (משתני ICOUNT_*). לא ניתן להפיק מסמכים עד להגדרתו.
             </div>
+          )}
+
+          {/* SECONDARY action — the ordinary single-deal flow below is and stays
+              the default. The wizard only CONFIGURES a multi-deal document; it
+              returns here, pre-filled, and issuing still happens from this
+              composer. */}
+          {!sendFlow && flow !== 'manualPayment' && (
+            multiDealPlan ? (
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-900">
+                <div className="min-w-0">
+                  <div className="font-semibold">מסמך אחד ל־{multiDealPlan.perDeal.length} דילים</div>
+                  <div className="mt-0.5 text-[12.5px]">
+                    {multiDealPlan.perDeal
+                      .map((d) => `#${d.orderNo} ${fmtIls(d.allocationIls)}`)
+                      .join(' · ')}
+                  </div>
+                  <div className="mt-0.5 text-[12px] text-blue-700">
+                    מבוסס על {multiDealPlan.basedOnDocs.length} מסמכי מקור · השורות וההערות מסודרות לפי סדר הדילים
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <button type="button" onClick={() => setWizardOpen(true)}
+                    className="text-[12px] font-medium text-blue-700 hover:underline">עריכה</button>
+                  <button type="button" onClick={clearMultiDeal}
+                    className="text-[12px] text-blue-600 hover:underline">ביטול הריבוי</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setWizardOpen(true)}
+                className="w-full rounded-lg border border-dashed border-blue-300 bg-blue-50/40 px-3 py-2 text-[13px] font-medium text-blue-700 hover:bg-blue-50"
+              >
+                מסמך אחד לדילים שונים
+              </button>
+            )
           )}
 
           {sendFlow && (
@@ -974,6 +1070,16 @@ export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow =
           )}
         </div>
       )}
+
+      {/* "מסמך אחד לדילים שונים" — CONFIGURES this composer, issues nothing.
+          Mounted outside the form body so it survives the loading branches. */}
+      <MultiDealDocumentWizard
+        open={wizardOpen}
+        dealId={dealId}
+        docTypes={defaults?.docTypes || []}
+        onClose={() => setWizardOpen(false)}
+        onConfirm={applyMultiDealPlan}
+      />
 
       {/* Pre-issuance allocation confirmation. Nothing is written here — the
           plan travels with the issue request and is persisted in the same

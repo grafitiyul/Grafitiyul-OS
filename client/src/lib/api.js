@@ -927,6 +927,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    // ── "מסמך אחד לדילים שונים" ──────────────────────────────────────────────
+    // Candidate SOURCE documents for one deal, ranked for the target doctype
+    // (reuses the deal's existing document list — no second lookup).
+    multiDealSources: (dealId, doctype) =>
+      request(`/api/payments/multi-deal-document/sources${qs({ dealId, doctype })}`),
+    // Compose the plan. Issues NOTHING — the result pre-fills the normal
+    // "הפק מסמך" composer, which stays the one place a document is produced.
+    prepareMultiDealDocument: (data) =>
+      request('/api/payments/multi-deal-document/prepare', { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── Collection (גבייה) — WON deals that still require collection ──
   collection: {

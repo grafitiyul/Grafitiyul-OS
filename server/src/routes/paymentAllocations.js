@@ -33,6 +33,12 @@ import {
 } from '../payments/allocation.js';
 import { userOrigin } from '../timeline/events.js';
 import { registerDealOrderNoParam } from './dealParam.js';
+import { listDealDocuments, ICOUNT_DEAL_INCLUDE } from '../icountDocs.js';
+import { composeMultiDealDocument, rankSourceCandidates } from '../payments/multiDealDocument.js';
+
+// Provider failures are 422 (never 502/504) — the project-wide rule.
+const providerErrorStatus = (code) =>
+  (code === 'icount_request_failed' || code === 'icount_not_configured' || code === 'icount_timeout' ? 422 : 400);
 
 const router = express.Router();
 
@@ -46,7 +52,16 @@ const BAD_REQUEST = new Set([
   'cross_customer_confirmation_required',
 ]);
 
-const statusFor = (code) => (code === 'allocation_group_not_found' || code === 'payment_row_not_found'
+const PREPARE_BAD_REQUEST = new Set([
+  'invalid_doctype',
+  'deals_required',
+  'deal_missing',
+  'deal_duplicate',
+  'base_document_type_invalid',
+  'allocation_amount_invalid',
+]);
+
+const statusFor = (code) => (code === 'allocation_group_not_found' || code === 'payment_row_not_found' || code === 'deal_not_found'
   ? 404
   : BAD_REQUEST.has(code) ? 400 : 500);
 
@@ -101,6 +116,55 @@ router.get(
         };
       }),
     });
+  }),
+);
+
+// ── Multi-deal document wizard ───────────────────────────────────────────────
+//
+// Composes the PLAN only. Nothing is issued here — the plan pre-fills the
+// normal "הפק מסמך" composer and the operator issues from there, so there is
+// exactly one document composer in GOS and one issue path.
+
+// Candidate source documents for ONE deal, ranked for a target doctype.
+// Reuses the deal's existing document list (GOS rows + live iCount search) —
+// no second document lookup.
+router.get(
+  '/multi-deal-document/sources',
+  handle(async (req, res) => {
+    const dealId = String(req.query.dealId || '');
+    const doctype = String(req.query.doctype || '');
+    if (!dealId || !doctype) return res.status(400).json({ error: 'deal_and_doctype_required' });
+    // listDealDocuments reads the deal's contact/org channels to search iCount,
+    // so it needs the canonical include — the same one the single-deal route uses.
+    const deal = await prisma.deal.findUnique({ where: { id: dealId }, include: ICOUNT_DEAL_INCLUDE });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    try {
+      const { documents, liveError } = await listDealDocuments(prisma, deal);
+      res.json({ candidates: rankSourceCandidates(documents, doctype), liveError: liveError || null });
+    } catch (err) {
+      res.status(providerErrorStatus(err?.code || 'sources_failed'))
+        .json({ error: err?.code || 'sources_failed', reason: err?.reason || null });
+    }
+  }),
+);
+
+router.post(
+  '/multi-deal-document/prepare',
+  handle(async (req, res) => {
+    try {
+      const plan = await composeMultiDealDocument(prisma, req.body || {});
+      // Different customers on one accounting document is legitimate but must
+      // never happen by accident — the SAME check the allocation dialog uses.
+      const cross = await crossCustomerCheck(prisma, plan.perDeal.map((d) => d.dealId));
+      res.json({ ...plan, crossCustomer: cross });
+    } catch (err) {
+      const code = err?.code || 'prepare_failed';
+      if (!BAD_REQUEST.has(code) && !PREPARE_BAD_REQUEST.has(code)) {
+        console.error(`[multi-deal-doc] prepare failed: ${err?.message}`);
+      }
+      res.status(PREPARE_BAD_REQUEST.has(code) ? 400 : statusFor(code))
+        .json({ error: code, detail: err?.detail || null, reason: err?.reason || null });
+    }
   }),
 );
 
