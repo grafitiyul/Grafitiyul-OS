@@ -137,15 +137,20 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
         <div className="space-y-4">
           <section className="bg-white border border-gray-200 rounded-lg p-4">
             <h2 className="text-[14px] font-semibold text-gray-900 mb-3">פרטי איש קשר</h2>
+            {/* Grouped by name PART, not by language: row 1 = first name
+                (Hebrew on the leading/right edge, English beside it), row 2 =
+                last name. In this RTL grid the first cell of each row is the
+                right-hand one, so DOM order is also the natural tab order:
+                he-first → en-first → he-last → en-last. */}
             <div className="grid grid-cols-2 gap-3">
               <Field label="שם פרטי (עברית)">
                 <input value={form.firstNameHe} onChange={(e) => set('firstNameHe', e.target.value)} className={FIELD} />
               </Field>
-              <Field label="שם משפחה (עברית)">
-                <input value={form.lastNameHe} onChange={(e) => set('lastNameHe', e.target.value)} className={FIELD} />
-              </Field>
               <Field label="First name (EN)">
                 <input value={form.firstNameEn} onChange={(e) => set('firstNameEn', e.target.value)} dir="ltr" className={FIELD} />
+              </Field>
+              <Field label="שם משפחה (עברית)">
+                <input value={form.lastNameHe} onChange={(e) => set('lastNameHe', e.target.value)} className={FIELD} />
               </Field>
               <Field label="Last name (EN)">
                 <input value={form.lastNameEn} onChange={(e) => set('lastNameEn', e.target.value)} dir="ltr" className={FIELD} />
