@@ -258,19 +258,39 @@ export function composeNotes(perDeal) {
  * Rank a deal's candidate source documents for a target doctype.
  *
  * "Do not make me remember document numbers": the documents most likely to be
- * the parent come first — a valid parent type that is still OPEN, then
- * partially closed, then closed, newest first within each group.
+ * the parent come first, each carrying everything an operator identifies it by.
+ *
+ * Two things about the input are worth stating, because both were found by
+ * verifying against real production data rather than assumed:
+ *
+ *   • the date arrives as `createdAt` (the deal's document list), not
+ *     `issuedAt` — sorting on the latter silently tied every row;
+ *   • GOS-issued rows carry NO settlement status at all. GOS genuinely does not
+ *     know whether a חשבון עסקה it issued has since been closed at iCount, so
+ *     the status is reported as null and ranked as "no evidence it is closed"
+ *     — above a known-partial or known-closed document, below a confirmed-open
+ *     one. Inventing 'open' for them would be a claim nobody verified.
  */
+const STATUS_RANK = { open: 0, partial: 2, closed: 3 };
+const UNKNOWN_STATUS_RANK = 1;
+
 export function rankSourceCandidates(candidates, targetDoctype) {
   const typeDef = DOC_TYPES.find((t) => t.key === targetDoctype);
   const allowed = new Set(typeDef?.baseTypes || []);
-  const statusRank = { open: 0, partial: 1, closed: 2 };
   return (candidates || [])
     .filter((d) => d.docnum && allowed.has(d.doctype))
-    .map((d) => ({ ...d, eligible: true }))
+    .map((d) => ({
+      ...d,
+      // ONE date field for the UI, whichever the source supplied.
+      issuedAt: d.issuedAt || d.createdAt || null,
+      // Explicitly null rather than undefined: the UI renders "unknown" instead
+      // of a blank it cannot distinguish from a missing field.
+      status: d.status || null,
+      amountIls: d.amountIls ?? null,
+    }))
     .sort((a, b) => {
-      const s = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);
+      const s = (STATUS_RANK[a.status] ?? UNKNOWN_STATUS_RANK) - (STATUS_RANK[b.status] ?? UNKNOWN_STATUS_RANK);
       if (s !== 0) return s;
-      return String(b.issuedAt || '').localeCompare(String(a.issuedAt || ''));
+      return new Date(b.issuedAt || 0) - new Date(a.issuedAt || 0);
     });
 }

@@ -112,6 +112,46 @@ test('within the same status the newest document comes first', () => {
   assert.deepEqual(out.map((d) => d.docnum), ['new', 'old']);
 });
 
+// ── Real production shape (found by verifying, not by assuming) ──────────────
+
+test('the deal document list supplies createdAt, and it is used as the date', () => {
+  // GOS-issued rows carry `createdAt`; sorting on `issuedAt` alone tied them all.
+  const out = rankSourceCandidates([
+    { doctype: 'deal', docnum: 'old', createdAt: new Date('2026-01-01'), origin: 'gos' },
+    { doctype: 'deal', docnum: 'new', createdAt: new Date('2026-08-01'), origin: 'gos' },
+  ], 'invrec');
+  assert.deepEqual(out.map((d) => d.docnum), ['new', 'old']);
+  assert.ok(out[0].issuedAt, 'the UI gets one date field regardless of the source');
+});
+
+test('a GOS-issued document reports UNKNOWN status, never an invented "open"', () => {
+  const [row] = rankSourceCandidates(
+    [{ doctype: 'deal', docnum: '1', createdAt: new Date('2026-08-01'), origin: 'gos' }], 'invrec');
+  assert.equal(row.status, null, 'GOS does not know if iCount closed it since');
+  assert.equal(row.amountIls, null, 'and an absent amount is null, not undefined');
+});
+
+test('unknown status ranks below confirmed-open and above known-closed', () => {
+  const out = rankSourceCandidates([
+    cand('deal', 'closed', 'closed', '2026-08-03'),
+    { doctype: 'deal', docnum: 'unknown', createdAt: new Date('2026-08-02') },
+    cand('deal', 'open', 'open', '2026-08-01'),
+    cand('deal', 'partial', 'partial', '2026-08-04'),
+  ], 'invrec');
+  assert.deepEqual(out.map((d) => d.docnum), ['open', 'unknown', 'partial', 'closed']);
+});
+
+test('every ranked candidate carries the fields the operator identifies it by', () => {
+  const out = rankSourceCandidates([
+    { doctype: 'deal', docnum: '54572', createdAt: new Date('2026-08-01'), clientName: 'x', doctypeLabel: 'חשבון עסקה', amountIls: 100 },
+    { doctype: 'deal', docnum: '54460', createdAt: new Date('2026-07-01'), clientName: 'y', doctypeLabel: 'חשבון עסקה' },
+  ], 'invrec');
+  for (const c of out) {
+    assert.ok(c.docnum && c.doctypeLabel);
+    assert.ok('amountIls' in c && 'status' in c && 'issuedAt' in c);
+  }
+});
+
 test('a document with no number is never offered as a parent', () => {
   const out = rankSourceCandidates([{ doctype: 'deal', docnum: null, status: 'open' }], 'invrec');
   assert.equal(out.length, 0);

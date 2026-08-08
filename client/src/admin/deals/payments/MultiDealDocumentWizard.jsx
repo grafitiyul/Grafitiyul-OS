@@ -399,7 +399,10 @@ function DealRow({ item, index, doctype, docTypes, isOrigin, onSetSource, onRemo
                     {c.issuedAt && ` · ${String(c.issuedAt).slice(0, 10)}`}
                   </span>
                   <span className="block text-[11.5px] text-gray-400">
-                    {[c.clientName, STATUS_HE[c.status] || null,
+                    {[c.clientName,
+                      // GOS does not know whether a document it issued was
+                      // later closed at iCount — say "unknown", never guess.
+                      c.status ? STATUS_HE[c.status] : 'מצב סגירה לא ידוע',
                       c.origin === 'gos' ? 'הופק מ־GOS' : c.origin === 'linked' ? 'שויך ידנית' : 'iCount',
                     ].filter(Boolean).join(' · ')}
                   </span>
