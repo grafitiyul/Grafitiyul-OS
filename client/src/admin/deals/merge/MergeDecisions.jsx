@@ -1,4 +1,5 @@
 import { money, fmtWhen, STATUS_HE, TOUR_KIND_HE, BLOCKER_HE } from './mergeFormat.js';
+import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 
 // The decisions step.
 //
@@ -225,24 +226,39 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
 
       {/* ── primary contact ────────────────────────────────────────────── */}
       <Block
-        title="אנשי קשר"
-        hint={`כל אנשי הקשר משני הדילים יקושרו לדיל שנשאר${contacts.addedCount ? ` (${contacts.addedCount} חדשים)` : ''}. אנשי קשר עצמם לא נמחקים ולא מאוחדים.`}
+        title="איש הקשר הראשי"
+        hint={
+          `כל אנשי הקשר משני הדילים יישמרו ויקושרו לדיל המאוחד${contacts.addedCount ? ` (${contacts.addedCount} מהם חדשים בדיל שנשאר)` : ''}. `
+          + 'הבחירה כאן היא מי יהיה איש הקשר הראשי — אף איש קשר לא נמחק, ואנשי קשר לא מאוחדים זה לזה.'
+        }
       >
-        <div className="space-y-1">
-          {contacts.people.map((p) => (
-            <label key={p.contactId} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-[12.5px]">
-              <input
-                type="radio"
-                name="primaryContact"
-                checked={contacts.primaryContactId === p.contactId}
-                onChange={() => onPatch({ primaryContactId: p.contactId })}
-              />
-              <span className="flex-1 text-gray-800">{p.name}</span>
-              {contacts.primaryContactId === p.contactId && (
-                <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">ראשי</span>
-              )}
-            </label>
-          ))}
+        <div className="space-y-1.5">
+          {contacts.people.map((p) => {
+            const on = contacts.primaryContactId === p.contactId;
+            return (
+              <label
+                key={p.contactId}
+                className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition ${
+                  on ? 'border-gray-800 bg-gray-50 ring-1 ring-gray-800' : 'border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="primaryContact"
+                  className="mt-1"
+                  checked={on}
+                  onChange={() => onPatch({ primaryContactId: p.contactId })}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-gray-900">{p.name}</span>
+                    {on && <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">ראשי</span>}
+                  </span>
+                  <ContactIdentity person={p} />
+                </span>
+              </label>
+            );
+          })}
         </div>
       </Block>
 
@@ -279,14 +295,14 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
                     <MiniChoice
                       on={answered === 'survivor'}
                       onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'survivor' } })}
-                      text={displayFieldValue(f, 'survivor', preview)}
-                      sub={`דיל #${preview.survivor.orderNo}`}
+                      text={<FieldValue display={f.survivorDisplay} long={f.survivorDisplay?.long} />}
+                      sub={`מדיל #${preview.survivor.orderNo}`}
                     />
                     <MiniChoice
                       on={answered === 'other'}
                       onClick={() => onPatch({ fields: { ...(decisions.fields || {}), [f.key]: 'other' } })}
-                      text={displayFieldValue(f, 'other', preview)}
-                      sub={`דיל #${preview.other.orderNo}`}
+                      text={<FieldValue display={f.otherDisplay} long={f.otherDisplay?.long} />}
+                      sub={`מדיל #${preview.other.orderNo}`}
                     />
                   </div>
                 </div>
@@ -297,10 +313,22 @@ export default function MergeDecisions({ preview, decisions, onPatch, loading })
       )}
 
       {autoResolvedFields.length > 0 && (
-        <Auto
-          title="שדות שהושלמו אוטומטית"
-          text={`שדות שהיו ריקים בדיל שנשאר יתמלאו מהדיל השני: ${autoResolvedFields.map((f) => f.labelHe).join(', ')}.`}
-        />
+        <Auto title="שדות שהושלמו אוטומטית">
+          <span className="block">
+            שדות שהיו ריקים בדיל שנשאר יתמלאו מדיל #{preview.other.orderNo}:
+          </span>
+          {/* The VALUE, not just the field name. Nothing is being asked here,
+              but the operator is about to confirm a merge and has a right to
+              see what will land — without opening the other deal. */}
+          <ul className="mt-1 space-y-0.5">
+            {autoResolvedFields.map((f) => (
+              <li key={f.key} className="text-gray-600">
+                <span className="text-gray-400">{f.labelHe}:</span>{' '}
+                <FieldValue display={f.otherDisplay} long={f.otherDisplay?.long} />
+              </li>
+            ))}
+          </ul>
+        </Auto>
       )}
 
       {/* ── tasks ──────────────────────────────────────────────────────── */}
@@ -354,24 +382,69 @@ function autoParticipantsText(p, preview) {
   return `רק בדיל שנשאר הוזנו משתתפים — נשאר ${p.value}.`;
 }
 
-// Conflicting values are shown in BUSINESS language wherever the preview
-// carries a label for them; a raw id is never rendered (product standard 9).
-// Falls back to the value itself for plain scalars (dates, languages, text).
-function displayFieldValue(f, side, preview) {
-  const raw = side === 'survivor' ? f.survivorValue : f.otherValue;
-  const s = side === 'survivor' ? preview.survivor : preview.other;
-  const byKey = {
-    organizationId: s.organizationName,
-    productId: s.productName,
-    productVariantId: s.variantName,
-    locationId: s.variantName,
-    activityType: { group: 'קבוצתי', private: 'פרטי', business: 'עסקי' }[raw],
-  };
-  const label = byKey[f.key];
-  if (label) return label;
-  if (raw === null || raw === undefined || raw === '') return '— ריק —';
-  // An unresolvable id is described rather than exposed.
-  return typeof raw === 'string' && /^c[a-z0-9]{20,}$/.test(raw) ? 'ערך אחר' : String(raw);
+// The value the operator is actually choosing between.
+//
+// The SERVER resolves every stored id into its catalog label
+// (deals/mergeFieldLabels.js) precisely so this component never has to describe
+// a value it cannot read — "ערך אחר" beside a deal number is not a choice
+// anyone can make. An empty value says so explicitly: choosing "nothing" is a
+// real answer to a merge question and must not look like a missing label.
+function FieldValue({ display, long }) {
+  if (!display || (display.label === null && !display.missing)) {
+    return <span className="text-gray-400">לא הוגדר</span>;
+  }
+  if (display.missing) {
+    return <span className="text-amber-700">{display.label}</span>;
+  }
+  const text = String(display.label);
+  const isLong = long && text.length > 60;
+  return (
+    <span className="text-gray-800" title={isLong ? text : undefined}>
+      {isLong ? `${text.slice(0, 60)}…` : text}
+      {display.hint && <span className="mr-1 text-[11px] font-normal text-gray-400">({display.hint})</span>}
+    </span>
+  );
+}
+
+// Enough to tell two people with the SAME NAME apart — which is exactly the
+// case a merge produces — without turning the row into a full contact record.
+//
+// Phones render through the canonical PhoneDisplay (flag + the Israeli-local
+// display convention), the same component the contacts table and contact page
+// use, so a number never looks different here than everywhere else.
+const MAX_SHOWN = 2;
+
+function ContactIdentity({ person }) {
+  const extraPhones = Math.max(0, (person.phones?.length || 0) - MAX_SHOWN);
+  const extraEmails = Math.max(0, (person.emails?.length || 0) - MAX_SHOWN);
+  const orgs = person.organizations || [];
+  const nothing = !person.phones?.length && !person.emails?.length && !orgs.length;
+
+  return (
+    <span className="mt-0.5 block space-y-0.5 text-[11.5px] text-gray-600">
+      {(person.phones || []).slice(0, MAX_SHOWN).map((v) => (
+        <span key={v} className="block"><PhoneDisplay value={v} /></span>
+      ))}
+      {extraPhones > 0 && <span className="block text-gray-400">ועוד {extraPhones} מספרי טלפון</span>}
+
+      {(person.emails || []).slice(0, MAX_SHOWN).map((v) => (
+        <span key={v} className="block truncate" dir="ltr">{v}</span>
+      ))}
+      {extraEmails > 0 && <span className="block text-gray-400">ועוד {extraEmails} כתובות אימייל</span>}
+
+      {orgs.length > 0 && <span className="block">ארגון: {orgs.slice(0, 2).join(', ')}{orgs.length > 2 ? ` ועוד ${orgs.length - 2}` : ''}</span>}
+      {nothing && <span className="block text-gray-400">אין טלפון או אימייל</span>}
+
+      {/* Provenance last and quietest — it explains where the person came from,
+          it is not what the operator is choosing between. */}
+      <span className="block text-gray-400">
+        {person.onDeals.length > 1
+          ? `מופיע בשני הדילים (#${person.onDeals.join(', #')})`
+          : `מדיל #${person.onDeals[0]}`}
+        {person.wasPrimaryOn?.length ? ` · ראשי בדיל #${person.wasPrimaryOn.join(', #')}` : ''}
+      </span>
+    </span>
+  );
 }
 
 function Block({ title, hint, tone, children }) {
@@ -384,11 +457,11 @@ function Block({ title, hint, tone, children }) {
   );
 }
 
-function Auto({ title, text }) {
+function Auto({ title, text, children }) {
   return (
     <section className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
       <h4 className="text-[12.5px] font-semibold text-gray-700">{title}</h4>
-      <p className="mt-0.5 text-[12px] text-gray-500">{text}</p>
+      <div className="mt-0.5 text-[12px] text-gray-500">{children || text}</div>
     </section>
   );
 }
@@ -417,7 +490,9 @@ function MiniChoice({ on, onClick, text, sub }) {
         on ? 'border-gray-800 bg-gray-50 ring-1 ring-gray-800' : 'border-gray-300 bg-white hover:bg-gray-50'
       }`}
     >
-      <div className="truncate text-[12.5px] font-medium text-gray-800">{text}</div>
+      {/* The VALUE leads and the deal number is secondary metadata below it —
+          the operator is choosing a value, not a deal. */}
+      <div className="text-[12.5px] font-medium">{text}</div>
       <div className="text-[11px] text-gray-400">{sub}</div>
     </button>
   );

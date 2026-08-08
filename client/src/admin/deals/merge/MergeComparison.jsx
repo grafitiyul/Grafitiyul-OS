@@ -24,20 +24,28 @@ export default function MergeComparison({ preview, loading }) {
   const tourA = preview.operational.survivorTour;
   const tourB = preview.operational.otherTour;
 
+  // Every cell is BUSINESS language — the server resolves enums, ids and dates
+  // into their canonical labels (deals/mergeFieldLabels.js + the shared
+  // vocabularies) so this table never shows a stored code.
   const rows = [
     ['מספר הזמנה', `#${a.orderNo}`, `#${b.orderNo}`],
     ['כותרת', a.title, b.title],
     ['סטטוס', STATUS_HE[a.status] || a.status, STATUS_HE[b.status] || b.status],
-    ['סוג פעילות', ACTIVITY_HE[a.activityType] || '—', ACTIVITY_HE[b.activityType] || '—'],
+    ['שלב', a.stageLabel, b.stageLabel],
+    ['סוג פעילות', a.activityTypeLabel || ACTIVITY_HE[a.activityType], b.activityTypeLabel || ACTIVITY_HE[b.activityType]],
     ['איש קשר ראשי', a.primaryContactName, b.primaryContactName],
     ['אנשי קשר', a.contactCount, b.contactCount],
     ['ארגון', a.organizationName, b.organizationName],
+    ['סניף / יחידה', a.unitName, b.unitName],
     ['מוצר', a.productName, b.productName],
     ['עיר', a.variantName, b.variantName],
+    ['מקור הליד', a.sourceLabel, b.sourceLabel],
+    ['פירוט מקור', a.sourceDetail, b.sourceDetail],
     ['תאריך פעילות', a.tourDate ? fmtDate(a.tourDate) : null, b.tourDate ? fmtDate(b.tourDate) : null],
     ['שעה', a.tourTime, b.tourTime],
     ['משתתפים', a.participants, b.participants],
-    ['שפת סיור', a.tourLanguage, b.tourLanguage],
+    ['שפת סיור', a.tourLanguageLabel, b.tourLanguageLabel],
+    ['שפת תקשורת', a.communicationLanguageLabel, b.communicationLanguageLabel],
     ['סכום הדיל', money(a.valueMinor, a.currency), money(b.valueMinor, b.currency)],
     ['בילדר', a.hasBuilder ? `${a.builderLineCount} שורות` : 'ריק', b.hasBuilder ? `${b.builderLineCount} שורות` : 'ריק'],
     ['שולם', money(moneyA.paidMinor, moneyA.currency), money(moneyB.paidMinor, moneyB.currency)],

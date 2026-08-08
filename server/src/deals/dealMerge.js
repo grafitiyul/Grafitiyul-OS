@@ -62,6 +62,9 @@ import { emitTasksChanged } from '../tasks/events.js';
 import { dealMergeOverpaymentKey, DEAL_MERGE_OVERPAYMENT_KIND } from '../reviewItems/kinds/dealMergeOverpayment.js';
 import { composeBuilderLines } from '../pricing/builderCompose.js';
 import { resolveBuilderVatMode } from '../../../shared/vatMode.mjs';
+import { resolveFieldLabels } from './mergeFieldLabels.js';
+import { ACTIVITY_TYPE_LABELS_HE } from '../../../shared/dealActivity.mjs';
+import { tourLanguageLabel, commLanguageLabel } from '../../../shared/language.mjs';
 import {
   MERGE_FIELDS,
   resolveFields,
@@ -357,6 +360,17 @@ export async function previewMerge(client, { dealAId, dealBId, decisions = {} })
   const fieldChoices = decisions.fields || {};
   const fields = resolveFields(survivorSide.deal, otherSide.deal, fieldChoices);
 
+  // What each side's value ACTUALLY IS, in business language. Resolved here so
+  // the client never receives an id it would have to describe as "ערך אחר" —
+  // the operator must be able to answer "which value survives?" from the
+  // wizard alone, without opening either deal.
+  const fieldLabels = await resolveFieldLabels(client, fields.fields, survivorSide.deal, otherSide.deal);
+  const withLabels = (f) => ({
+    ...f,
+    survivorDisplay: fieldLabels.get(f.key)?.survivor || null,
+    otherDisplay: fieldLabels.get(f.key)?.other || null,
+  });
+
   // ── participants ──────────────────────────────────────────────────────────
   const participants = resolveParticipants(
     survivorSide.deal.participants,
@@ -541,9 +555,9 @@ export async function previewMerge(client, { dealAId, dealBId, decisions = {} })
     retiredDealId: retiredId,
     survivor: sideDto(survivorSide),
     other: sideDto(otherSide),
-    fields: fields.fields,
-    fieldConflicts: fields.conflicts,
-    autoResolvedFields: fields.autoResolved,
+    fields: fields.fields.map(withLabels),
+    fieldConflicts: fields.conflicts.map(withLabels),
+    autoResolvedFields: fields.autoResolved.map(withLabels),
     participants,
     status,
     commercial: {
@@ -559,13 +573,13 @@ export async function previewMerge(client, { dealAId, dealBId, decisions = {} })
       primaryContactId: contacts.primaryContactId,
       addedCount: contacts.added.length,
       primaryConflict: contacts.primaryConflict,
-      // Display names for the primary picker, resolved once here.
-      people: [...survivorSide.contacts, ...otherSide.contacts].reduce((acc, l) => {
-        if (!acc.some((p) => p.contactId === l.contactId)) {
-          acc.push({ contactId: l.contactId, name: contactDisplayName(l.contact), contact: l.contact });
-        }
-        return acc;
-      }, []),
+      // Identity for the primary picker. Two people on two deals often share a
+      // name — that is frequently WHY the deals are being merged — so a name
+      // alone cannot answer "which of these is the primary contact?". Phones,
+      // emails, the linked organization and which deal each came from are
+      // resolved once here, on the server, for the same reason the field labels
+      // are: the operator must decide from the wizard alone.
+      people: await buildContactIdentities(client, survivorSide, otherSide),
     },
     operational: {
       ...operational,
@@ -605,6 +619,68 @@ function contactDisplayName(c) {
   return he || `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim() || 'איש קשר';
 }
 
+// Primary value first, then the rest — the order an operator reads them in.
+function orderedValues(list) {
+  const arr = list || [];
+  const primary = arr.filter((x) => x.isPrimary).map((x) => x.value);
+  const rest = arr.filter((x) => !x.isPrimary).map((x) => x.value);
+  return [...primary, ...rest].filter(Boolean);
+}
+
+/**
+ * The identity card for every contact on either deal.
+ *
+ * Contact↔Organization is its own link table (a contact can belong to several
+ * organizations), so it is loaded in ONE batched query for all of them rather
+ * than per contact.
+ */
+async function buildContactIdentities(client, survivorSide, otherSide) {
+  const links = [
+    ...survivorSide.contacts.map((l) => ({ link: l, from: 'survivor', orderNo: survivorSide.deal.orderNo })),
+    ...otherSide.contacts.map((l) => ({ link: l, from: 'other', orderNo: otherSide.deal.orderNo })),
+  ];
+  const contactIds = [...new Set(links.map((x) => x.link.contactId))];
+  if (!contactIds.length) return [];
+
+  const orgLinks = contactIds.length
+    ? await client.contactOrganization.findMany({
+      where: { contactId: { in: contactIds } },
+      select: { contactId: true, organization: { select: { name: true } } },
+    })
+    : [];
+  const orgsByContact = new Map();
+  for (const ol of orgLinks) {
+    if (!ol.organization?.name) continue;
+    if (!orgsByContact.has(ol.contactId)) orgsByContact.set(ol.contactId, []);
+    orgsByContact.get(ol.contactId).push(ol.organization.name);
+  }
+
+  const byContact = new Map();
+  for (const { link, from, orderNo } of links) {
+    const existing = byContact.get(link.contactId);
+    if (existing) {
+      // The same person on BOTH deals — say so; it is the clearest signal that
+      // these really are one transaction.
+      if (!existing.onDeals.includes(orderNo)) existing.onDeals.push(orderNo);
+      existing.wasPrimaryOn.push(...(link.isPrimary ? [orderNo] : []));
+      continue;
+    }
+    const c = link.contact;
+    byContact.set(link.contactId, {
+      contactId: link.contactId,
+      name: contactDisplayName(c),
+      phones: orderedValues(c?.phones),
+      emails: orderedValues(c?.emails),
+      organizations: orgsByContact.get(link.contactId) || [],
+      roles: link.roles || [],
+      onDeals: [orderNo],
+      wasPrimaryOn: link.isPrimary ? [orderNo] : [],
+      from,
+    });
+  }
+  return [...byContact.values()];
+}
+
 function sideDto(side) {
   const primary = side.contacts.find((c) => c.isPrimary) || side.contacts[0] || null;
   return {
@@ -623,8 +699,17 @@ function sideDto(side) {
     updatedAt: side.deal.updatedAt,
     lastActivityAt: side.deal.lastMeaningfulActivityAt,
     organizationName: side.labels.organizationName,
+    unitName: side.labels.unitName,
     productName: side.labels.productName,
     variantName: side.labels.variantName,
+    stageLabel: side.labels.stageLabel,
+    // Business language, never the stored enum/id — the comparison screen is
+    // where the operator first reads these values.
+    sourceLabel: side.labels.sourceLabel,
+    sourceDetail: side.deal.source || null,
+    activityTypeLabel: side.deal.activityType ? ACTIVITY_TYPE_LABELS_HE[side.deal.activityType] || side.deal.activityType : null,
+    tourLanguageLabel: tourLanguageLabel(side.deal.tourLanguage),
+    communicationLanguageLabel: commLanguageLabel(side.deal.communicationLanguage),
     primaryContactName: primary ? contactDisplayName(primary.contact) : null,
     contactCount: side.contacts.length,
     notesCount: side.notesCount,

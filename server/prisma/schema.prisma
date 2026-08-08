@@ -5323,18 +5323,71 @@ model QuestionnairePurposeConfig {
 // under the immutable-ID prefix `tour-galleries/<tourEventId>/…` — display
 // titles are computed live from TourEvent data, so product/date/customer
 // changes never move storage objects.
+// A gallery of photos/videos. ONE engine, two use cases (2026-08-08):
+//
+//   * TOUR gallery    — tourEventId set. The original, unchanged behaviour:
+//     title/label derive live from TourEvent data, guides upload via the portal,
+//     cancellation cleanup applies. Existing rows and tokens keep working.
+//   * STANDALONE gallery — tourEventId NULL. An operator-managed customer-facing
+//     folder created from CRM Settings ("תיקיות תמונות וסרטונים"): it carries its
+//     OWN internal name and bilingual public title/subtitle, and its own
+//     permission matrix.
+//
+// tourEventId is nullable-unique on purpose: Postgres allows many NULLs in a
+// unique index, so "at most one gallery per tour" still holds while standalone
+// galleries are unconstrained. The TourEvent link is a USE CASE, not the
+// gallery's identity.
 model TourGallery {
-  id                    String            @id @default(cuid())
-  tourEvent             TourEvent         @relation(fields: [tourEventId], references: [id], onDelete: Cascade)
-  tourEventId           String            @unique
+  id                    String     @id @default(cuid())
+  tourEvent             TourEvent? @relation(fields: [tourEventId], references: [id], onDelete: Cascade)
+  tourEventId           String?    @unique
   // Loose ref to the cover TourMedia (no FK — falls back to newest ready image
   // when unset or when the referenced media is deleted).
   coverMediaId          String?
-  customerUploadEnabled Boolean           @default(true)
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
-  media                 TourMedia[]
-  links                 TourGalleryLink[]
+  customerUploadEnabled Boolean    @default(true)
+
+  // ── Standalone-gallery identity (NULL/empty for tour galleries, whose title
+  // is derived live from the TourEvent and must stay that way) ───────────────
+  // Operator-facing label. Never shown to customers.
+  internalName    String?
+  // Customer-facing bilingual text. The public viewer switches between them;
+  // media is shared, only wording changes.
+  titleHe         String?
+  titleEn         String?
+  subtitleHe      String?
+  subtitleEn      String?
+  // Preselected language for the public page ('he' | 'en'); the visitor can
+  // still switch. NULL → he.
+  defaultLanguage String?
+
+  // ── External (public-link visitor) permission matrix ──────────────────────
+  // Enforced SERVER-SIDE on every public route; hiding a button is never the
+  // enforcement layer. Tour galleries ignore these and keep their own proven
+  // rules (view+download+upload-if-enabled, never delete).
+  //
+  // canEdit is deliberately NARROW: it permits reordering and captioning items
+  // the visitor's own link uploaded — nothing else. It never permits renaming
+  // the gallery, changing permissions, or touching other visitors' media. The
+  // column exists so the meaning can widen later by explicit decision instead
+  // of being invented at a call site.
+  extCanView     Boolean @default(true)
+  extCanDownload Boolean @default(true)
+  extCanUpload   Boolean @default(false)
+  extCanDelete   Boolean @default(false)
+  extCanEdit     Boolean @default(false)
+
+  // active | archived. Archiving hides the gallery from the operator list and
+  // disables its links WITHOUT deleting any media (soft, reversible).
+  status      String            @default("active")
+  createdById String? // AdminUser.id (loose)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  media       TourMedia[]
+  links       TourGalleryLink[]
+  items       GalleryItem[]
+  auditEvents GalleryAudit[]
+
+  @@index([status, updatedAt])
 }
 
 // One uploaded photo/video. Bytes are NEVER stored in Postgres — objectKey
@@ -5343,26 +5396,73 @@ model TourGallery {
 // flight) → 'ready' (completion verified server-side). Pending rows older than
 // the abandon window are swept (multipart aborted + objects deleted). Soft
 // delete (deletedAt) keeps attribution/audit while the R2 object is removed.
+// THE canonical media object (generalised 2026-08-08). One physical asset,
+// referenced by many consumers — never re-uploaded per use.
+//
+// Three nullability relaxations turned this from "a tour photo" into "a media
+// object" WITHOUT touching a single existing row (all three are DROP NOT NULL):
+//   * galleryId   NULL → a Content Library asset that lives in no gallery.
+//   * tourEventId NULL → a standalone-gallery or library asset (see storagePrefix
+//                        in media/keys.js: tour assets keep the historical
+//                        `tour-galleries/<tourEventId>/` prefix forever).
+//   * objectKey   NULL → an EXTERNAL_REFERENCE (YouTube/Vimeo/URL) that has no
+//                        R2 object at all. Unique still holds for real keys;
+//                        Postgres permits many NULLs in a unique index.
+//
+// Convergence note: `MediaFile` (schema.prisma:2649) remains the image-by-
+// reference model for products/locations/quotes/shared content. It is NOT
+// migrated here by decision (2026-08-08) — see
+// docs/architecture/GOS-media-content-platform-audit-2026-08-08.md §12.
+// Temporary coexistence is accepted; permanent duplication is not.
 model TourMedia {
-  id                    String      @id @default(cuid())
-  gallery               TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
-  galleryId             String
+  id               String       @id @default(cuid())
+  gallery          TourGallery? @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  galleryId        String?
   // Denormalized owner id — matches the objectKey prefix, survives for cleanup
-  // queries, and keeps key building free of joins.
-  tourEventId           String
-  objectKey             String      @unique
-  thumbKey              String?
-  posterKey             String?
-  mediaType             String // 'image' | 'video'
-  mimeType              String
-  originalFileName      String
-  byteSize              BigInt?
-  width                 Int?
-  height                Int?
-  durationSeconds       Float?
-  capturedAt            DateTime?
-  checksum              String?
-  uploadStatus          String      @default("pending") // pending | ready
+  // queries, and keeps key building free of joins. NULL for non-tour assets.
+  tourEventId      String?
+  objectKey        String?      @unique
+  thumbKey         String?
+  posterKey        String?
+  mediaType        String // 'image' | 'video' | 'audio' | 'document'
+  mimeType         String
+  originalFileName String
+  byteSize         BigInt?
+  width            Int?
+  height           Int?
+  durationSeconds  Float?
+  capturedAt       DateTime?
+  checksum         String?
+
+  // ── Storage strategy — every asset knows where its bytes really live ──────
+  //   r2_native          bytes uploaded straight to R2 (objectKey set)
+  //   external_reference hosted elsewhere; GOS stores metadata only (no key)
+  //   mirrored_to_r2     originated externally, copied INTO R2 (both set)
+  // Deliberately not a Prisma enum (project convention: strings), and
+  // deliberately not per-provider: Vimeo is not permanently external NOR
+  // permanently imported — the choice is made per import.
+  storageStrategy    String    @default("r2_native")
+  // Provider identity for external/mirrored assets. (provider, externalId) is
+  // the canonical duplicate key — NEVER the URL, and never the title.
+  sourceProvider     String? // 'youtube' | 'vimeo' | 'url'
+  sourceExternalId   String?
+  sourceUrl          String?
+  sourceTitle        String?
+  sourceThumbnailUrl String?
+  sourcePublishedAt  DateTime?
+  sourceUpdatedAt    DateTime?
+  // Raw provider payload kept for reconciliation — never rendered directly.
+  sourceMeta         Json?
+  importedAt         DateTime?
+  mirroredAt         DateTime?
+
+  // Manual ordering inside the OWNING gallery (drag-and-drop). Cross-gallery
+  // ordering lives on GalleryItem.
+  sortOrder             Int       @default(0)
+  // Optional bilingual caption shown under the item in a public gallery.
+  captionHe             String?
+  captionEn             String?
+  uploadStatus          String    @default("pending") // pending | ready
   // R2 multipart upload id while a chunked upload is in flight (null for
   // single-part). partSize is fixed at initiate so part numbers stay stable.
   uploadId              String?
@@ -5376,14 +5476,24 @@ model TourMedia {
   uploadedByLabel       String? // display snapshot for the uploader chip
   deletedAt             DateTime?
   deletedById           String?
-  createdAt             DateTime    @default(now())
+  createdAt             DateTime  @default(now())
   completedAt           DateTime?
-  updatedAt             DateTime    @updatedAt
+  updatedAt             DateTime  @updatedAt
 
+  galleryItems GalleryItem[]
+  libraryItems LibraryItem[]
+  transcripts  MediaTranscript[]
+  jobs         MediaJob[]
+  usages       MediaUsage[]
+
+  // Duplicate-import protection: the SAME provider video can only be imported
+  // once. Enforced by the database, not by a title comparison.
+  @@unique([sourceProvider, sourceExternalId])
   @@index([galleryId, uploadStatus, deletedAt])
   @@index([tourEventId])
   @@index([uploadStatus, createdAt])
   @@index([batchId])
+  @@index([galleryId, sortOrder])
 }
 
 // Secure scoped access to ONE tour gallery. Capability-URL model (same
@@ -5405,13 +5515,24 @@ model TourGalleryLink {
   gallery       TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
   galleryId     String
   token         String      @unique
-  audience      String      @default("customer") // customer | staff
+  audience      String      @default("customer") // customer | staff | external
   personRefId   String? // PersonRef.id (loose) — required for staff links
-  status        String      @default("active") // active | revoked
+  // active | disabled | revoked.
+  //
+  // DISABLED vs REVOKED is a real semantic difference, not a synonym:
+  //   * disabled — reversible pause. The token stays valid-but-refused and the
+  //     media is untouched; re-enabling restores access on the SAME URL. This
+  //     is what the operator's "Disable link" switch does.
+  //   * revoked — permanent. Rotation revokes the old row and mints a new
+  //     token; the old URL can never come back.
+  // Both read as 404 to a visitor — a link surface must not explain itself.
+  status        String      @default("active")
   createdById   String? // AdminUser.id (loose)
   createdAt     DateTime    @default(now())
+  disabledAt    DateTime?
+  disabledById  String? // AdminUser.id (loose)
   revokedAt     DateTime?
-  revokedReason String? // rotated | manual | tour_cancelled
+  revokedReason String? // rotated | manual | tour_cancelled | gallery_archived
 
   @@index([galleryId, status])
 }
@@ -5490,6 +5611,300 @@ model TourGalleryExport {
   @@index([tourEventId, status])
   @@index([status, updatedAt])
   @@index([status, expiresAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Media & Content Platform (2026-08-08)
+// See docs/architecture/GOS-media-content-platform-audit-2026-08-08.md
+//
+// ONE engine. TourMedia above is the canonical media object; the models here
+// add curation (galleries), description (library), provenance (transcripts,
+// audit) and durable processing (jobs) around it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Curated CROSS-GALLERY membership — the mechanism that lets ONE physical
+// asset appear in several galleries without copying bytes.
+//
+// Read the two membership paths precisely, because they are not duplicates:
+//   * OWNING gallery — TourMedia.galleryId. The gallery whose R2 prefix holds
+//     the object and whose lifecycle (cleanup, soft delete) governs it. Tour
+//     galleries use ONLY this, exactly as before — no GalleryItem rows, no
+//     behaviour change, no backfill.
+//   * REUSE — a GalleryItem row placing an asset owned elsewhere into this
+//     gallery. Removing it deletes the membership and NEVER the asset.
+//
+// So "remove from gallery" is destructive only for the owner, and even there it
+// is a soft delete. An asset is never destroyed because a curator tidied a
+// gallery.
+model GalleryItem {
+  id        String      @id @default(cuid())
+  gallery   TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  galleryId String
+  media     TourMedia   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId   String
+  sortOrder Int         @default(0)
+  addedById String? // AdminUser.id (loose)
+  createdAt DateTime    @default(now())
+
+  @@unique([galleryId, mediaId])
+  @@index([galleryId, sortOrder])
+  @@index([mediaId])
+}
+
+// Audit of every PUBLIC (external-visitor) mutation and every operator change
+// to a gallery's access surface. Deliberately minimal personal data: enough
+// provenance to investigate abuse, never a visitor profile.
+//
+// ipHash is a SALTED HASH, never a raw address — abuse correlation works on
+// equality, which a hash preserves, so storing the address itself would buy
+// nothing and retain personal data for no reason.
+model GalleryAudit {
+  id        String      @id @default(cuid())
+  gallery   TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  galleryId String
+  // upload | delete | edit | link_rotated | link_disabled | link_enabled |
+  // permissions_changed | download_all
+  action    String
+  // external | office
+  actorType String
+  linkId    String? // TourGalleryLink.id (loose) for external actors
+  actorId   String? // AdminUser.id (loose) for office actors
+  mediaId   String? // loose — the row may be gone by the time this is read
+  ipHash    String?
+  userAgent String?
+  detail    Json?
+  createdAt DateTime    @default(now())
+
+  @@index([galleryId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ── Content Library ────────────────────────────────────────────────────────
+
+// Workspace-ready access WITHOUT a GOS-wide tenancy refactor (owner decision,
+// 2026-08-08). V1 seeds exactly one row — the primary GOS workspace — and only
+// GOS resolves it locally. Challenge/Recruitment become additional rows plus a
+// service identity later; that is an API/identity addition, NOT a schema
+// redesign, which is precisely why access is a JOIN MODEL and never a
+// free-text workspace string.
+model ContentWorkspace {
+  id        String                 @id @default(cuid())
+  // Stable machine key: 'gos' | 'challenge' | 'recruitment'.
+  key       String                 @unique
+  name      String
+  // The internal Grafitiyul workspace. Exactly one row is true; it sees
+  // everything (same convention as Challenge's primary workspace).
+  isPrimary Boolean                @default(false)
+  active    Boolean                @default(true)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  items     LibraryItemWorkspace[]
+  tokens    ContentServiceToken[]
+}
+
+// Service identity for an EXTERNAL consumer system. Challenge/Recruitment call
+// the canonical Content API with one of these — never with DB credentials and
+// never with R2 credentials.
+//
+// Only the HASH of the token is stored; the plaintext is shown once at
+// creation and is unrecoverable afterwards, so a database read cannot yield a
+// working credential.
+model ContentServiceToken {
+  id            String           @id @default(cuid())
+  workspace     ContentWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId   String
+  label         String
+  tokenHash     String           @unique
+  // Coarse capability grants; the workspace scope is always enforced on top.
+  canRead       Boolean          @default(true)
+  canWrite      Boolean          @default(false)
+  canUpload     Boolean          @default(false)
+  canTranscribe Boolean          @default(false)
+  status        String           @default("active") // active | revoked
+  lastUsedAt    DateTime?
+  createdById   String? // AdminUser.id (loose)
+  createdAt     DateTime         @default(now())
+  revokedAt     DateTime?
+
+  @@index([workspaceId, status])
+}
+
+// V1 uses CATEGORIES, not folders (owner decision). Categories are flat and
+// many-to-many, so nothing about the asset model has to change if a folder
+// hierarchy is ever added later.
+model LibraryCategory {
+  id        String                @id @default(cuid())
+  nameHe    String
+  nameEn    String?
+  sortOrder Int                   @default(0)
+  // Archived categories keep their historical links (never hard-deleted while
+  // referenced) but disappear from pickers.
+  archived  Boolean               @default(false)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  items     LibraryItemCategory[]
+
+  @@index([archived, sortOrder])
+}
+
+// A content item — how an asset is DESCRIBED, categorised and surfaced.
+// Separate from the asset itself (TourMedia) on purpose: the same physical
+// video can be a library entry, a gallery item and a quote attachment at once.
+model LibraryItem {
+  id            String     @id @default(cuid())
+  // Operator-facing identity. REQUIRED and independent: it is NOT the filename
+  // and NOT the YouTube/Vimeo title (those are kept on the media as
+  // sourceTitle). Seeded from the source title at import, then freely editable.
+  internalName  String
+  // video | audio | image | pdf | document | youtube | vimeo | link
+  contentType   String
+  // The asset. NULL only for a bare external link with no media semantics.
+  media         TourMedia? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  mediaId       String?
+  // Internal notes — never customer-facing.
+  description   String?
+  // Content language hint ('he' | 'en' | null); also the transcription hint.
+  language      String?
+  // Public-facing localized fields, used only if an item is ever surfaced
+  // publicly. internalName is an operator label and must never be overloaded
+  // for this.
+  publicTitleHe String?
+  publicTitleEn String?
+  archived      Boolean    @default(false)
+  createdById   String? // AdminUser.id (loose)
+  updatedById   String? // AdminUser.id (loose)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  categories LibraryItemCategory[]
+  workspaces LibraryItemWorkspace[]
+
+  @@index([archived, updatedAt])
+  @@index([contentType])
+}
+
+model LibraryItemCategory {
+  item       LibraryItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId     String
+  category   LibraryCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId String
+
+  @@id([itemId, categoryId])
+  @@index([categoryId])
+}
+
+// Explicit per-workspace access. A missing row means NO access — visibility is
+// granted, never assumed.
+model LibraryItemWorkspace {
+  item        LibraryItem      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId      String
+  workspace   ContentWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  // read | contribute. Coarse on purpose; widen by decision, not by accident.
+  access      String           @default("read")
+  createdAt   DateTime         @default(now())
+
+  @@id([itemId, workspaceId])
+  @@index([workspaceId])
+}
+
+// A transcript VERSION. Re-transcribing never overwrites history: a new row is
+// written and becomes current, so a better run can always be compared against
+// (or rolled back to) the one it replaced.
+model MediaTranscript {
+  id              String    @id @default(cuid())
+  media           TourMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId         String
+  // Exactly one current transcript per media. Enforced in the service layer
+  // (transcripts.js demotes the previous current row inside the same
+  // transaction) — the same convention as PriceList.isDefault, because
+  // "unique WHERE isCurrent" is not expressible in Prisma and a raw partial
+  // index would show up forever as schema drift.
+  isCurrent       Boolean   @default(true)
+  text            String
+  // Reserved for verbose_json runs (timestamps / segments / speakers). NULL for
+  // plain-text runs. Present now so the future features need no migration.
+  segments        Json?
+  language        String?
+  provider        String // 'openai'
+  model           String // e.g. 'whisper-1'
+  // WHICH bytes produced this transcript — provenance that survives the media
+  // being replaced.
+  sourceObjectKey String?
+  sourceChecksum  String?
+  durationSeconds Float?
+  generatedAt     DateTime  @default(now())
+  requestedById   String? // AdminUser.id (loose)
+
+  @@index([mediaId, isCurrent])
+}
+
+// Durable background work. Replaces the fire-and-forget pattern found in the
+// recruitment system: a job here survives a restart, is claimed exactly once,
+// retries with a reason, and can be observed honestly by the UI.
+model MediaJob {
+  id            String    @id @default(cuid())
+  media         TourMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId       String
+  // transcribe | thumbnail | mirror_to_r2 | probe_metadata
+  kind          String
+  // queued | running | done | failed | cancelled
+  status        String    @default("queued")
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(3)
+  // Operator-readable failure text. The UI shows THIS, never a bare "failed".
+  lastError     String?
+  payload       Json?
+  notBefore     DateTime  @default(now())
+  claimedAt     DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  requestedById String? // AdminUser.id (loose)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // At most ONE live job of a kind per media — the idempotency guarantee that
+  // makes a double-clicked "תמלל" button harmless. Enforced in the service
+  // layer (jobs.js reuses any queued/running job instead of creating a second),
+  // for the same no-drift reason as MediaTranscript.isCurrent above.
+  @@index([status, notBefore])
+  @@index([mediaId, kind, status])
+}
+
+// Generic reference tracking — the input to reference-aware deletion. Any
+// module that starts using an asset registers here (same proven pattern as
+// Challenge's SoundAssetUsage), so nothing has to grep the codebase to answer
+// "is this asset still in use?".
+model MediaUsage {
+  id        String    @id @default(cuid())
+  media     TourMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId   String
+  // gallery | library | quote | email | whatsapp | site_page | deal
+  refType   String
+  refId     String
+  createdAt DateTime  @default(now())
+
+  @@unique([mediaId, refType, refId])
+  @@index([refType, refId])
+}
+
+// Operator-configured connection to an external content provider. SECRETS ARE
+// NEVER STORED HERE — credentials come from Railway env vars; this row holds
+// only the non-secret selection (which channel/account) plus sync bookkeeping.
+model ExternalSourceConnection {
+  id            String    @id @default(cuid())
+  provider      String // 'youtube' | 'vimeo'
+  label         String
+  // Non-secret provider config, e.g. { channelId } / { userId }.
+  config        Json      @default("{}")
+  active        Boolean   @default(true)
+  lastSyncAt    DateTime?
+  lastSyncError String?
+  createdById   String? // AdminUser.id (loose)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([provider, label])
 }
 
 // ═══════════════ Payroll module (שכר צוות) ═══════════════

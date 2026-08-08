@@ -275,8 +275,24 @@ export function makeMergeStore(init = {}) {
       },
     },
 
-    organization: { findUnique: async ({ where }) => s.orgs[where.id] || null },
-    organizationSubtype: { findUnique: async () => null },
+    organization: {
+      findUnique: async ({ where }) => s.orgs[where.id] || null,
+      findMany: async ({ where }) => Object.values(s.orgs).filter((o) => where.id.in.includes(o.id)),
+    },
+    organizationSubtype: { findUnique: async () => null, findMany: async () => [] },
+    // The catalogs the merge PREVIEW reads to turn stored ids into the labels
+    // the operator chooses between (deals/mergeFieldLabels.js). Empty by
+    // default: these fixtures carry no catalog references, and a field with no
+    // row resolves to "ערך שנמחק מהקטלוג" rather than crashing.
+    organizationUnit: { findMany: async () => [] },
+    organizationType: { findMany: async () => [] },
+    product: { findMany: async () => [] },
+    location: { findMany: async () => [] },
+    dealSource: { findMany: async () => [] },
+    paymentTerm: { findMany: async () => [] },
+    paymentMethod: { findMany: async () => [] },
+    // Contact↔Organization, for the primary-contact identity cards.
+    contactOrganization: { findMany: async () => [] },
 
     tourEvent: {
       findUnique: async ({ where }) => s.tours[where.id] || null,
@@ -430,7 +446,7 @@ export function makeMergeStore(init = {}) {
       findFirst: async () => null,
     },
 
-    adminUser: { findUnique: async () => ({ username: 'tester' }) },
+    adminUser: { findUnique: async () => ({ username: 'tester' }), findMany: async () => [] },
     dealStage: { findFirst: async () => ({ id: 'stageFinal' }) },
     dealTourPlan: { findUnique: async () => null, upsert: async () => ({ id: 'plan1' }), update: async () => ({}) },
     dealTourPlanAssignment: { deleteMany: async () => ({ count: 0 }), createMany: async () => ({ count: 0 }) },

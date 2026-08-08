@@ -174,18 +174,11 @@ export const PAYMENT_METHODS = [
   { key: 'other', label: 'אחר' },
 ];
 
-export const COMM_LANGS = [
-  { key: 'he', label: 'עברית' },
-  { key: 'en', label: 'אנגלית' },
-];
-
-export const TOUR_LANGS = [
-  { key: 'he', label: 'עברית' },
-  { key: 'en', label: 'אנגלית' },
-  { key: 'es', label: 'ספרדית' },
-  { key: 'fr', label: 'צרפתית' },
-  { key: 'ru', label: 'רוסית' },
-];
+// The language vocabulary now lives in shared/language.mjs — the SERVER needs
+// the same labels (the merge wizard resolves a stored 'he' into "עברית" before
+// asking the operator to choose between two values), and two copies would drift.
+// Re-exported here so every existing importer of this config is unchanged.
+export { COMM_LANGS, TOUR_LANGS } from '../../../../shared/language.mjs';
 
 export function contactNameHe(c) {
   if (!c) return '';

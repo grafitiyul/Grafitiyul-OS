@@ -3,7 +3,12 @@ import * as r2 from '../../r2.js';
 import { detectMime, kindOfMime } from '../../media/detectMime.js';
 import { emitTimelineEvent } from '../../timeline/events.js';
 import { ensureGallery } from './service.js';
-import { originalKey, posterKey, thumbKey } from './keys.js';
+import { originalKey } from './keys.js';
+// Derivative keys go through the generic builder so this ONE upload path also
+// serves standalone (non-tour) galleries and library assets. For a tour asset
+// ownerOf() yields { tourEventId }, which produces the byte-identical
+// historical key — asserted in media/keys.test.js.
+import { ownerOf, posterKey, thumbKey } from '../../media/keys.js';
 import { glog } from './log.js';
 
 // Direct-to-R2 upload engine for Tour Gallery. The GOS server never carries
@@ -172,14 +177,14 @@ export async function getUploadTargets(client, media, body = {}) {
   }
   if (body.thumb) {
     out.thumbPutUrl = await r2.presignPut({
-      key: thumbKey(media.tourEventId, media.id),
+      key: thumbKey(ownerOf(media), media.id),
       contentType: 'image/webp',
       expiresIn: 3600,
     });
   }
   if (body.poster && media.mediaType === 'video') {
     out.posterPutUrl = await r2.presignPut({
-      key: posterKey(media.tourEventId, media.id),
+      key: posterKey(ownerOf(media), media.id),
       contentType: 'image/webp',
       expiresIn: 3600,
     });
@@ -272,11 +277,11 @@ export async function completeUpload(client, media, body = {}, { storage = r2, o
   // Derivatives are optional (client-generated): record them only if the
   // bytes actually landed.
   if (body.hasThumb) {
-    const tk = thumbKey(media.tourEventId, media.id);
+    const tk = thumbKey(ownerOf(media), media.id);
     if (await storage.headObject(tk)) data.thumbKey = tk;
   }
   if (body.hasPoster && media.mediaType === 'video') {
-    const pk = posterKey(media.tourEventId, media.id);
+    const pk = posterKey(ownerOf(media), media.id);
     if (await storage.headObject(pk)) data.posterKey = pk;
   }
 
@@ -296,6 +301,10 @@ export async function completeUpload(client, media, body = {}, { storage = r2, o
 // the gallery" gets its own moment; each batch reports once when its last
 // pending row resolves.
 async function emitUploadEvents(client, media, { origin }) {
+  // Standalone (non-tour) galleries have no TourEvent to hang a timeline entry
+  // on. Their provenance lives in GalleryAudit instead, so emitting here would
+  // write an event with a null subject that no surface can ever resolve.
+  if (!media.tourEventId) return;
   const readyCount = await client.tourMedia.count({
     where: { galleryId: media.galleryId, uploadStatus: 'ready', deletedAt: null },
   });
@@ -352,9 +361,9 @@ export async function abortUpload(client, media, { storage = r2 } = {}) {
       await storage.abortMultipartUpload({ key: media.objectKey, uploadId: media.uploadId });
     }
     await storage.deleteObject(media.objectKey);
-    await storage.deleteObject(thumbKey(media.tourEventId, media.id));
+    await storage.deleteObject(thumbKey(ownerOf(media), media.id));
     if (media.mediaType === 'video') {
-      await storage.deleteObject(posterKey(media.tourEventId, media.id));
+      await storage.deleteObject(posterKey(ownerOf(media), media.id));
     }
   }
   await client.tourMedia.delete({ where: { id: media.id } }).catch(() => {});
