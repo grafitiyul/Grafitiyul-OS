@@ -13,16 +13,12 @@
 
 import { prisma } from '../db.js';
 import { listCapabilities, capabilityDef } from './capabilities/registry.js';
+// ONE readiness rule for the whole module (dashboard, home and the capability
+// screen). A second copy would eventually disagree with the first, and the
+// operator would be told two different things about the same capability.
+import { readinessFor, READINESS_RULE } from './readiness.js';
 
-// The automation-readiness rule, stated in one place so the dashboard can show
-// it verbatim to the operator. It is a SUGGESTION for a human decision, never a
-// switch: nothing in the code acts on `ready`.
-export const READINESS_RULE = Object.freeze({
-  minSamples: 30,
-  minUnchangedRate: 0.9,
-  maxRejectRate: 0.05,
-  textHe: 'לפחות 30 מקרים, מעל 90% נשלחו בלי עריכה, ופחות מ-5% נדחו.',
-});
+export { READINESS_RULE };
 
 const SENT = ['sent_unchanged', 'sent_edited'];
 const HANDLED = [...SENT, 'rejected', 'bypassed'];
@@ -96,32 +92,27 @@ export async function agentMetrics({ days = 30 } = {}, db = prisma) {
 
   const capabilities = listCapabilities().map((def) => {
     const b = byCap.get(def.key) || { total: 0, shadow: 0, open: 0, unchanged: 0, edited: 0, rejected: 0, bypassed: 0, stale: 0, expired: 0, superseded: 0 };
-    const handled = b.unchanged + b.edited + b.rejected + b.bypassed;
-    const unchangedRate = rate(b.unchanged, handled);
-    const rejectRate = rate(b.rejected + b.bypassed, handled);
-    const ready = handled >= READINESS_RULE.minSamples
-      && unchangedRate != null && unchangedRate >= READINESS_RULE.minUnchangedRate
-      && rejectRate != null && rejectRate <= READINESS_RULE.maxRejectRate;
+    // The shared rule, with its human explanation. `ready` is advice for a
+    // human — nothing in the codebase reads it and changes a mode.
+    const readiness = readinessFor(def, b, def.defaultMode);
     return {
       key: def.key,
       labelHe: def.labelHe,
       risk: def.risk,
       maxMode: def.maxMode,
       observed: b.total,
-      handled,
+      handled: readiness.handled,
       unchanged: b.unchanged,
       edited: b.edited,
       rejected: b.rejected,
       bypassed: b.bypassed,
       // Rates are null (not 0) until there is anything to divide by — the UI
       // renders "אין מספיק נתונים" rather than a misleading zero.
-      unchangedRate,
-      rejectRate,
-      // `ready` is advice for a human, never acted on by code. It is also
-      // capped by the capability's code ceiling: a family that can never be
-      // automatic is never advertised as ready for it.
-      ready: ready && def.maxMode === 'auto',
-      readyBlockedByCeiling: ready && def.maxMode !== 'auto',
+      unchangedRate: readiness.unchangedRate,
+      rejectRate: readiness.rejectRate,
+      readiness,
+      ready: readiness.ready && def.maxMode === 'auto',
+      readyBlockedByCeiling: readiness.ready && def.maxMode !== 'auto',
     };
   }).sort((a, b) => b.observed - a.observed);
 

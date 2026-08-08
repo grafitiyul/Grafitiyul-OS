@@ -20,7 +20,10 @@ import {
 } from '../agent/config.js';
 import {
   listCapabilities, clampMode, isKnownCapability, MODES, MODE_LABELS, MODE_HELP,
+  CAPABILITY_GROUPS, modeImpactHe,
 } from '../agent/capabilities/registry.js';
+import { agentHome } from '../agent/home.js';
+import { readinessFor, READINESS_RULE, READINESS_STATE_LABELS } from '../agent/readiness.js';
 import { providerConfigured } from '../agent/provider/index.js';
 import { STYLE_FIELDS, normalizeStyleRules, seedStyleProfiles } from '../agent/style.js';
 import { listTools } from '../agent/tools/registry.js';
@@ -57,10 +60,48 @@ router.put('/settings', requireAdminUser, handle(async (req, res) => {
   res.json({ settings, providerConfigured: providerConfigured(settings.provider) });
 }));
 
+// ── Home ────────────────────────────────────────────────────────────────────
+// ONE composed read for the operator's landing screen. Adds no storage and no
+// new concept — it exists so "what is happening and what should I do" is one
+// round-trip and one truthful answer.
+
+router.get('/home', handle(async (req, res) => {
+  const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
+  res.json(await agentHome({ days }));
+}));
+
 // ── Authority ───────────────────────────────────────────────────────────────
 
-router.get('/capabilities', handle(async (_req, res) => {
-  res.json({ capabilities: await loadCapabilityMatrix() });
+router.get('/capabilities', handle(async (req, res) => {
+  const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
+  // The capability screen needs the same readiness evidence the home screen
+  // shows, so the decision and the evidence for it live on one page.
+  const home = await agentHome({ days });
+  res.json({
+    capabilities: home.capabilities,
+    groups: CAPABILITY_GROUPS,
+    modes: MODES.map((m) => ({ key: m, labelHe: MODE_LABELS[m], helpHe: MODE_HELP[m] })),
+    readinessRule: READINESS_RULE,
+    readinessLabels: READINESS_STATE_LABELS,
+    safety: home.safety,
+  });
+}));
+
+// What ACTUALLY changes if this capability moves to `mode` — the sentence the
+// confirmation shows before anything is written. A GET, so previewing an
+// authority change can never itself be an authority change.
+router.get('/capabilities/:key/impact', handle(async (req, res) => {
+  const { key } = req.params;
+  if (!isKnownCapability(key)) return res.status(404).json({ error: 'unknown_capability' });
+  const mode = String(req.query.mode || '');
+  const clamped = clampMode(key, mode);
+  if (!clamped) return res.status(400).json({ error: 'invalid_mode' });
+  res.json({
+    key,
+    mode: clamped,
+    allowed: clamped === mode,
+    impactHe: modeImpactHe(key, clamped),
+  });
 }));
 
 router.put('/capabilities/:key', requireAdminUser, handle(async (req, res) => {

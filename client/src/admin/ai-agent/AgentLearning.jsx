@@ -93,10 +93,14 @@ export default function AgentLearning() {
         </div>
       </div>
 
+      {/* The lifecycle, shown once at the top. It is the answer to "how does
+          this thing learn, and can it change itself behind my back". */}
+      <Lifecycle />
+
       <p className="gos-meta mb-4 max-w-3xl">
         הסוכן לא משנה את ההוראות של עצמו. כאן הוא רק <strong>מציע</strong> שינוי, על סמך דפוס
-        חוזר בעריכות ובדחיות שלכם. אישור יוצר <strong>טיוטה</strong> במסך הידע — היא עדיין
-        צריכה אישור נפרד שם כדי להשפיע על התנהגות הסוכן.
+        חוזר בעריכות ובדחיות שלכם. אישור יוצר <strong>טיוטה</strong> במסך "המוח של הסוכן" — היא
+        עדיין צריכה הפעלה נפרדת שם כדי להשפיע על התנהגותו.
       </p>
 
       {note && <div className="mb-3 rounded bg-blue-50 px-3 py-2 text-[13px] text-blue-900">{note}</div>}
@@ -105,16 +109,52 @@ export default function AgentLearning() {
       {rows === null && <div className="gos-meta">טוען…</div>}
       {rows?.length === 0 && (
         <div className="rounded-xl border border-gray-200 bg-white px-6 py-10 text-center">
-          <div className="gos-detail text-gray-700">אין תובנות להצגה.</div>
-          <div className="gos-meta mt-1">
-            תובנות נוצרות מדפוס חוזר — אחרי שהסוכן יציע תשובות ותערכו או תדחו כמה מהן.
+          <div className="gos-title-sm text-gray-900">
+            {filter === 'open' ? 'אין עדיין תובנות' : 'אין תובנות בסטטוס הזה'}
           </div>
+          <p className="gos-detail mx-auto mt-1 max-w-xl text-gray-600">
+            הסוכן יתחיל להציע תובנות אחרי שיהיו מספיק שיחות והבדלים בין ההצעות שלו לבין העבודה
+            בפועל. תובנה נולדת מדפוס חוזר — לפחות חמישה מקרים באותה קטגוריה שבהם ערכתם או
+            דחיתם את מה שהציע. מקרה בודד הוא רעש, לא לקח.
+          </p>
         </div>
       )}
 
       <div className="space-y-3">
         {(rows || []).map((i) => <InsightCard key={i.id} insight={i} onHandled={load} />)}
       </div>
+    </div>
+  );
+}
+
+// The controlled learning loop, drawn. Six steps, and a human stands at two of
+// them — which is exactly the property the operator needs to trust.
+function Lifecycle() {
+  const steps = [
+    { he: 'שיחה אמיתית', who: null },
+    { he: 'הסוכן מציע תשובה', who: null },
+    { he: 'מה שאתה עשית בפועל', who: 'אתה' },
+    { he: 'דפוס חוזר → תובנה', who: null },
+    { he: 'אתה מאשר או דוחה', who: 'אתה' },
+    { he: 'טיוטה שצריך להפעיל', who: 'אתה' },
+  ];
+  return (
+    <div className="mb-4 overflow-x-auto rounded-xl border border-gray-200 bg-white p-3">
+      <ol className="flex min-w-max items-stretch gap-1">
+        {steps.map((s, i) => (
+          <li key={s.he} className="flex items-center gap-1">
+            <div
+              className={`rounded-lg px-2.5 py-1.5 text-[12px] ${
+                s.who ? 'bg-emerald-50 font-medium text-emerald-900' : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              {s.he}
+              {s.who && <span className="gos-meta block text-emerald-700">{s.who}</span>}
+            </div>
+            {i < steps.length - 1 && <span className="text-gray-300" aria-hidden>←</span>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

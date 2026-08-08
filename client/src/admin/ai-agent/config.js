@@ -4,10 +4,16 @@
 // are one thing to the operator ("what the agent is made of"); evaluation is
 // split between the dashboard (headline quality) and history (per-run truth).
 
+// Tab labels are the OPERATOR's vocabulary, not the database's. "המוח של
+// הסוכן" is one screen holding Knowledge + Playbook + Style, because to the
+// person using it that is a single job.
+//
+// The guided setup (/setup) is deliberately NOT a tab: it is a flow you enter
+// from the home screen and leave, not a place you live in.
 export const AGENT_TABS = [
-  { key: 'overview', path: '', label: 'סקירה' },
-  { key: 'review', path: 'review', label: 'לאישור' },
-  { key: 'knowledge', path: 'knowledge', label: 'ידע' },
+  { key: 'home', path: '', label: 'בית' },
+  { key: 'review', path: 'review', label: 'הצעות' },
+  { key: 'knowledge', path: 'knowledge', label: 'המוח של הסוכן' },
   { key: 'learning', path: 'learning', label: 'למידה' },
   { key: 'authority', path: 'authority', label: 'הרשאות' },
   { key: 'history', path: 'history', label: 'היסטוריה' },

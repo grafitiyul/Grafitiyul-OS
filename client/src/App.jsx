@@ -68,7 +68,8 @@ import AdminToursPage from './admin/tours/ToursPage.jsx';
 import ControlPage from './admin/control/ControlPage.jsx';
 // סוכן AI — management surface for the controlled WhatsApp agent.
 import AiAgentLayout from './admin/ai-agent/AiAgentLayout.jsx';
-import AgentDashboard from './admin/ai-agent/AgentDashboard.jsx';
+import AgentHome from './admin/ai-agent/AgentHome.jsx';
+import AgentSetup from './admin/ai-agent/AgentSetup.jsx';
 import AgentReview from './admin/ai-agent/AgentReview.jsx';
 import AgentKnowledge from './admin/ai-agent/AgentKnowledge.jsx';
 import AgentLearning from './admin/ai-agent/AgentLearning.jsx';
@@ -216,7 +217,10 @@ export default function App() {
             happens inside the conversation; this is where its knowledge,
             authority and quality are governed. */}
         <Route path="ai-agent" element={<AiAgentLayout />}>
-          <Route index element={<AgentDashboard />} />
+          <Route index element={<AgentHome />} />
+          {/* Guided setup — a flow you enter and leave, not a tab you live in,
+              and never a gate: every other route stays reachable throughout. */}
+          <Route path="setup" element={<AgentSetup />} />
           <Route path="review" element={<AgentReview />} />
           <Route path="knowledge" element={<AgentKnowledge />} />
           <Route path="learning" element={<AgentLearning />} />

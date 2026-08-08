@@ -65,14 +65,16 @@ export default function AgentReview() {
 
       {rows?.length === 0 && (
         <div className="rounded-xl border border-gray-200 bg-white px-6 py-10 text-center">
-          <div className="gos-detail text-gray-700">
-            {filter === 'open' ? 'אין הצעות שממתינות לאישור.' : 'אין רשומות להצגה.'}
+          <div className="gos-title-sm text-gray-900">
+            {filter === 'open' ? 'אין הצעות שממתינות לך' : filter === 'shadow' ? 'אין עדיין רשומות צל' : 'אין רשומות להצגה'}
           </div>
-          <div className="gos-meta mt-1">
+          <p className="gos-detail mx-auto mt-1 max-w-xl text-gray-600">
             {filter === 'open'
-              ? 'כשהסוכן יכין תשובה שדורשת אישור — היא תופיע כאן וגם בתוך השיחה עצמה.'
-              : 'רשומות צל נוצרות כשהסוכן מנתח שיחה בלי סמכות להציע תשובה לשליחה.'}
-          </div>
+              ? 'הצעה מגיעה לכאן רק מקטגוריה שהעברת למצב "דורש אישור". כל עוד הכל במצב צל, הסוכן רק רושם מה היה עונה — ואת זה רואים בלשונית "נרשם בצל".'
+              : filter === 'shadow'
+                ? 'ברגע שלקוח יכתוב הודעה והסוכן ינתח אותה, מה שהוא היה עונה יופיע כאן. אם עברו כמה ימים ואין כלום — בדוק במסך הבית שהסוכן דלוק.'
+                : 'עדיין לא נוצרו הצעות.'}
+          </p>
         </div>
       )}
 

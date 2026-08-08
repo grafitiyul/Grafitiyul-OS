@@ -2112,6 +2112,14 @@ export const api = {
   // proposalSend, which requires a specific proposal id that a human is looking
   // at. Everything else reads, configures, or records a human decision.
   aiAgent: {
+    // The operator's landing screen — status, safety, derived onboarding
+    // progress and "what needs me today", in one composed read.
+    home: (params) => request(`/api/ai-agent/home${qs(params)}`),
+    // What actually changes if a capability moves to `mode`. A GET, so
+    // previewing an authority change can never itself change authority.
+    capabilityImpact: (key, mode) =>
+      request(`/api/ai-agent/capabilities/${encodeURIComponent(key)}/impact${qs({ mode })}`),
+
     // Configuration + authority
     settings: () => request('/api/ai-agent/settings'),
     saveSettings: (body) => request('/api/ai-agent/settings', { method: 'PUT', body: JSON.stringify(body) }),

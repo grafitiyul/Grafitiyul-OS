@@ -41,7 +41,7 @@ export default function AiAgentLayout() {
     [...AGENT_TABS]
       .filter((t) => t.path)
       .sort((a, b) => b.path.length - a.path.length)
-      .find((t) => pathname.startsWith(`/admin/ai-agent/${t.path}`))?.key || 'overview';
+      .find((t) => pathname.startsWith(`/admin/ai-agent/${t.path}`))?.key || 'home';
 
   return (
     <div className="h-full flex flex-col">
